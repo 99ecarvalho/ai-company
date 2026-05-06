@@ -38,27 +38,155 @@ builda imagens, aplica migrations, sobe a stack, espera `/health`. Abra
 ### Multi-empresa no mesmo host
 
 Copie o repo pra outra pasta e rode `make install` lá — o installer
-vai sugerir `COMPOSE_PROJECT_NAME` e `WEB_PORT` distintos. Cada pasta
-fica com:
+sugere `COMPOSE_PROJECT_NAME` e `WEB_PORT` distintos. Postgres, volumes
+e rede ficam namespaced automaticamente via Docker; cada pasta tem seu
+próprio `instance/`. `~/.claude/` é compartilhado por máquina (plano
+MAX é 1 por host). Paths customizáveis (`AGENTS_DIR`, `COMPANY_DIR`,
+`REPOS_DIR`, etc.) permitem mover qualquer parte do estado pra fora
+do framework — ver tabela abaixo.
 
-- **`instance/`** próprio (agents.yaml, memória, mensagens, tudo).
-- **Postgres, volumes, rede** namespaced automaticamente via Docker.
-- **Paths customizáveis via `.env`** — defaults mantêm tudo em `./instance/`,
-  mas você pode apontar pra fora:
-  - `REPOS_DIR` — repos de código dos agentes (ex: `../gitlab-acme`).
-    Evita aninhar múltiplos gits no workspace do framework.
-  - `AGENTS_DIR` — config dos agentes (`agents.yaml`, `<nome>/CLAUDE.md`,
-    `schedule.yaml`). Útil pra versionar config privada em repo próprio.
-  - `COMPANY_DIR` — contexto da empresa (`CONTEXT.md`, `workflow.md`,
-    `tasks/`, `backlog/`). Mesma motivação.
-  - `BACKUPS_DIR` — output de `framework/scripts/backup.sh`. Aponte pra
-    NAS/disco externo se quiser retenção fora do framework.
-- **`DOCKER_CONFIG=./docker`** (opcional) — se a empresa usa imagem
-  privada de registry onde você tem outras contas logadas, o installer
-  cria um `./docker/` local com credenciais isoladas (sem colidir com
-  `~/.docker/config.json` global).
+---
 
-`~/.claude/` é compartilhado por máquina (plano MAX é 1 por host).
+## Configuração (`.env`)
+
+`make install` gera o `.env` interativamente; pra inspecionar/editar
+manualmente, ver [framework/examples/.env.example](framework/examples/.env.example).
+Tudo que tem default funciona out-of-the-box; só os campos sem default
+precisam ser preenchidos pra usar o feature correspondente.
+
+### Postgres / storage
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `POSTGRES_DB` | `agent_framework` | Nome do database. |
+| `POSTGRES_USER` | `agent_framework` | Usuário do Postgres. |
+| `POSTGRES_PASSWORD` | _(gerado pelo bootstrap)_ | Senha. |
+
+### PWA / auth
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `WEB_PORT` | `9090` | Porta exposta no host. Único por instância no mesmo host. |
+| `ADMIN_EMAIL` | `admin@example.com` | E-mail do humano principal (login). |
+| `ADMIN_PASSWORD` | _(vazio)_ | Plaintext; web bcrypta no startup. Setar pra forçar login. |
+| `WEB_AUTH_DEV_BYPASS` | `1` | DEV: admin implícito sem cookie/token. **Setar vazio em prod.** |
+| `WEB_COOKIE_SECURE` | _(vazio)_ | `1` quando servir com HTTPS (cookies marcados Secure). |
+| `WEB_DEFAULT_STREAM` | _(vazio)_ | Stream pré-selecionada no CapturePanel. Vazio = usuário escolhe. |
+
+### Service tokens (broker interno)
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `ORCHESTRATOR_TOKEN` | _(gerado pelo bootstrap)_ | Auth do reactor no broker. |
+| `SCHEDULER_TOKEN` | _(gerado pelo bootstrap)_ | Auth do scheduler no broker. |
+| `AGENT_<NAME>_TOKEN` | _(gerado pelo reconcile)_ | Token de cada agente, automático. Não editar à mão. |
+
+### Web push (VAPID)
+
+Gere com `python3 framework/scripts/generate-vapid.py`.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `VAPID_PUBLIC_KEY` | _(vazio)_ | Public key VAPID. Sem isso, push notifications não funcionam. |
+| `VAPID_PRIVATE_KEY` | _(vazio)_ | Private key VAPID. |
+
+### Transcriber (faster-whisper)
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `WHISPER_MODEL` | `large-v3` | Tamanho do modelo. Sem GPU, installer ajusta pra `base`. |
+| `WHISPER_DEVICE` | `cuda` | `cuda` ou `cpu`. |
+| `WHISPER_COMPUTE_TYPE` | `float16` | `float16` (GPU) ou `int8` (CPU). |
+| `WHISPER_LANGUAGE` | _(vazio = autodetect)_ | Force idioma (`pt`, `en`, etc.). |
+
+### Deploy / multi-instância
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `TZ` | `America/Sao_Paulo` | Timezone aplicado a todos os containers. |
+| `COMPOSE_PROJECT_NAME` | `company-agents` | Namespace de containers/volumes/redes. **Único por instância no mesmo host.** |
+| `COMPOSE_PROFILES` | _(vazio)_ | Setar `tunnel` pra subir cloudflared automático em todo `compose up`. |
+| `DOCKER_CONFIG` | _(vazio = `~/.docker`)_ | Aponte pra `./docker/` se quiser credenciais isoladas (BYOI com registry privado). |
+
+### Paths customizáveis (host)
+
+Defaults mantêm tudo em `./instance/`. Aponte pra fora pra mover estado pra disco/NAS separado, versionar config em repo próprio, etc.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `AGENTS_DIR` | `./instance/agents` | Config dos agentes (`agents.yaml`, `<nome>/CLAUDE.md`, `schedule.yaml`). |
+| `COMPANY_DIR` | `./instance/company` | Contexto da empresa (`CONTEXT.md`, `workflow.md`, `tasks/`, `backlog/`). |
+| `REPOS_DIR` | `./instance/repos` | Repos de código consumidos pelos agentes. **Recomendado fora do framework.** |
+| `SESSIONS_DIR` | `./instance/sessions` | Cwd runtime por topic/task de cada agente (`<agent>/<topic-slug>/`). |
+| `BACKUPS_DIR` | `./instance/backups` | Output de `framework/scripts/backup.sh`. |
+| `HOOKS_DIR` | `./instance/hooks` | Scripts de hooks do Claude Code referenciados em `hooks_defaults`. |
+| `INSTANCE_WEB_DIR` | `./instance/web` | Override de assets da PWA (custom icons em `icons/`). |
+| `WORKTREES_DIR` | `/workspace/worktrees` | Onde a tool `create_worktree` materializa worktrees (path **dentro** do container). Mantido fora de `REPOS_DIR` pra não poluir `git status`. |
+
+### Capability `mysql-producao` (opcional)
+
+Preencher só se algum agente declarar `capabilities: [mysql-producao]`.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `DB_PROD_HOST` | _(vazio)_ | Host do MySQL. Use `host.docker.internal` se atrás de túnel SSH local. |
+| `DB_PROD_PORT` | `3306` | Porta. |
+| `DB_PROD_USER` | _(vazio)_ | User read-only. |
+| `DB_PROD_PASS` | _(vazio)_ | Senha. |
+| `DB_PROD_NAME` | _(vazio)_ | Database. |
+
+### Capability `sentry` (opcional)
+
+Preencher só se algum agente declarar `capabilities: [sentry]`.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `SENTRY_AUTH_TOKEN` | _(vazio)_ | Auth token (mesmo nome usado por sentry-cli/SDKs). |
+| `SENTRY_HOST` | _(vazio = sentry.io)_ | Hostname-only se self-hosted. |
+
+### Git push / MR-PR
+
+Injetadas em todos os agentes pelo reconcile; agentes consultivos simplesmente não invocam `git push`. Imagem base traz `glab` e `gh` pré-instalados — framework é agnóstico.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `GITLAB_TOKEN` | _(vazio)_ | PAT com scope `api` + `write_repository`. |
+| `GITLAB_HOST` | _(vazio = gitlab.com)_ | Self-hosted: `gitlab.empresa.com`. |
+| `GH_TOKEN` | _(vazio)_ | PAT GitHub com scope `repo`. |
+| `GIT_AUTHOR_NAME` | `agent-framework` | Identidade nos commits criados pelos agentes. |
+| `GIT_AUTHOR_EMAIL` | `agents@local` | Idem. |
+
+### PWA manifest
+
+Lido em runtime; mudar requer `docker compose restart web` (sem rebuild).
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `PWA_NAME` | `Agents` | Nome longo na home screen. |
+| `PWA_SHORT_NAME` | `Agents` | Nome curto (ícone). |
+| `PWA_DESCRIPTION` | `Multi-agent orchestration` | Description. |
+| `PWA_THEME_COLOR` | `#0b1220` | Cor da status bar mobile. |
+| `PWA_BACKGROUND_COLOR` | `#0b1220` | Cor do splash screen. |
+| `PWA_ID` | `/agent-framework` | ID único pro browser distinguir instâncias. |
+| `PWA_LANG` | `en` | `pt-BR`, `en`, etc. |
+| `PWA_START_URL` | `/` | Rota inicial ao abrir o PWA instalado. |
+| `PWA_ORIENTATION` | `any` | `any`/`portrait`/`landscape`/`portrait-primary`/etc. Só efeito em standalone. |
+
+### Cloudflare tunnel (opcional)
+
+Expõe o web container num hostname público via Cloudflare edge — HTTPS automático, sem DNS/port-forward, funciona atrás de NAT.
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `CF_TUNNEL_TOKEN` | _(vazio)_ | Connector token do tunnel criado no dashboard Cloudflare. Sem isso, serviço não sobe. |
+
+### Outros
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `TERMINAL_NOTIFY_STREAM` | _(vazio)_ | Stream agregador de notificações terminais (`done`/`halt`/`human_review`). Vazio = só posta na conversa de origem. |
+| `CLAUDE_MOCK` | _(vazio)_ | `1` faz `claude_runner` devolver reply scriptado sem invocar a CLI. Usado pela suite Playwright. |
+| `CLAUDE_MOCK_REPLY` | _(vazio)_ | Customiza o texto do reply mockado. |
 
 ---
 
@@ -171,9 +299,16 @@ CLI. Ver [framework/docker/agent.Dockerfile](framework/docker/agent.Dockerfile).
 O framework é **agnóstico** (GitLab ou GitHub) e oferece as peças;
 a instância decide se adota o padrão todo ou parte. Recomendado:
 
-1. **Isolar tasks paralelas em git worktrees.** Executor roda
-   `git worktree add -b task/<slug> .worktrees/<slug> origin/main` no
-   repo alvo. Duas tasks no mesmo repo não colidem.
+1. **Isolar tasks paralelas em git worktrees.** Agente chama a tool MCP
+   `create_worktree(task_slug, repo)`. O framework cria a worktree em
+   `${WORKTREES_DIR:-/workspace/worktrees}/<repo>/<task_slug>/` (**fora**
+   da árvore do repo canônico em `repos/<repo>/` — worktrees nunca poluem
+   `git status` do repo principal), com branch `task/<task_slug>` e
+   baseline em `origin/<default-branch>` HEAD (override via args). Estado
+   persistido em `tasks.worktrees`; chamada é idempotente (mesma task +
+   repo + branch retorna a worktree existente). Cleanup no fim da task
+   via `cleanup_worktrees(task_slug)` — remove via `git worktree remove`
+   + `prune` + `DELETE FROM tasks.worktrees`.
 2. **Nunca push direto em `main`.** Um PreToolUse hook do Claude Code
    bloqueia `git push origin main|master` quando chamado pelos agentes.
    Script genérico em `framework/examples/hooks/block-push-main.sh`
@@ -188,6 +323,83 @@ Tokens necessários no `.env`: `GITLAB_TOKEN` (scope `api` +
 `write_repository`) ou `GH_TOKEN` (scope `repo`), mais
 `GIT_AUTHOR_NAME`/`GIT_AUTHOR_EMAIL`. Injetados em todos os agentes
 pelo reconcile — só quem realmente usa (executores, revisor) invoca.
+
+---
+
+## Tools MCP do framework
+
+Todo agente roda um servidor MCP **in-process** que expõe as tools abaixo
+sob o prefixo `mcp__agent_framework__*`. Cada tool aparece pro agente como
+uma function call do Claude — habilitar = listar em `allowed_tools` no
+`agents.yaml` (ou herdar do default da imagem). Tools de **capability**
+(playwright/sentry/mysql) são separadas e descritas em [Estendendo agentes](#estendendo-agentes-além-do-básico).
+
+### Comunicação humano ↔ agente
+
+| Tool | O que faz |
+|---|---|
+| `ask_human` | Pergunta ao humano e **bloqueia** indefinidamente até resposta. Use pra decisões que mudam escopo/arquitetura ou ambiguidades sem resposta objetiva. PWA destaca a conversa com badge "needs you". |
+| `notify_human` | Posta mensagem na conv atual (fire-and-forget). Não bloqueia, não força atenção — vira bolinha discreta na sidebar. |
+| `archive_conversation` | Arquiva a conv atual (some da inbox; histórico preservado, reabrível). |
+
+### Coordenação entre agentes
+
+| Tool | O que faz |
+|---|---|
+| `ask_agent` | Pausa e pergunta a OUTRO agente. Cria conv-filha; o agente alvo recebe a pergunta como prompt e o asker espera a resposta síncrona. Hierarquia raiz→filha enforced no broker. Habilitar requer `can_ask: [<target>]` em `agent_policies`. |
+| `ask_agents_many` | Múltiplos `ask_agent`/dispatches em **paralelo** numa única chamada. Útil pra fan-out (consultar 3 especialistas simultaneamente). |
+
+### Lifecycle de task
+
+| Tool | O que faz |
+|---|---|
+| `complete_phase` | Marca o step atual como concluído e faz handoff. `next=<próximo-step>` continua a task; `next=done`/`halt`/`human_review` é terminal (orchestrator muda status). |
+| `get_task_state` | Lê estado estruturado da task atual: slug, title, workflow, status, phases concluídas, worktrees ativas, baselines. Substitui o ritual de inspecionar metadata.yaml. |
+| `task_list` | Lista tasks ativas (default) ou inclui arquivadas. Filtros por status/agente. |
+| `reopen_task` | Reabre task em estado terminal (done/blocked/human_review). Restrição: só quando o humano pedir explicitamente. |
+
+### Worktrees
+
+| Tool | O que faz |
+|---|---|
+| `create_worktree` | Cria worktree isolada em `${WORKTREES_DIR}/<repo>/<task_slug>/` + registra em `tasks.worktrees`. Idempotente (mesmo task+repo+branch reaproveita). Branch default: `task/<slug>`. Baseline default: `origin/<default-branch>` HEAD. |
+| `cleanup_worktrees` | Remove todas worktrees registradas pra task: `git worktree remove --force` + `prune` + delete da row. Falhas não são mascaradas. |
+
+### Memória persistente (por agente)
+
+| Tool | O que faz |
+|---|---|
+| `memory_save` | Salva fato de longo prazo na memória **deste** agente (não compartilhado entre agentes). Tag obrigatória, key opcional. |
+| `memory_recall` | Busca semântica + textual na memória do agente. Ordenada por relevância, com `limit`. |
+| `memory_list` | Lista facts recentes sem query — útil pra auditar o que foi acumulado. |
+| `memory_edit` | Atualiza fact existente (falha se key não existe). |
+| `memory_delete` | Remove fact (hard delete; sem undo). |
+
+### Backlog (fila compartilhada de ideias/pendências)
+
+| Tool | O que faz |
+|---|---|
+| `backlog_add` | Registra ideia/item pendente. Compartilhado entre agentes (não é por agente). |
+| `backlog_list` | Lista ordenado por prioridade desc, depois created_at. Filtros por status/owner. |
+| `backlog_update` | Atualiza campos de item existente; campos omitidos preservam valor. |
+| `backlog_promote` | Promove item → task ativa. Cria task com workflow declarado e dispara fase inicial. |
+
+### Scheduler (cron jobs DB-backed)
+
+| Tool | O que faz |
+|---|---|
+| `schedule_add` | Cria job recorrente (cron expression). Cria conv própria a cada disparo. |
+| `schedule_list` | Lista jobs custom criados via MCP/PWA (não inclui overrides nativos definidos no YAML). |
+| `schedule_update` | Edita job existente; campos omitidos preservados. |
+| `schedule_remove` | Deleta job permanentemente. |
+
+### Skills (Claude Code skills por agente)
+
+| Tool | O que faz |
+|---|---|
+| `save_skill` | Persiste skill na biblioteca **deste** agente (`/app/agents/<name>/skills/`). Cada agente tem sua própria. |
+| `list_skills` | Lista skills do agente (name + description). |
+| `delete_skill` | Remove skill (hard delete). |
 
 ---
 
