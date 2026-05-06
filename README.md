@@ -326,6 +326,153 @@ pelo reconcile — só quem realmente usa (executores, revisor) invoca.
 
 ---
 
+## Hooks (Claude Code)
+
+[Hooks do Claude Code](https://code.claude.com/docs/en/hooks-guide)
+são shell commands que rodam em pontos da lifecycle (`PreToolUse`,
+`PostToolUse`, `Stop`, `SessionStart`, `UserPromptSubmit`, etc.). O
+framework expõe isso como **passthrough**: você declara hooks no
+`agents.yaml`, o reconcile materializa em `.claude/settings.json` por
+agente, o Claude CLI consome — framework não interpreta a semântica.
+
+### Onde declarar
+
+Dois níveis, concatenados por evento:
+
+```yaml
+# agents.yaml
+
+# Aplica a TODOS os agentes (top-level)
+hooks_defaults:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "/app/hooks/block-push-main.sh"
+
+agents:
+  - name: executor
+    # ...
+    hooks:                          # Per-agent, soma com defaults
+      PreToolUse:
+        - matcher: "Bash"
+          hooks:
+            - type: command
+              command: "/app/agents/executor/hooks/block-rm-rf.sh"
+      Stop:
+        - hooks:
+            - type: command
+              command: "/app/agents/executor/hooks/notify-finish.sh"
+```
+
+### Onde colocar os scripts
+
+Dois locais possíveis (scripts precisam estar visíveis **dentro** do container):
+
+| Localização no host | Path no container | Quando usar |
+|---|---|---|
+| `${HOOKS_DIR:-./instance/hooks}/*.sh` | `/app/hooks/` (ro, todos os agentes) | Hooks de política compartilhados (bloqueios, audit log, formatters globais). |
+| `${AGENTS_DIR}/<name>/hooks/*.sh` | `/app/agents/<name>/hooks/` (rw do próprio agente) | Hooks específicos de um papel/agente. |
+
+Imagem base já vem com `jq` e `yq` pré-instalados — basta `chmod +x` no script.
+
+### Contrato do hook
+
+Stdin recebe um JSON do Claude Code descrevendo o evento (com `tool_name`, `tool_input`, etc.). Exit code controla:
+
+- `exit 0` — deixa passar (tool executa normalmente).
+- `exit 2` — **bloqueia** a tool. O conteúdo de stderr volta como feedback pro Claude (vira mensagem visível no contexto, não erro silencioso).
+
+Exemplo prático shipado em [framework/examples/hooks/block-push-main.sh](framework/examples/hooks/block-push-main.sh): bloqueia `git push origin main|master` quando vem do agente; libera push pra branch feature. Cobre compostos (`cd foo && git push`), `git -C path push`, `HEAD:main`, etc. Não afeta push do humano no host.
+
+### Aplicar mudanças em hooks
+
+Edit em `agents.yaml` → `make reconcile` → restart do agente (`docker compose restart <name>`). **Sem rebuild de imagem** — hooks só regeneram `.claude/settings.json`.
+
+---
+
+## Workflows (multi-step tasks)
+
+Workflows declaram a **lifecycle de uma task multi-agente**: quais
+steps existem, qual agente executa cada um, qual artefato cada step
+produz, e quais transições são válidas. Ficam em
+`${COMPANY_DIR}/workflows.yaml` e são **hot-reloaded a cada `complete_phase`**
+— editar não exige restart.
+
+### Filosofia: framework agnóstico, instância declara o vocabulário
+
+O framework conhece **apenas 3 terminais** com semântica fixa:
+
+| Terminal | Status resultante | Quando usar |
+|---|---|---|
+| `done` | `done` | Sucesso. Task encerrada. |
+| `halt` | `blocked` | Humano precisa destravar (ex: token expirou, decisão pendente). |
+| `human_review` | `human_review` | Humano precisa decidir direção (ex: 3 caminhos válidos, sem resposta objetiva). |
+
+**Qualquer outro nome é step livre** declarado pela sua instância. Os exemplos shipados usam `intake`/`plan`/`build`/`review`/`wrap`, mas você escolhe — pode ser `triagem`/`planejamento`/`execucao`, `discovery`/`design`/`ship`, `triage`/`develop`/`merge`, etc.
+
+### Schema de cada step
+
+```yaml
+workflows:
+  default:                  # nome do workflow — referenciado em complete_phase
+    initial_step: intake    # primeiro step quando a task é criada
+    steps:
+      intake:
+        agent: triager      # default executor (opcional — sem isso, complete_phase
+                            # exige `next_agent` explícito ao apontar pra cá)
+        artifact: 00-intake.md   # nome do arquivo que este step produz
+                                 # (injetado no prompt do próximo agente:
+                                 #  "procure por X na task")
+        next: [plan, halt, human_review]  # transições válidas. complete_phase
+                                          # rejeita destinos fora desta lista.
+        instructions: |              # (opcional) markdown injetado no system
+          ## O que fazer aqui        #  prompt do agente DURANTE este step.
+          1. Ler a task...           #  Toda mecânica de fase mora aqui (gates,
+          2. Classificar...          #  worktree, push, encerramento) — não nos
+                                     #  CLAUDE.md dos agentes.
+        overrides:                   # (opcional) sobrescreve config do agente
+          model: sonnet              #  só durante este step. Útil pra triagem
+          effort: low                #  em Sonnet/low e execução em Opus/high
+          memory:                    #  sem ter agentes duplicados.
+            auto_inject_limit: 3
+      plan:
+        agent: planner
+        artifact: 01-plan.md
+        next: [build, halt, human_review]
+      # ...
+```
+
+### Como uma task é amarrada a um workflow
+
+Na **primeira chamada** de `complete_phase` pra uma task nova, o agente passa `workflow: <name>` + `title`. O framework persiste em `tasks.tasks.workflow`; daí em diante, todo `complete_phase` consulta esse arquivo pra:
+
+1. **Validar transição** (`next` é elegível?).
+2. **Resolver agente do próximo step** (do campo `agent`, ou do `next_agent` explícito).
+3. **Carregar `instructions` + `overrides`** pra montar o system prompt do próximo turno.
+
+### Modo permissivo (sem `workflows.yaml` ou workflow não encontrado)
+
+Framework **aceita qualquer step** mas exige `next_agent` explícito em todo `complete_phase`. Útil pra começar simples antes de declarar workflows formalmente.
+
+### Workflows que vêm de exemplo
+
+`framework/examples/workflows.yaml.example` é copiado pro `instance/company/workflows.yaml` no bootstrap. Define:
+
+- **`default`** (5 steps): `intake` → `plan` → `build` → `review` → `wrap` → `done`. Fluxo linear típico, com loop opcional `review` → `build` se precisar correção.
+- **`research`** (3 steps): `intake` → `investigate` → `wrap` → `done`. Pra perguntas que terminam em documento, sem código.
+
+Os agentes referenciados (`triager`, `planner`, `executor`, `reviewer`, `researcher`) também vêm definidos no `agents.yaml.example`, então o setup é runnable end-to-end sem ajuste.
+
+### Editor visual no PWA
+
+- **Settings → Workflows**: edita `instructions` por step (textarea YAML), `overrides`, `next`, etc.
+- **Settings → Preview**: simula a montagem do system prompt pra um step/agente específico — útil pra ver o concatenado final antes de testar com task real.
+
+Mudanças via PWA aplicam no **próximo spawn** do agente (sem rebuild).
+
+---
+
 ## Tools MCP do framework
 
 Todo agente roda um servidor MCP **in-process** que expõe as tools abaixo

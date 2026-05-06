@@ -46,51 +46,93 @@ hooks_defaults:
 
 agents:
 
-  # ==== EXEMPLO 1: agente simples que so conversa e registra ====
-  # Papel: alguem que recebe informacao e organiza em arquivos.
-  # Remova este bloco ou ajuste conforme sua empresa.
-  - name: inbox
-    display_name: "Inbox"
-    description: "Recebe ideias e captura em arquivos organizados."
-    streams: [inbox]                # stream dedicada (sera criada no broker)
-    pool_size: 3                    # atende ate 3 conversas em paralelo
-    idle_timeout_sec: 900           # 15min sem evento solta o slot do pool
-    write_access: [company]         # bind-mount rw em /workspace/company
-    read_access: []                 # bind-mounts ro (ex: [repos])
-    memory: true                    # memoria LP ativada com auto-inject default (5)
-    allowed_tools:                  # tools auto-aprovadas (sem pergunta)
+  # ============================================================
+  # EXEMPLO COMPLETO: 5 agentes que cobrem os workflows shipados
+  # em workflows.yaml.example (`default` e `research`).
+  # Cada agente cobre um papel distinto. Remova/ajuste conforme
+  # os papeis que sua empresa precisa.
+  # ============================================================
+
+  # ==== triager: primeiro contato, classifica + encerra ====
+  # Aparece em: default (intake, wrap), research (intake, wrap).
+  - name: triager
+    display_name: "Triager"
+    description: "Triagem inicial das tasks e encerramento (wrap-up)."
+    streams: [triager]
+    pool_size: 3
+    idle_timeout_sec: 900
+    write_access: [company, orchestrator]
+    read_access: [repos]              # le codigo so pra entender contexto
+    memory: true
+    allowed_tools:
       - Read
       - Write
       - Edit
+      - Glob
+      - Grep
       - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent   # dispatch direto pra outros agentes
+      - mcp__agent_framework__ask_agent
+      - mcp__agent_framework__complete_phase    # participa do workflow
+      - mcp__agent_framework__get_task_state
       - mcp__agent_framework__memory_save
       - mcp__agent_framework__memory_recall
       - mcp__agent_framework__memory_list
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
 
-  # ==== EXEMPLO 2: agente executor com acesso a codigo ====
-  # Papel: quem implementa tarefas tecnicas.
-  - name: executor
-    display_name: "Executor"
-    description: "Implementa tarefas tecnicas em repos/."
-    streams: [executor]
-    pool_size: 1                    # serializa — evita conflito de merge
-    idle_timeout_sec: 3600
-    write_access: [repos, company, orchestrator]  # orchestrator eh pro complete_phase
-    read_access: []
-    model: opus                      # tarefas tecnicas complexas — mais capacidade
-    effort: high                     # mais thinking pra evitar retrabalho
+  # ==== planner: desenha o approach antes do build ====
+  # Aparece em: default (plan).
+  - name: planner
+    display_name: "Planner"
+    description: "Desenha planos tecnicos e arquitetura antes da implementacao."
+    streams: [planner]
+    pool_size: 2
+    idle_timeout_sec: 1800
+    write_access: [company, orchestrator]
+    read_access: [repos]
+    model: opus                       # planejamento se beneficia de mais capacidade
+    effort: high
     memory:
       enabled: true
-      auto_inject_limit: 8           # executor tem mais contexto tecnico a guardar
-    # main_repo: core                # (opcional) Ver secao "main_repo" na REFERENCIA abaixo.
-    # capabilities: [playwright]     # (opcional) sobe MCP servers laterais.
-                                     # Conhecidas: playwright, mysql-producao.
-                                     # Ao habilitar, inclua tambem as tools
-                                     # MCP correspondentes em allowed_tools
-                                     # (ex: mcp__playwright__*).
+      auto_inject_limit: 8            # planner acumula muito contexto tecnico
+    allowed_tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+      - mcp__agent_framework__ask_human
+      - mcp__agent_framework__ask_agent
+      - mcp__agent_framework__complete_phase
+      - mcp__agent_framework__get_task_state
+      - mcp__agent_framework__memory_save
+      - mcp__agent_framework__memory_recall
+      - mcp__agent_framework__memory_list
+      - mcp__agent_framework__memory_edit
+      - mcp__agent_framework__memory_delete
+
+  # ==== executor: implementa em codigo (Bash + worktrees) ====
+  # Aparece em: default (build — agente omitido no workflow,
+  # planner passa next_agent=executor explicitamente).
+  - name: executor
+    display_name: "Executor"
+    description: "Implementa tarefas tecnicas em repos/ via worktrees."
+    streams: [executor]
+    pool_size: 1                      # serializa — evita conflito de merge
+    idle_timeout_sec: 3600
+    write_access: [repos, company, orchestrator]
+    read_access: []
+    model: opus
+    effort: high
+    memory:
+      enabled: true
+      auto_inject_limit: 8
+    # main_repo: core                 # (opcional) Ver secao "main_repo" na REFERENCIA abaixo.
+    # capabilities: [playwright]      # (opcional) sobe MCP servers laterais.
+                                      # Conhecidas: playwright, sentry, mysql-producao.
+                                      # Ao habilitar, inclua tambem as tools
+                                      # MCP correspondentes em allowed_tools
+                                      # (ex: mcp__playwright__*).
     allowed_tools:
       - Read
       - Write
@@ -99,23 +141,79 @@ agents:
       - Grep
       - Bash
       - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent         # consulta outros agentes (ex: inbox/pesquisador)
-      - mcp__agent_framework__complete_phase    # participa de workflow de tasks
+      - mcp__agent_framework__ask_agent
+      - mcp__agent_framework__complete_phase
+      - mcp__agent_framework__get_task_state
+      - mcp__agent_framework__create_worktree   # isola task em worktree
+      - mcp__agent_framework__cleanup_worktrees # limpa no fim
       - mcp__agent_framework__memory_save
       - mcp__agent_framework__memory_recall
       - mcp__agent_framework__memory_list
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
-    # hooks:                             # (opcional) hooks per-agent, concatena com hooks_defaults
+    # hooks:                              # (opcional) hooks per-agent, concatena com hooks_defaults
     #   PreToolUse:
     #     - matcher: "Bash"
     #       hooks:
     #         - type: command
     #           command: "/app/agents/executor/hooks/block-dangerous-bash.sh"
-    #   Stop:
-    #     - hooks:
-    #         - type: command
-    #           command: "echo 'executor terminou turn' >&2"
+
+  # ==== reviewer: revisa o que o executor produziu ====
+  # Aparece em: default (review).
+  - name: reviewer
+    display_name: "Reviewer"
+    description: "Revisa codigo + testes produzidos pelo executor."
+    streams: [reviewer]
+    pool_size: 2
+    idle_timeout_sec: 1800
+    write_access: [company, orchestrator]
+    read_access: [repos]              # le repos pra revisar; nao escreve la
+    memory: true
+    allowed_tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+      - Bash                           # roda testes/lint pra verificar
+      - mcp__agent_framework__ask_human
+      - mcp__agent_framework__ask_agent
+      - mcp__agent_framework__complete_phase
+      - mcp__agent_framework__get_task_state
+      - mcp__agent_framework__memory_save
+      - mcp__agent_framework__memory_recall
+      - mcp__agent_framework__memory_list
+      - mcp__agent_framework__memory_edit
+      - mcp__agent_framework__memory_delete
+
+  # ==== researcher: investigacao sem codigo ====
+  # Aparece em: research (investigate).
+  - name: researcher
+    display_name: "Researcher"
+    description: "Investiga questoes que terminam em documento, sem codigo."
+    streams: [researcher]
+    pool_size: 2
+    idle_timeout_sec: 1800
+    write_access: [company, orchestrator]
+    read_access: [repos]
+    memory: true
+    allowed_tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+      - WebFetch                       # pesquisa em docs externas
+      - WebSearch
+      - mcp__agent_framework__ask_human
+      - mcp__agent_framework__ask_agent
+      - mcp__agent_framework__complete_phase
+      - mcp__agent_framework__get_task_state
+      - mcp__agent_framework__memory_save
+      - mcp__agent_framework__memory_recall
+      - mcp__agent_framework__memory_list
+      - mcp__agent_framework__memory_edit
+      - mcp__agent_framework__memory_delete
 
 # === REFERENCIA do schema ===
 #

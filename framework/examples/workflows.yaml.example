@@ -41,8 +41,8 @@
 
 workflows:
 
-  # === EXEMPLO 1: workflow default simples (quatro steps + terminais) ===
-  # Fluxo linear tipico: triagem -> planejamento -> execucao -> review.
+  # === EXEMPLO 1: workflow default simples (cinco steps + terminais) ===
+  # Fluxo linear tipico: intake -> plan -> build -> review -> wrap.
   default:
     initial_step: intake
     steps:
