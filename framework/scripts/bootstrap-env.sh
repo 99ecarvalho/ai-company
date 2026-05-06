@@ -156,11 +156,11 @@ WORKTREES_DIR=./instance/worktrees
 # (agent.yaml, CLAUDE.md, knowledge/) nao misturar com state efemero (GC 24h).
 SESSIONS_DIR=./instance/sessions
 
-# --- Capability mysql-producao (opcional) ---
-# Credenciais read-only de producao consumidas pelo MCP MySQL lateral
-# (framework/docker/mysql-mcp.Dockerfile). Preencha apenas se algum agente
-# declarar \`capabilities: [mysql-producao]\` em agents.yaml. Se vazio, o
-# container sobe mas nao conecta — agente fica em fallback.
+# --- MySQL de producao (opcional) ---
+# Credenciais read-only consumidas via capability_instance MySQL declarada
+# em instance/agents/agents.yaml (template \`mysql\`, runs stdio in-process
+# via @benborla29/mcp-server-mysql). Preencha apenas se algum agente
+# declarar uma capability_instance que mapeia esses vars no env.
 DB_PROD_HOST=
 DB_PROD_PORT=3306
 DB_PROD_USER=

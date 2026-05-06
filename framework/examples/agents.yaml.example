@@ -44,6 +44,30 @@ hooks_defaults:
         - type: command
           command: "/app/hooks/block-push-main.sh"
 
+# ==== CAPABILITY INSTANCES (opcional) ============================
+# Instancias parametrizadas de capabilities MCP. Cada instance:
+#   - tem nome unico — vira o namespace MCP (`mcp__<name>__*`) e o
+#     server em mcp.extra.json. Agentes consomem em `capabilities`.
+#   - aponta pra um template do framework (CAPABILITY_TEMPLATES em
+#     framework/scripts/reconcile.py).
+#   - declara `env`: mapping de env vars que o MCP server le. Values
+#     sao template-strings Compose (`${VAR:-default}`), expandidas
+#     ao subir o container do agente.
+#
+# Permite multiplas instancias do mesmo template (mysql-producao +
+# mysql-staging) com creds distintas. Sem instances declaradas, esse
+# bloco fica vazio/omitido — instalacao usa so singletons.
+#
+# capability_instances:
+#   mysql-producao:
+#     template: mysql                  # @benborla29/mcp-server-mysql, stdio
+#     env:
+#       MYSQL_HOST: "${DB_PROD_HOST:-}"
+#       MYSQL_PORT: "${DB_PROD_PORT:-3306}"
+#       MYSQL_USER: "${DB_PROD_USER:-}"
+#       MYSQL_PASS: "${DB_PROD_PASS:-}"
+#       MYSQL_DB:   "${DB_PROD_NAME:-}"
+
 agents:
 
   # ============================================================
@@ -129,10 +153,12 @@ agents:
       auto_inject_limit: 8
     # main_repo: core                 # (opcional) Ver secao "main_repo" na REFERENCIA abaixo.
     # capabilities: [playwright]      # (opcional) sobe MCP servers laterais.
-                                      # Conhecidas: playwright, sentry, mysql-producao.
-                                      # Ao habilitar, inclua tambem as tools
-                                      # MCP correspondentes em allowed_tools
-                                      # (ex: mcp__playwright__*).
+                                      # Singletons no framework: playwright, sentry.
+                                      # Outros: declare como capability_instance no
+                                      # topo do arquivo (template + env). Ao habilitar
+                                      # qualquer capability, inclua as tools MCP
+                                      # correspondentes em allowed_tools (ex:
+                                      # mcp__playwright__*, mcp__<instance-name>__*).
     allowed_tools:
       - Read
       - Write
@@ -281,12 +307,23 @@ agents:
 #                               maior parte do tempo dentro de worktree nao erra,
 #                               mas nao entrega valor pratico — prefira ancorar
 #                               nos analistas/consultivos.
-#                                 mysql-producao  — MCP server MySQL read-only. Le
-#                                                   DB_PROD_* do .env. Adicione
-#                                                   mcp__mysql-producao__* em allowed_tools.
-#                               Ex: capabilities: [playwright]
-#                               Pra adicionar capability nova: edite MCP_CAPABILITIES
-#                               em framework/scripts/reconcile.py.
+#                               Ex: capabilities: [playwright, sentry, mysql-producao]
+#                               Capabilities resolvidas em duas categorias:
+#                                 - SINGLETONS no framework (MCP_CAPABILITIES em
+#                                   reconcile.py): playwright, sentry. Config fixa,
+#                                   um por instalacao.
+#                                 - INSTANCES no agents.yaml (capability_instances):
+#                                   parametrizadas via templates do framework
+#                                   (CAPABILITY_TEMPLATES). Ex: declarar
+#                                   `mysql-producao` apontando pro template `mysql`
+#                                   com env-mapping pras DB_PROD_* do .env.
+#                                   Permite multiplas instancias do mesmo template
+#                                   (mysql-producao + mysql-staging com creds distintas).
+#                               Pra capability nova nao parametrizavel (singleton):
+#                               edite MCP_CAPABILITIES em framework/scripts/reconcile.py.
+#                               Pra template novo (parametrizavel): adicione em
+#                               CAPABILITY_TEMPLATES no mesmo arquivo, depois declare
+#                               instances em capability_instances aqui.
 # image                         (BYOI) override da imagem Docker. Se informado, o
 #                               framework NAO buila — usuario entrega imagem pronta.
 #                               Aceita qualquer repo/tag. Pra registries privados:

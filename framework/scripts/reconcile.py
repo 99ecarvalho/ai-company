@@ -72,19 +72,28 @@ AGENT_IMAGE = "agent-framework/agent:0.1.0"
 NAME_MAX_LEN = 31  # 1 inicial + ate 30 subsequentes. Cap generoso pra DNS/stream.
 NAME_RE = re.compile(rf"^[a-z][a-z0-9-]{{0,{NAME_MAX_LEN - 1}}}$")
 
-# Catálogo de capabilities MCP laterais. Cada entry vira um mcpServer em
-# `instance/agents/<name>/mcp.extra.json` (merged pelo claude_runner).
-# Dois shapes suportados:
-#   - HTTP sidecar: declarar `service` (Compose service) + `server` apontando
-#     pra URL do sidecar. Reconcile injeta o service no override e adiciona
-#     depends_on nos agentes que declaram a capability.
-#   - In-process stdio: omitir `service`. O `server` deve ter `type: stdio`
-#     com `command`/`args`; o Claude Code spawna o processo dentro do próprio
-#     container do agente. Útil pra MCPs distribuídos via npx que herdam
-#     credenciais do env do container.
-# Em ambos os casos, `agent_env` (opcional) lista env vars que reconcile
-# injeta no environment do container do agente quando ele declara a
-# capability — necessário pra capabilities stdio que precisam de tokens.
+# Capabilities MCP em duas categorias (D-119):
+#
+# (1) MCP_CAPABILITIES — singletons pre-definidos no framework. Usados por
+#     nome direto em `agent.capabilities`. Pra capabilities que naturalmente
+#     nao tem multiplas instancias por instalacao (ex: token Sentry por org,
+#     pool Playwright unico). Dois shapes:
+#       - HTTP sidecar: `service` (Compose service) + `server` apontando pra
+#         URL do sidecar. Reconcile injeta o service no override e adiciona
+#         depends_on nos agentes que declaram a capability.
+#       - In-process stdio: so `server` com type: stdio (sem `service`).
+#         Claude Code spawna no container do agente.
+#     `agent_env` (opcional) lista env vars injetadas no container do agente.
+#
+# (2) CAPABILITY_TEMPLATES — templates parametrizaveis. A instancia declara
+#     em `agents.yaml` -> `capability_instances` o nome + env values.
+#     Permite ter `mysql-producao` + `mysql-staging` com creds diferentes,
+#     sem leak de vocabulario da instancia pro framework. Stdio-only por
+#     enquanto (HTTP sidecar parametrizavel = v2 quando necessario).
+#
+# Resolucao via `resolve_capability(name, instances)` — instances ganha
+# precedencia sobre singletons em caso de colisao de nome.
+
 MCP_CAPABILITIES: dict[str, dict] = {
     "playwright": {
         "server": {"type": "http", "url": "http://playwright-mcp:8931/mcp"},
@@ -113,32 +122,52 @@ MCP_CAPABILITIES: dict[str, dict] = {
             "SENTRY_HOST": "${SENTRY_HOST:-}",
         },
     },
-    "mysql-producao": {
-        "server": {"type": "http", "url": "http://mysql-producao-mcp:8931/mcp"},
-        "service": {
-            "image": "agent-framework/mysql-mcp:0.1.0",
-            "build": {
-                "context": ".",
-                "dockerfile": "framework/docker/mysql-mcp.Dockerfile",
-            },
-            "restart": "unless-stopped",
-            # Credenciais vem do .env da instance. Server e read-only por
-            # default (ALLOW_*_OPERATION nao setado = false no mcp-server-mysql).
-            # extra_hosts resolve host.docker.internal pra gateway do host, util
-            # quando o MySQL e acessado via tunnel SSH aberto no host (comum em
-            # ambientes de dev/producao sem exposicao direta do banco).
-            "extra_hosts": ["host.docker.internal:host-gateway"],
-            "environment": {
-                "MYSQL_HOST": "${DB_PROD_HOST:-}",
-                "MYSQL_PORT": "${DB_PROD_PORT:-3306}",
-                "MYSQL_USER": "${DB_PROD_USER:-}",
-                "MYSQL_PASS": "${DB_PROD_PASS:-}",
-                "MYSQL_DB": "${DB_PROD_NAME:-}",
-            },
+}
+
+CAPABILITY_TEMPLATES: dict[str, dict] = {
+    "mysql": {
+        # @benborla29/mcp-server-mysql: stdio nativo, le creds via env.
+        # Read-only por default (ALLOW_*_OPERATION unset).
+        "server": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@benborla29/mcp-server-mysql"],
         },
+        # Env vars que o MCP server le. Validador rejeita keys fora desta
+        # lista na instance (cata typo). Instances usam template-string
+        # Compose-style (`${DB_FOO:-}`) que reconcile passa pro container
+        # do agente em build_agent_service; Compose interpola em up-time.
+        "env_keys": ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASS", "MYSQL_DB"],
     },
 }
-KNOWN_CAPABILITIES = set(MCP_CAPABILITIES.keys())
+
+
+def known_capabilities(instances: dict) -> set[str]:
+    return set(MCP_CAPABILITIES) | set(instances or {})
+
+
+def resolve_capability(name: str, instances: dict) -> dict | None:
+    """Retorna spec unificada da capability ou None se desconhecida.
+
+    Shape: {server, service|None, agent_env}. Instances tem precedencia
+    sobre singletons em caso de colisao de nome.
+    """
+    inst = (instances or {}).get(name)
+    if inst is not None:
+        tpl = CAPABILITY_TEMPLATES[inst["template"]]
+        return {
+            "server": dict(tpl["server"]),
+            "service": None,
+            "agent_env": dict(inst.get("env") or {}),
+        }
+    spec = MCP_CAPABILITIES.get(name)
+    if spec is None:
+        return None
+    return {
+        "server": dict(spec["server"]),
+        "service": dict(spec["service"]) if "service" in spec else None,
+        "agent_env": dict(spec.get("agent_env") or {}),
+    }
 
 
 # ---------- Util ----------
@@ -240,13 +269,72 @@ def merge_hooks(defaults: dict | None, per_agent: dict | None) -> dict:
     return out
 
 
-def validate_schema(data: dict) -> tuple[list[dict], dict]:
+def _validate_capability_instances(value: Any) -> dict:
+    """Valida bloco top-level `capability_instances` (D-119).
+
+    Shape:
+        capability_instances:
+          <instance-name>:
+            template: <template-name in CAPABILITY_TEMPLATES>
+            env: { KEY: VALUE-OR-COMPOSE-TEMPLATE-STRING, ... }
+
+    instance-name vira o namespace MCP (mcp__<name>__*) e tambem o nome do
+    server em mcp.extra.json. env keys sao validadas contra o template.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        die("`capability_instances` deve ser mapping name->spec")
+    out: dict[str, dict] = {}
+    for name, spec in value.items():
+        ctx = f"capability_instances.{name}"
+        if not isinstance(name, str) or not NAME_RE.match(name):
+            die(f"{ctx}: nome invalido (deve casar /^[a-z][a-z0-9-]*$/)")
+        if not isinstance(spec, dict):
+            die(f"{ctx}: deve ser mapping com `template` + `env`")
+        tpl_name = spec.get("template")
+        if not isinstance(tpl_name, str):
+            die(f"{ctx}.template: obrigatorio (string)")
+        tpl = CAPABILITY_TEMPLATES.get(tpl_name)
+        if tpl is None:
+            die(
+                f"{ctx}.template: template desconhecido {tpl_name!r}. "
+                f"Conhecidos: {sorted(CAPABILITY_TEMPLATES)}"
+            )
+        env = spec.get("env") or {}
+        if not isinstance(env, dict):
+            die(f"{ctx}.env: deve ser mapping KEY->value")
+        valid_keys = set(tpl.get("env_keys") or [])
+        for k, v in env.items():
+            if not isinstance(k, str) or not k:
+                die(f"{ctx}.env: keys devem ser strings nao-vazias")
+            if valid_keys and k not in valid_keys:
+                die(
+                    f"{ctx}.env.{k}: chave nao reconhecida pelo template "
+                    f"{tpl_name!r}. Aceitas: {sorted(valid_keys)}"
+                )
+            if not isinstance(v, (str, int)):
+                die(f"{ctx}.env.{k}: deve ser string (suporta ${{VAR:-default}})")
+        # Colisao com singleton: instances vence (resolve_capability ja faz isso),
+        # mas avisa pra evitar surpresa.
+        if name in MCP_CAPABILITIES:
+            log(
+                f"{ctx}: instance overrides singleton de mesmo nome em MCP_CAPABILITIES",
+                "warn",
+            )
+        out[name] = {"template": tpl_name, "env": {k: str(v) for k, v in env.items()}}
+    return out
+
+
+def validate_schema(data: dict) -> tuple[list[dict], dict, dict]:
     if not isinstance(data, dict):
         die("agents.yaml deve ser um mapping no topo")
     if data.get("schema_version") != 1:
         die("schema_version precisa ser 1")
     hooks_defaults = data.get("hooks_defaults") or {}
     _validate_hooks_block(hooks_defaults, "hooks_defaults")
+    capability_instances = _validate_capability_instances(data.get("capability_instances"))
+    known_caps = known_capabilities(capability_instances)
     agents = data.get("agents") or []
     if not isinstance(agents, list):
         die("`agents` deve ser lista")
@@ -305,16 +393,16 @@ def validate_schema(data: dict) -> tuple[list[dict], dict]:
         if not isinstance(caps, list):
             die(f"{ctx}: `capabilities` deve ser lista")
         for c in caps:
-            if c not in KNOWN_CAPABILITIES:
+            if c not in known_caps:
                 die(
                     f"{ctx}: capability desconhecida: {c!r}. "
-                    f"Conhecidas: {sorted(KNOWN_CAPABILITIES)}"
+                    f"Conhecidas: {sorted(known_caps)}"
                 )
         image = a.get("image")
         if image is not None and not isinstance(image, str):
             die(f"{ctx}: `image` deve ser string (ex: registry.gitlab.com/acme/my-agent:v1)")
         _validate_hooks_block(a.get("hooks"), ctx)
-    return agents, hooks_defaults
+    return agents, hooks_defaults, capability_instances
 
 
 # ---------- Broker admin client ----------
@@ -535,8 +623,9 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
 
 # ---------- Docker compose override ----------
 
-def build_agent_service(agent: dict) -> dict:
+def build_agent_service(agent: dict, capability_instances: dict | None = None) -> dict:
     name = agent["name"]
+    capability_instances = capability_instances or {}
     upper = name.upper().replace("-", "_")
     mem_enabled, _ = _memory_cfg(agent)
     # BYOI: agente pode apontar pra imagem propria (registry publico/privado).
@@ -651,17 +740,17 @@ def build_agent_service(agent: dict) -> dict:
     # podem injetar env vars no container do agente (`agent_env`) — necessário
     # pra stdio servers que precisam de credenciais via env (tipo Sentry).
     for c in agent.get("capabilities") or []:
-        if c not in MCP_CAPABILITIES:
+        spec = resolve_capability(c, capability_instances)
+        if spec is None:
             continue
-        if "service" in MCP_CAPABILITIES[c]:
+        if spec["service"] is not None:
             svc["depends_on"][f"{c}-mcp"] = {"condition": "service_started"}
-        cap_env = MCP_CAPABILITIES[c].get("agent_env") or {}
-        if cap_env:
-            svc["environment"].update(cap_env)
+        if spec["agent_env"]:
+            svc["environment"].update(spec["agent_env"])
     return svc
 
 
-def write_mcp_extra(agent: dict) -> None:
+def write_mcp_extra(agent: dict, capability_instances: dict | None = None) -> None:
     """Escreve instance/agents/<name>/mcp.extra.json com servers das capabilities.
 
     Claude_runner faz merge desse arquivo no mcp-config.json gerado pra cada run.
@@ -670,8 +759,9 @@ def write_mcp_extra(agent: dict) -> None:
     caps = agent.get("capabilities") or []
     servers = {}
     for c in caps:
-        if c in MCP_CAPABILITIES:
-            servers[c] = MCP_CAPABILITIES[c]["server"]
+        spec = resolve_capability(c, capability_instances or {})
+        if spec is not None:
+            servers[c] = spec["server"]
     import json as _json
     extra_path = AGENTS_DIR / name / "mcp.extra.json"
     if servers:
@@ -684,8 +774,9 @@ def write_mcp_extra(agent: dict) -> None:
         extra_path.unlink()
 
 
-def write_override(agents: list[dict]) -> None:
-    services = {f"agent-{a['name']}": build_agent_service(a) for a in agents}
+def write_override(agents: list[dict], capability_instances: dict | None = None) -> None:
+    capability_instances = capability_instances or {}
+    services = {f"agent-{a['name']}": build_agent_service(a, capability_instances) for a in agents}
     volumes = {f"agent-{a['name']}-claude": None for a in agents}
     # Agrupa capabilities MCP usadas por qualquer agente — uma instancia de
     # cada server serve N agentes que pedirem a mesma capability.
@@ -693,8 +784,9 @@ def write_override(agents: list[dict]) -> None:
     for a in agents:
         used_caps.update(a.get("capabilities") or [])
     for c in sorted(used_caps):
-        if c in MCP_CAPABILITIES and "service" in MCP_CAPABILITIES[c]:
-            services[f"{c}-mcp"] = dict(MCP_CAPABILITIES[c]["service"])
+        spec = resolve_capability(c, capability_instances)
+        if spec is not None and spec["service"] is not None:
+            services[f"{c}-mcp"] = spec["service"]
     content = {"services": services, "volumes": volumes}
     header = textwrap.dedent("""\
         # GERADO POR framework/scripts/reconcile.py — NAO EDITE MANUALMENTE.
@@ -869,10 +961,15 @@ def main() -> int:
 
     log("Parseando agents.yaml", "step")
     data = yaml.safe_load(AGENTS_YAML.read_text(encoding="utf-8"))
-    agents, hooks_defaults = validate_schema(data)
+    agents, hooks_defaults, capability_instances = validate_schema(data)
     log(f"{len(agents)} agente(s) na config: {[a['name'] for a in agents]}", "ok")
     if hooks_defaults:
         log(f"hooks_defaults: {sorted(hooks_defaults.keys())}", "ok")
+    if capability_instances:
+        log(
+            f"capability_instances: {sorted(capability_instances)}",
+            "ok",
+        )
 
     env = load_env(ENV_FILE)
     broker_url = os.environ.get("BROKER_URL") or env.get("BROKER_URL") or "http://web:8090"
@@ -898,7 +995,7 @@ def main() -> int:
             log("  (dry-run, pulando acoes)", "info")
             continue
         ensure_agent_dir(a, hooks_defaults=hooks_defaults)
-        write_mcp_extra(a)
+        write_mcp_extra(a, capability_instances)
         log(f"  filesystem: {AGENTS_DIR}/{a['name']}/ ok", "ok")
         if client is not None:
             try:
@@ -924,7 +1021,7 @@ def main() -> int:
     if args.dry_run:
         log("(dry-run, nao escreve)", "info")
     else:
-        write_override(agents)
+        write_override(agents, capability_instances)
         log(f"{OVERRIDE_FILE.name} escrito com {len(agents)} service(s)", "ok")
 
     if args.no_up:
