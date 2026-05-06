@@ -1,0 +1,11 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.0
+python-multipart==0.0.17
+structlog==24.4.0
+aiohttp==3.11.7
+asyncpg==0.30.0
+bcrypt==4.2.1
+pywebpush==2.0.0
+pydantic==2.13.2
+PyYAML==6.0.2
+docker==7.1.0

@@ -1,0 +1,9 @@
+# Kept in sync with pyproject.toml [project.dependencies]
+# Use esse arquivo no Dockerfile pra cachear o pip install antes do codigo entrar.
+asyncpg>=0.30
+PyYAML>=6.0
+structlog>=24.1
+aiofiles>=23.2
+aiohttp>=3.9
+APScheduler>=3.10
+requests>=2.32

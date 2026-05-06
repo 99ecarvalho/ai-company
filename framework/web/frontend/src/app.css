@@ -1,0 +1,250 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* mdBody — estilos de markdown renderizado (marked -> HTML). Usado por
+ * MessageBubble (chat) e FileViewerOverlay (visualizador de .md). Substitui
+ * @tailwindcss/typography (prose) que nao esta instalado. Preflight do
+ * Tailwind zera tudo; aqui reintroduz o essencial. */
+.mdBody > *:first-child { margin-top: 0; }
+.mdBody > *:last-child { margin-bottom: 0; }
+.mdBody p { margin: 0.5em 0; }
+.mdBody ul, .mdBody ol { margin: 0.5em 0; padding-left: 1.4em; }
+.mdBody ul { list-style: disc; }
+.mdBody ol { list-style: decimal; }
+.mdBody li { margin: 0.2em 0; }
+.mdBody li > p { margin: 0.2em 0; }
+.mdBody blockquote {
+  margin: 0.5em 0;
+  padding-left: 0.8em;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+}
+.mdBody h1, .mdBody h2, .mdBody h3,
+.mdBody h4, .mdBody h5, .mdBody h6 {
+  margin: 0.7em 0 0.3em;
+  font-weight: 600;
+}
+.mdBody h1 { font-size: 1.4em; }
+.mdBody h2 { font-size: 1.2em; }
+.mdBody h3 { font-size: 1.1em; }
+.mdBody h4 { font-size: 1.05em; }
+.mdBody hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+/* Tabelas markdown sangram em mobile: largura intrinseca nao respeita
+   parent. `display: block` + scroll-x interno mantem a tabela legivel
+   sem estourar o bubble. `width: max-content` preserva colunas
+   ajustadas ao conteudo dentro do scroll container. */
+.mdBody table {
+  display: block;
+  margin: 0.5em 0;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.mdBody th, .mdBody td { padding: 3px 8px; border: 1px solid var(--border); }
+.mdBody a { color: var(--accent); text-decoration: underline; }
+.mdBody pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 12px;
+}
+/* Inline code com path/identifier longo (ex: nome de coluna SQL) sem
+   word-break vaza pra fora do bubble em mobile. */
+.mdBody code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 12px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.mdBody pre code {
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+/* Wrapper injetado por addCodeCopyButtons. Botao posicionado no canto sup.
+   direito do <pre>. Hover-only em desktop (com pointer fino), sempre visivel
+   em touch (sem hover). */
+.mdBody .codeBlock {
+  position: relative;
+}
+.mdBody .codeCopyBtn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.2;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.mdBody .codeBlock:hover .codeCopyBtn,
+.mdBody .codeCopyBtn:focus-visible {
+  opacity: 1;
+}
+.mdBody .codeCopyBtn:hover {
+  color: var(--fg);
+  background: var(--panel2);
+}
+.mdBody .codeCopyBtn--ok {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+@media (hover: none) {
+  .mdBody .codeCopyBtn { opacity: 1; }
+}
+.mdBody .fileLink {
+  color: var(--accent);
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.mdBody .inlineImage {
+  display: block;
+  max-width: 100%;
+  max-height: 320px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  margin: 6px 0;
+}
+.mdBody .inlineImageThumb {
+  max-height: 180px;
+  cursor: pointer;
+}
+
+/* drag-and-drop visual feedback */
+.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -8px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* uPlot — adapta cores do chart ao tema (dark/light) */
+.u-legend,
+.u-legend .u-label,
+.u-legend .u-value {
+  color: var(--muted) !important;
+  font-size: 11px;
+}
+.u-legend .u-series > * {
+  color: var(--fg);
+}
+.u-legend th {
+  color: var(--muted);
+}
+.u-cursor-x,
+.u-cursor-y {
+  border-color: var(--muted) !important;
+}
+.u-select {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+@layer base {
+  :root,
+  [data-theme='dark'] {
+    --bg: #0b1220;
+    --fg: #e6edf3;
+    --muted: #7d8590;
+    --accent: #2f81f7;
+    --accent2: #e5534b;
+    --ok: #2ea043;
+    --warn: #d29922;
+    --panel: #161b22;
+    --panel2: #1c232d;
+    --border: #30363d;
+    --on-accent: #ffffff;
+    --sidebar-w: 300px;
+    --rail-w: 72px;
+    --bottom-nav-h: 56px;
+  }
+
+  [data-theme='light'] {
+    --bg: #f6f8fa;
+    --fg: #1f2328;
+    --muted: #656d76;
+    --accent: #0969da;
+    --accent2: #cf222e;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --panel: #ffffff;
+    --panel2: #f6f8fa;
+    --border: #d0d7de;
+    --on-accent: #ffffff;
+  }
+
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  /* Scrollbars: coerentes com o tema (claro + escuro) via tokens CSS.
+     Firefox usa scrollbar-width/color; WebKit precisa do ::-webkit-scrollbar. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--fg) 20%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--fg) 38%, transparent);
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  /* iOS notch / Android gesture-bar safe areas. Use combined com bottom-nav
+     fixo, FAB e header sticky. */
+  .pt-safe { padding-top: env(safe-area-inset-top); }
+  .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  .pl-safe { padding-left: env(safe-area-inset-left); }
+  .pr-safe { padding-right: env(safe-area-inset-right); }
+  .pb-safe-nav {
+    padding-bottom: calc(env(safe-area-inset-bottom) + var(--bottom-nav-h));
+  }
+}

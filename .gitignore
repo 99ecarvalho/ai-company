@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env (convencao docker-compose: .env na raiz)
+.env
+.env.local
+.env.old
+.env.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Claude Code
+.claude/settings.local.json
+
+# Playwright
+.playwright-mcp/
+
+# docker-compose.override.yml eh gerado por framework/scripts/reconcile.py
+docker-compose.override.yml
+
+# Overlay opcional de contexto local (pessoal); framework le se existir
+CLAUDE.local.md
+
+# === Estado/config da empresa usuaria (instance/) ===
+# Tudo aqui eh da instancia, nao do framework. Populado no setup inicial
+# (bootstrap-env + reconcile) e durante uso dos agentes.
+instance/
+
+# Notas locais de meta-desenvolvimento (PROJECT_PLAN, DECISIONS,
+# EXECUTION_LOG, QUESTIONS). Opcional; se mantidas, ficam fora do repo.
+.dev/
+
+# === Frontend SvelteKit (framework/web/) ===
+# node_modules e build artifacts; sources em frontend/src/ sao tracked.
+framework/web/frontend/node_modules/
+framework/web/frontend/.svelte-kit/
+framework/web/build/
+
+# Playwright artifacts (gitignored ja em frontend/.gitignore mas raiz tambem precisa)
+framework/web/frontend/test-results/
+framework/web/frontend/playwright-report/

@@ -1,0 +1,269 @@
+# agent-framework — stack base.
+# Messaging vive em Postgres + broker HTTP no 'web' (sem broker externo).
+
+name: agent-framework
+
+services:
+
+  # --- Postgres: storage unico do sistema ---
+  # Schemas: messaging, orchestrator, memory, telemetry, web.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agent_framework}
+      POSTGRES_USER: ${POSTGRES_USER:-agent_framework}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data:rw
+      # Schema agora vem via framework/db/migrations/, aplicadas pelo entrypoint
+      # do web container antes de subir o uvicorn. Ver framework/scripts/migrate.py.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent_framework}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # --- Web: broker HTTP (messages, events SSE, subs, users) + PWA ---
+  # Porta 9090 no host (configuravel via WEB_PORT — util pra multi-empresa
+  # na mesma maquina). Roda tambem as rotas de admin / telemetry / memory.
+  web:
+    build:
+      context: .
+      dockerfile: framework/web/Dockerfile
+    image: agent-framework/web:0.1.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-9090}:8090"
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN}
+      SCHEDULER_TOKEN: ${SCHEDULER_TOKEN}
+      WEB_DEFAULT_STREAM: ${WEB_DEFAULT_STREAM:-secretario}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_CONTACT_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      WEB_AUTH_DEV_BYPASS: ${WEB_AUTH_DEV_BYPASS:-}
+      WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE:-}
+      TERMINAL_NOTIFY_STREAM: ${TERMINAL_NOTIFY_STREAM:-}
+      TRANSCRIBER_URL: http://transcriber:8000
+      TTS_URL: http://tts:8000
+      SCHEDULER_URL: http://scheduler:8811
+      LOG_LEVEL: INFO
+      PROJECT_ROOT_HOST: ${PWD}
+      TZ: ${TZ:-America/Sao_Paulo}
+      # PWA — defaults genericos do framework, sobrescritos pelo .env da
+      # instancia. Manifest renderizado dinamicamente em /manifest.webmanifest.
+      PWA_NAME: ${PWA_NAME:-Agents}
+      PWA_SHORT_NAME: ${PWA_SHORT_NAME:-Agents}
+      PWA_DESCRIPTION: ${PWA_DESCRIPTION:-Multi-agent orchestration}
+      PWA_THEME_COLOR: ${PWA_THEME_COLOR:-#0b1220}
+      PWA_BACKGROUND_COLOR: ${PWA_BACKGROUND_COLOR:-#0b1220}
+      PWA_ID: ${PWA_ID:-/agent-framework}
+      PWA_LANG: ${PWA_LANG:-en}
+      PWA_START_URL: ${PWA_START_URL:-/}
+      PWA_ORIENTATION: ${PWA_ORIENTATION:-any}
+      INSTANCE_WEB_DIR: /workspace/web
+    volumes:
+      - ${AGENTS_DIR:-./instance/agents}:/workspace/agents      # rw pra "contratar" novo agent (reconcile)
+      - ${COMPANY_DIR:-./instance/company}:/workspace/company   # rw pra viewer de arquivos + upload
+      - ${REPOS_DIR:-./instance/repos}:/workspace/repos:ro      # ro pra viewer (dev workspace)
+      - ${SESSIONS_DIR:-./instance/sessions}:/workspace/sessions:ro  # ro: viewer/download de artefatos por task
+      - ${INSTANCE_WEB_DIR:-./instance/web}:/workspace/web:ro   # ro: PWA assets override (icons/)
+      - ./.env:/workspace/.env:ro                               # leitura de credenciais do .env (pra reconcile)
+      - /var/run/docker.sock:/var/run/docker.sock               # pra rodar reconcile (run)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --- Orchestrator reactor: consome orchestrator.events + posta handoffs ---
+  orchestrator-reactor:
+    image: agent-framework/agent:0.1.0
+    build:
+      context: .
+      dockerfile: framework/docker/agent.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}
+      BROKER_URL: http://web:8090
+      BROKER_TOKEN: ${ORCHESTRATOR_TOKEN}
+      LOG_LEVEL: INFO
+      POLL_INTERVAL_SEC: "2"
+      TERMINAL_NOTIFY_STREAM: ${TERMINAL_NOTIFY_STREAM:-}
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - ${COMPANY_DIR:-./instance/company}:/workspace/company:ro
+    command: ["python3", "-m", "orchestrator.reactor"]
+    working_dir: /app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8810/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --- Watchdog: restarta agentes com heartbeat stale ---
+  watchdog:
+    build:
+      context: ./framework/watchdog
+      dockerfile: Dockerfile
+    image: agent-framework/watchdog:0.1.0
+    restart: unless-stopped
+    environment:
+      HEARTBEAT_DIR: /heartbeats
+      POLL_INTERVAL_SEC: "60"
+      STALE_THRESHOLD_SEC: "180"
+      RESTART_COOLDOWN_SEC: "600"
+      CONTAINER_PREFIX: "agent-framework-agent-"
+      CONTAINER_SUFFIX: "-1"
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - ./instance/heartbeats:/heartbeats:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8812/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --- Hot reload (DEV ONLY): watcher de CLAUDE.md/agent.yaml -> docker restart
+  # Habilita com: docker compose --profile dev up -d hot-reload
+  hot-reload:
+    image: agent-framework/watchdog:0.1.0
+    build:
+      context: ./framework/watchdog
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    profiles: [dev]
+    environment:
+      AGENTS_DIR: /workspace/agents
+      POLL_SEC: "5"
+      COOLDOWN_SEC: "10"
+      CONTAINER_PREFIX: "agent-framework-agent-"
+      CONTAINER_SUFFIX: "-1"
+      WATCH_FILES: "CLAUDE.md,agent.yaml"
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - ${AGENTS_DIR:-./instance/agents}:/workspace/agents:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["python3", "-u", "hot_reload.py"]
+
+  # --- Scheduler: cron jobs (APScheduler) ---
+  scheduler:
+    image: agent-framework/agent:0.1.0
+    build:
+      context: .
+      dockerfile: framework/docker/agent.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}
+      BROKER_URL: http://web:8090
+      BROKER_TOKEN: ${SCHEDULER_TOKEN}
+      LOG_LEVEL: INFO
+      BACKUP_DIR: /workspace/backups
+      BACKUP_RETAIN: "30"
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - ${COMPANY_DIR:-./instance/company}:/workspace/company:ro
+      - ${AGENTS_DIR:-./instance/agents}:/workspace/agents:ro
+      - ./docker-compose.override.yml:/workspace/docker-compose.override.yml:ro
+      - ${BACKUPS_DIR:-./instance/backups}:/workspace/backups
+    command: ["python3", "-m", "orchestrator.scheduler"]
+    working_dir: /app
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8811/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --- TTS: Piper (CPU, leve) ---
+  tts:
+    build:
+      context: ./framework/tts
+      dockerfile: Dockerfile
+    image: agent-framework/tts:0.1.0
+    restart: unless-stopped
+    environment:
+      DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-pt_BR-faber-medium}
+      TZ: ${TZ:-America/Sao_Paulo}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --- Transcriber: faster-whisper GPU ---
+  transcriber:
+    build:
+      context: ./framework/transcriber
+      dockerfile: Dockerfile
+    image: agent-framework/transcriber:0.1.0
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+      TZ: ${TZ:-America/Sao_Paulo}
+    volumes:
+      - whisper-cache:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # --- Cloudflared named tunnel (opcional, profile `tunnel`) ---
+  # Expoe o `web:8090` interno num hostname publico via Cloudflare edge,
+  # sem port-forward / DNS / Let's Encrypt. HTTPS automatico. D-94.
+  #
+  # Uso: criar tunnel no Cloudflare Zero Trust dashboard, copiar o token,
+  # colar em `CF_TUNNEL_TOKEN` no .env, e:
+  #   docker compose --profile tunnel up -d cloudflared
+  # Sem profile, o servico nao sobe — instancia que nao quer publica
+  # roda como sempre.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_started
+    environment:
+      TUNNEL_TOKEN: ${CF_TUNNEL_TOKEN}
+      TZ: ${TZ:-America/Sao_Paulo}
+    command: ["tunnel", "--no-autoupdate", "run"]
+
+volumes:
+  postgres-data:
+  whisper-cache:

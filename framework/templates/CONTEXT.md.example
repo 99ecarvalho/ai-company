@@ -1,0 +1,35 @@
+# Contexto da empresa
+
+> Este arquivo eh injetado no system prompt de TODO agente em toda invocacao.
+> Mantenha conciso (cap ~8KB). Edite via overlay "🏢 Empresa" no PWA ou
+> direto neste arquivo (`instance/company/CONTEXT.md`).
+
+## Empresa
+
+- **Nome:** _(preencher)_
+- **Setor:** _(preencher)_
+- **Missao:** _(preencher)_
+
+## Onde consultar o que
+
+Mapa de paths que os agentes podem ler/escrever no workspace:
+
+- `company/ideas/` — captacoes brutas (humano joga ideia, inbox organiza)
+- `company/notes/` — notas livres por data (briefings, retros, decisoes)
+- `company/decisions/` — decisoes formais (1 arquivo por decisao, formato ADR)
+- `company/tasks/<slug>/` — tasks ativas em workflow multi-fase
+- `repos/` — codigo gerado durante tasks (RW so pelo executor; RO pros outros)
+- `agents/<nome>/knowledge/` — playbooks/conhecimento curado por agente
+
+## Convencoes
+
+- Datas em ISO (YYYY-MM-DD) salvo se contexto pedir formato BR.
+- Valores em BRL.
+- Idioma das mensagens: portugues (pt-BR).
+- Codigo + comentarios em ingles, salvo se for documentacao da empresa.
+
+## Filosofia
+
+Veja `instance/company/philosophy.md` (ou edite na aba "Philosophy" do
+overlay "🏢 Empresa"). Define modelo operacional (TDD, SDD, Context
+Management, mistura, etc).

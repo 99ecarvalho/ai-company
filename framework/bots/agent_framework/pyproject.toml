@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-framework"
+version = "0.1.0"
+description = "Framework compartilhado por todos os agentes Claude Code orquestrados."
+requires-python = ">=3.11"
+dependencies = [
+    "asyncpg>=0.30",
+    "PyYAML>=6.0",
+    "structlog>=24.1",
+    "aiofiles>=23.2",
+    "aiohttp>=3.9",
+    "APScheduler>=3.10",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+include = ["agent_framework*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
