@@ -65,13 +65,40 @@ fica com:
 ## Uso dia-a-dia
 
 ```bash
-make reconcile          # aplica mudanças em agents.yaml
-make new-agent NAME=x DISPLAY="X"   # scaffold de agente novo
-make logs-<agente>      # tail de logs JSON
-make shell-<agente>     # bash dentro do container
-make healthcheck        # sanity check
-make down               # derruba (preserva volumes)
-make help               # lista todos os targets
+# Setup
+make install              # wizard interativo (1ª instalação)
+make help                 # lista todos os targets
+
+# Stack
+make up                   # sobe tudo (docker compose up -d)
+make down                 # derruba (preserva volumes)
+make restart              # down + up
+make build                # rebuild das imagens (agent + web + transcriber + watchdog)
+make healthcheck          # sanity check (containers + web + db + transcriber)
+make test                 # pytest do framework (dentro do container web)
+
+# Agentes / config
+make reconcile            # aplica instance/agents/agents.yaml (bots + streams + .env + override + up)
+make reconcile-dry        # mostra o que o reconcile faria, sem aplicar
+make new-agent NAME=x DISPLAY="X"   # scaffold de agente novo no agents.yaml
+make reset-agent-<nome>   # limpa sessions de um agente (ex: make reset-agent-inbox)
+
+# Logs
+make logs                 # tail de toda a stack
+make logs-<servico>       # logs de um serviço específico (ex: make logs-inbox)
+make logs-all             # agregado com pretty-print JSON + cores por service (LEVEL=error filtra)
+make logs-errors          # só warnings+errors
+make shell-<servico>      # bash dentro de um serviço (ex: make shell-inbox)
+
+# Banco / migrations
+make migrate              # aplica migrations pendentes (normalmente roda sozinho no boot do web)
+make migrate-status       # lista aplicadas/pendentes
+make migrate-baseline V=N # marca como aplicada sem executar
+make tasks-migrate        # backfill idempotente company/tasks/ → Postgres
+
+# Reset
+make reset-instance       # zera DB + sessions preservando config (pede confirmação)
+make reset-instance-yes   # igual sem prompt (CI/scripts)
 ```
 
 Pelo PWA: **👔** no header da sidebar abre o hire wizard (form + preview
@@ -99,6 +126,12 @@ capability ganham as tools automaticamente. Implementadas hoje:
   instância serve N agentes. Útil pra testes visuais, tutoriais,
   scraping. Habilite com `capabilities: [playwright]` e adicione
   `mcp__playwright__*` em `allowed_tools`.
+- `sentry` — issues, releases e events do Sentry via
+  [@sentry/mcp-server](https://www.npmjs.com/package/@sentry/mcp-server).
+  Roda stdio dentro do próprio container do agente (sem sidecar).
+  Preencha `SENTRY_AUTH_TOKEN` no `.env` (e `SENTRY_HOST` se for
+  self-hosted). Habilite com `capabilities: [sentry]` e adicione
+  `mcp__sentry__*` em `allowed_tools`.
 - `mysql-producao` — acesso **read-only** a MySQL via
   [`@benborla29/mcp-server-mysql`](https://github.com/benborla/mcp-server-mysql)
   bridgeado stdio→HTTP por `supergateway`. Única tool exposta é
@@ -142,8 +175,8 @@ a instância decide se adota o padrão todo ou parte. Recomendado:
    `git worktree add -b task/<slug> .worktrees/<slug> origin/main` no
    repo alvo. Duas tasks no mesmo repo não colidem.
 2. **Nunca push direto em `main`.** Um PreToolUse hook do Claude Code
-   bloqueia `git push origin main|master` quando chamado pelos agentes
-   (D-60). Script genérico em `framework/examples/hooks/block-push-main.sh`
+   bloqueia `git push origin main|master` quando chamado pelos agentes.
+   Script genérico em `framework/examples/hooks/block-push-main.sh`
    — copie pra `${HOOKS_DIR:-instance/hooks}/` e referencie em
    `hooks_defaults` de `agents.yaml`. O bloqueio **não** afeta push do
    host (humano faz livre); só intercepta Bash vindo dos agentes.
@@ -170,13 +203,11 @@ pelo reconcile — só quem realmente usa (executores, revisor) invoca.
 - **orchestrator-reactor + scheduler** = handoffs e cron jobs.
 - **transcriber** = faster-whisper (GPU ou CPU).
 - **watchdog** = monitora `instance/heartbeats/` e restarta agentes stale.
-- **MCPs laterais** (opt-in via `capabilities:`) = containers auxiliares
-  compartilhados entre agentes que os requisitam. Hoje: `playwright-mcp`
-  (navegador automatizado), `mysql-producao-mcp` (query read-only em DB de
-  produção via `host.docker.internal` — usa túnel SSH no host quando o banco
-  não é exposto diretamente).
-
-Detalhes: [.dev/notes/PROJECT_PLAN.md](.dev/notes/PROJECT_PLAN.md).
+- **MCPs laterais** (opt-in via `capabilities:`) = `playwright-mcp` (navegador
+  automatizado, container compartilhado), `sentry` (stdio in-process via npx),
+  `mysql-producao-mcp` (query read-only em DB de produção via
+  `host.docker.internal` — usa túnel SSH no host quando o banco não é exposto
+  diretamente).
 
 ---
 
@@ -215,7 +246,6 @@ agent-framework/
 │   ├── scripts/        # install, reconcile, bootstrap-env, migrate
 │   └── examples/       # defaults genéricos copiados no bootstrap
 ├── instance/           # ESTADO gitignored (agents.yaml, company/, ...)
-├── .dev/notes/         # meta-dev tracked (PLAN, LOG, DECISIONS, QUESTIONS)
 ├── CLAUDE.md           # auto-loaded pelo Claude Code
 ├── Makefile
 └── docker-compose.yml
@@ -231,7 +261,5 @@ no workspace do editor.
 
 ## Docs
 
-- [.dev/notes/PROJECT_PLAN.md](.dev/notes/PROJECT_PLAN.md) — arquitetura locked
-- [.dev/notes/EXECUTION_LOG.md](.dev/notes/EXECUTION_LOG.md) — estado corrente
-- [.dev/notes/DECISIONS.md](.dev/notes/DECISIONS.md) — decisões + rationale
-- [.dev/notes/QUESTIONS.md](.dev/notes/QUESTIONS.md) — perguntas abertas
+- [CLAUDE.md](CLAUDE.md) — contexto auto-carregado pelo Claude Code (estrutura, regras, system prompt dos agentes, acesso rápido).
+- [framework/web/frontend/MOBILE.md](framework/web/frontend/MOBILE.md) — armadilhas de layout/UI mobile e cache da PWA.
