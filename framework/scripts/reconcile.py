@@ -106,22 +106,6 @@ MCP_CAPABILITIES: dict[str, dict] = {
             "restart": "unless-stopped",
         },
     },
-    "sentry": {
-        "server": {
-            "type": "stdio",
-            "command": "npx",
-            "args": ["-y", "@sentry/mcp-server@latest"],
-        },
-        # No sidecar — runs in the agent's own container via npx.
-        # The MCP server reads SENTRY_ACCESS_TOKEN. We map from the more common
-        # SENTRY_AUTH_TOKEN name (used by sentry-cli, SDKs, etc) so users only
-        # need to set one var in .env. SENTRY_HOST is hostname-only (omit for
-        # SaaS sentry.io; set for self-hosted).
-        "agent_env": {
-            "SENTRY_ACCESS_TOKEN": "${SENTRY_AUTH_TOKEN:-}",
-            "SENTRY_HOST": "${SENTRY_HOST:-}",
-        },
-    },
 }
 
 CAPABILITY_TEMPLATES: dict[str, dict] = {
@@ -138,6 +122,17 @@ CAPABILITY_TEMPLATES: dict[str, dict] = {
         # Compose-style (`${DB_FOO:-}`) que reconcile passa pro container
         # do agente em build_agent_service; Compose interpola em up-time.
         "env_keys": ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASS", "MYSQL_DB"],
+    },
+    "sentry": {
+        # @sentry/mcp-server: stdio nativo. Roda no proprio container do
+        # agente via npx — sem sidecar. Token escopado por org Sentry; host
+        # vazio = SaaS sentry.io, preenchido = self-hosted.
+        "server": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@sentry/mcp-server@latest"],
+        },
+        "env_keys": ["SENTRY_ACCESS_TOKEN", "SENTRY_HOST"],
     },
 }
 
