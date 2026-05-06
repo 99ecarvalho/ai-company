@@ -176,25 +176,32 @@ Defaults mantêm tudo em `./instance/`. Aponte pra fora pra mover estado pra dis
 | `INSTANCE_WEB_DIR` | `./instance/web` | Override de assets da PWA (custom icons em `icons/`). |
 | `WORKTREES_DIR` | `/workspace/worktrees` | Onde a tool `create_worktree` materializa worktrees (path **dentro** do container). Mantido fora de `REPOS_DIR` pra não poluir `git status`. |
 
-### Capability `mysql-producao` (opcional)
+### Credenciais consumidas por `capability_instances`
 
-Preencher só se algum agente declarar `capabilities: [mysql-producao]`.
+Variáveis lidas pelas instâncias declaradas no `capability_instances` do
+`agents.yaml`. As próprias instâncias mapeiam `env: { KEY: "${VAR:-}" }`,
+então preencha as `VAR` aqui só se a instância correspondente existe. Ver
+[Capabilities — templates vs instances](#capabilities--templates-vs-instances)
+abaixo pro mecanismo geral.
+
+**MySQL (template `mysql`)** — preencher se você declarou uma instância
+mapeando `MYSQL_HOST/USER/PASS/...` pra essas vars (ex: `mysql-producao`
+mapeando `${DB_PROD_*}`).
 
 | Variável | Default | Descrição |
 |---|---|---|
 | `DB_PROD_HOST` | _(vazio)_ | Host do MySQL. Use `host.docker.internal` se atrás de túnel SSH local. |
 | `DB_PROD_PORT` | `3306` | Porta. |
-| `DB_PROD_USER` | _(vazio)_ | User read-only. |
+| `DB_PROD_USER` | _(vazio)_ | User read-only (recomendado). |
 | `DB_PROD_PASS` | _(vazio)_ | Senha. |
 | `DB_PROD_NAME` | _(vazio)_ | Database. |
 
-### Capability `sentry` (opcional)
-
-Preencher só se algum agente declarar `capabilities: [sentry]`.
+**Sentry (template `sentry`)** — preencher se você declarou a instância
+`sentry` (ou outra apontando pro template `sentry`).
 
 | Variável | Default | Descrição |
 |---|---|---|
-| `SENTRY_AUTH_TOKEN` | _(vazio)_ | Auth token (mesmo nome usado por sentry-cli/SDKs). |
+| `SENTRY_AUTH_TOKEN` | _(vazio)_ | Auth token (mesmo nome usado por sentry-cli/SDKs). Vira `SENTRY_ACCESS_TOKEN` no env do agente via mapping da instância. |
 | `SENTRY_HOST` | _(vazio = sentry.io)_ | Hostname-only se self-hosted. |
 
 ### Git push / MR-PR
@@ -299,31 +306,77 @@ Dois caminhos quando um agente precisa de algo que não está na imagem
 padrão:
 
 **Tools complexas via MCP lateral** (`capabilities:` no agents.yaml).
-Um container separado roda o MCP server; os agentes que declaram a
-capability ganham as tools automaticamente. Implementadas hoje:
+Cada agente declara as capabilities que quer; reconcile materializa o
+MCP server (sidecar Compose ou stdio in-process via npx) e injeta as
+tools no claude.
 
-- `playwright` — navegador automatizado (Chromium headless via
-  [@playwright/mcp](https://github.com/microsoft/playwright-mcp)). Uma
-  instância serve N agentes. Útil pra testes visuais, tutoriais,
-  scraping. Habilite com `capabilities: [playwright]` e adicione
-  `mcp__playwright__*` em `allowed_tools`.
-- `sentry` — issues, releases e events do Sentry via
-  [@sentry/mcp-server](https://www.npmjs.com/package/@sentry/mcp-server).
-  Roda stdio dentro do próprio container do agente (sem sidecar).
-  Preencha `SENTRY_AUTH_TOKEN` no `.env` (e `SENTRY_HOST` se for
-  self-hosted). Habilite com `capabilities: [sentry]` e adicione
-  `mcp__sentry__*` em `allowed_tools`.
-- `mysql-producao` — acesso **read-only** a MySQL via
-  [`@benborla29/mcp-server-mysql`](https://github.com/benborla/mcp-server-mysql)
-  bridgeado stdio→HTTP por `supergateway`. Única tool exposta é
-  `mysql_query` com `readOnlyHint`. Preencha `DB_PROD_*` no `.env` (a
-  capability aceita conexão via `host.docker.internal` se o banco está
-  atrás de túnel SSH no host). Habilite com `capabilities: [mysql-producao]`
-  e adicione `mcp__mysql-producao__*` em `allowed_tools`.
+### Capabilities — templates vs instances
 
-Adicionar nova capability = 1 entry em `MCP_CAPABILITIES` (em
-[reconcile.py](framework/scripts/reconcile.py)) + 1 Dockerfile em
-[framework/docker/](framework/docker/).
+Capabilities resolvem em duas categorias (D-119):
+
+- **Singletons** definidos no framework ([reconcile.py](framework/scripts/reconcile.py)
+  `MCP_CAPABILITIES`). Config fixa, um por instalação. Apropriado pra
+  capabilities sem creds que variam (ex: pool de browser). Hoje:
+  - `playwright` — Chromium headless via [@playwright/mcp](https://github.com/microsoft/playwright-mcp).
+    HTTP sidecar (uma instância serve N agentes). Habilite com
+    `capabilities: [playwright]` + `mcp__playwright__*` em `allowed_tools`.
+
+- **Templates** definidos no framework, **instâncias** declaradas em
+  `instance/agents/agents.yaml` no bloco top-level `capability_instances`.
+  Apropriado pra qualquer capability com creds que variam por deploy
+  (token, conn URL). Cada instância tem nome único, vira o namespace MCP
+  (`mcp__<name>__*`) e o nome do server. Permite múltiplas instâncias do
+  mesmo template (ex: `mysql-producao` + `mysql-staging`) com creds
+  distintas, sem leak de vocabulário da instância pro framework.
+
+  Templates hoje em [reconcile.py](framework/scripts/reconcile.py)
+  (`CAPABILITY_TEMPLATES`):
+  - `mysql` — read-only via [@benborla29/mcp-server-mysql](https://github.com/benborla/mcp-server-mysql)
+    (stdio in-process via npx). Env keys: `MYSQL_HOST`, `MYSQL_PORT`,
+    `MYSQL_USER`, `MYSQL_PASS`, `MYSQL_DB`. Aceita conexão via
+    `host.docker.internal` se o DB está atrás de túnel SSH no host.
+  - `sentry` — issues, releases e events via [@sentry/mcp-server](https://www.npmjs.com/package/@sentry/mcp-server)
+    (stdio in-process via npx). Env keys: `SENTRY_ACCESS_TOKEN`,
+    `SENTRY_HOST` (vazio = SaaS sentry.io).
+
+  Exemplo de instância (no `agents.yaml`):
+  ```yaml
+  capability_instances:
+    mysql-producao:
+      template: mysql
+      env:
+        MYSQL_HOST: "${DB_PROD_HOST:-}"
+        MYSQL_PORT: "${DB_PROD_PORT:-3306}"
+        MYSQL_USER: "${DB_PROD_USER:-}"
+        MYSQL_PASS: "${DB_PROD_PASS:-}"
+        MYSQL_DB:   "${DB_PROD_NAME:-}"
+    sentry:
+      template: sentry
+      env:
+        SENTRY_ACCESS_TOKEN: "${SENTRY_AUTH_TOKEN:-}"
+        SENTRY_HOST:         "${SENTRY_HOST:-}"
+  ```
+  Agentes consomem por nome em `capabilities:` (mistura instances +
+  singletons; resolve transparente):
+  ```yaml
+  agents:
+    - name: ops
+      capabilities: [mysql-producao, sentry, playwright]
+      allowed_tools:
+        - "mcp__mysql-producao__*"
+        - mcp__sentry__list_issues  # ou "mcp__sentry__*"
+        - "mcp__playwright__*"
+  ```
+
+Regra prática: **tem creds que variam → template; compute puro sem
+creds → singleton**. Pra capability nova:
+- Singleton: 1 entry em `MCP_CAPABILITIES` (+ Dockerfile se HTTP sidecar).
+- Template: 1 entry em `CAPABILITY_TEMPLATES` + N instâncias no `agents.yaml`.
+
+Limitação v1: **uma instância por template por agente** — env vars do
+MCP server colidem se o mesmo agente tentar duas instâncias do mesmo
+template. v2 futura: namespacing automático de env (`MYSQL_PRODUCAO__HOST`,
+`MYSQL_STAGING__HOST`) + expansão no claude_runner.
 
 **CLI nativa via imagem própria** (`image:` no agents.yaml, aka BYOI).
 Quando a tool é executada via `Bash()` pelo Claude (`phpstan`,
@@ -615,11 +668,16 @@ uma function call do Claude — habilitar = listar em `allowed_tools` no
 - **orchestrator-reactor + scheduler** = handoffs e cron jobs.
 - **transcriber** = faster-whisper (GPU ou CPU).
 - **watchdog** = monitora `instance/heartbeats/` e restarta agentes stale.
-- **MCPs laterais** (opt-in via `capabilities:`) = `playwright-mcp` (navegador
-  automatizado, container compartilhado), `sentry` (stdio in-process via npx),
-  `mysql-producao-mcp` (query read-only em DB de produção via
-  `host.docker.internal` — usa túnel SSH no host quando o banco não é exposto
-  diretamente).
+- **MCPs laterais** (opt-in via `capabilities:`) — duas categorias (D-119):
+  - **Singletons** (HTTP sidecar): `playwright-mcp` (navegador automatizado,
+    container compartilhado).
+  - **Templates parametrizáveis** (stdio in-process via npx, instâncias
+    declaradas em `capability_instances` no `agents.yaml`): `mysql`
+    (read-only via `@benborla29/mcp-server-mysql` — aceita `host.docker.internal`
+    se o DB está atrás de túnel SSH no host) e `sentry`
+    (`@sentry/mcp-server`). Cada instância vira `mcp__<name>__*` no
+    namespace MCP. Ver [Capabilities — templates vs instances](#capabilities--templates-vs-instances)
+    pra detalhes.
 
 ---
 
@@ -654,7 +712,7 @@ agent-framework/
 │   ├── web/            # FastAPI + SvelteKit
 │   ├── orchestrator/   # reactor + scheduler
 │   ├── db/migrations/  # schema versionado (NNN_nome.sql)
-│   ├── docker/         # Dockerfiles (agent, playwright-mcp, mysql-mcp)
+│   ├── docker/         # Dockerfiles (agent, playwright-mcp)
 │   ├── scripts/        # install, reconcile, bootstrap-env, migrate
 │   └── examples/       # defaults genéricos copiados no bootstrap
 ├── instance/           # ESTADO gitignored (agents.yaml, company/, ...)
