@@ -73,16 +73,51 @@
   padding: 0;
   background: transparent;
 }
-/* Wrapper injetado por addCodeCopyButtons. Botao posicionado no canto sup.
-   direito do <pre>. Hover-only em desktop (com pointer fino), sempre visivel
-   em touch (sem hover). */
+/* Wrapper injetado por addCodeCopyButtons. Toolbar fixo no canto superior
+   direito (Expand + Copy). Hover-only em desktop (pointer fino), sempre
+   visivel em touch (sem hover). */
 .mdBody .codeBlock {
   position: relative;
 }
-.mdBody .codeCopyBtn {
+/* Cap inicial de altura: pre que excederia 200px fica truncado com fade-out
+   no rodape como dica visual. data-expandable e setado via JS no
+   MessageBubble apos medir scrollHeight do pre. */
+.mdBody .codeBlock pre {
+  max-height: 200px;
+  transition: max-height 240ms ease;
+}
+.mdBody .codeBlock[data-expandable='true']::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: 1px;
+  height: 36px;
+  pointer-events: none;
+  border-radius: 0 0 6px 6px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--bg) 0%, transparent),
+    var(--bg)
+  );
+  transition: opacity 200ms ease;
+}
+.mdBody .codeBlock--expanded pre {
+  max-height: 4000px;
+}
+.mdBody .codeBlock--expanded::after {
+  opacity: 0;
+}
+.mdBody .codeBlockBtns {
   position: absolute;
   top: 4px;
   right: 4px;
+  display: flex;
+  gap: 4px;
+  z-index: 1;
+}
+.mdBody .codeCopyBtn,
+.mdBody .codeExpandBtn {
   padding: 2px 8px;
   font-size: 11px;
   font-family: inherit;
@@ -95,11 +130,16 @@
   opacity: 0;
   transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
 }
+.mdBody .codeExpandBtn { display: none; }
+.mdBody .codeBlock[data-expandable='true'] .codeExpandBtn { display: inline-block; }
 .mdBody .codeBlock:hover .codeCopyBtn,
-.mdBody .codeCopyBtn:focus-visible {
+.mdBody .codeBlock:hover .codeExpandBtn,
+.mdBody .codeCopyBtn:focus-visible,
+.mdBody .codeExpandBtn:focus-visible {
   opacity: 1;
 }
-.mdBody .codeCopyBtn:hover {
+.mdBody .codeCopyBtn:hover,
+.mdBody .codeExpandBtn:hover {
   color: var(--fg);
   background: var(--panel2);
 }
@@ -108,7 +148,8 @@
   border-color: var(--accent);
 }
 @media (hover: none) {
-  .mdBody .codeCopyBtn { opacity: 1; }
+  .mdBody .codeCopyBtn,
+  .mdBody .codeBlock[data-expandable='true'] .codeExpandBtn { opacity: 1; }
 }
 .mdBody .fileLink {
   color: var(--accent);
@@ -170,6 +211,16 @@
     --panel2: #1c232d;
     --border: #30363d;
     --on-accent: #ffffff;
+    /* Bolha de mensagem recebida (agente). No dark, sobe pra panel2 pra
+       criar contraste real contra o bg do feed (panel == surface,
+       panel2 == raised). */
+    --bubble-recv: #1c232d;
+    --bubble-recv-border: #3a4350;
+    /* Bolha enviada (humano). Tint suave do accent — registra "azul =
+       enviado" sem o pico saturado do bg-accent puro. blend ~18% no dark
+       sobre panel2 mantem leitura confortavel. */
+    --bubble-sent: color-mix(in srgb, var(--accent) 22%, var(--panel2));
+    --bubble-sent-border: color-mix(in srgb, var(--accent) 45%, var(--panel2));
     --sidebar-w: 300px;
     --rail-w: 72px;
     --bottom-nav-h: 56px;
@@ -187,6 +238,13 @@
     --panel2: #f6f8fa;
     --border: #d0d7de;
     --on-accent: #ffffff;
+    /* No light o bg do feed e cinza-claro (#f6f8fa); branco puro destaca
+       a bolha sem virar gritante. */
+    --bubble-recv: #ffffff;
+    --bubble-recv-border: #d0d7de;
+    /* No light, blend mais leve (15%) sobre branco evita lavar o azul. */
+    --bubble-sent: color-mix(in srgb, var(--accent) 15%, #ffffff);
+    --bubble-sent-border: color-mix(in srgb, var(--accent) 38%, #ffffff);
   }
 
   html,

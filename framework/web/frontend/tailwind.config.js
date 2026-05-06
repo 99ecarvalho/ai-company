@@ -26,7 +26,11 @@ export default {
         panel: 'var(--panel)',
         panel2: 'var(--panel2)',
         border: 'var(--border)',
-        'on-accent': 'var(--on-accent)'
+        'on-accent': 'var(--on-accent)',
+        'bubble-recv': 'var(--bubble-recv)',
+        'bubble-recv-border': 'var(--bubble-recv-border)',
+        'bubble-sent': 'var(--bubble-sent)',
+        'bubble-sent-border': 'var(--bubble-sent-border)'
       },
       fontFamily: {
         sans: [

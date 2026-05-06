@@ -259,9 +259,12 @@ export function linkifyFilePaths(html: string, botAuthor?: string | null): strin
 }
 
 /**
- * Wraps every <pre> in a positioned container with a "Copy" button. Runs
- * AFTER sanitize so the injected button isn't stripped by DOMPurify. The
- * click handler lives in MessageBubble (delegated via .codeCopyBtn).
+ * Wraps every <pre> in a positioned container with a toolbar (Expand +
+ * Copy). Runs AFTER sanitize so the injected buttons aren't stripped by
+ * DOMPurify. Click handlers live in MessageBubble (delegated via
+ * .codeCopyBtn / .codeExpandBtn). The Expand button is only visible when
+ * the wrapper has data-expandable="true", set after mount by a Svelte
+ * effect that measures overflow against the CSS max-height cap.
  */
 export function addCodeCopyButtons(html: string): string {
   if (typeof document === 'undefined') return html;
@@ -273,13 +276,28 @@ export function addCodeCopyButtons(html: string): string {
     wrapper.className = 'codeBlock';
     pre.parentNode?.insertBefore(wrapper, pre);
     wrapper.appendChild(pre);
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'codeCopyBtn';
-    btn.setAttribute('aria-label', 'Copy code');
-    btn.setAttribute('title', 'Copy');
-    btn.textContent = 'Copy';
-    wrapper.appendChild(btn);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'codeBlockBtns';
+
+    const expand = document.createElement('button');
+    expand.type = 'button';
+    expand.className = 'codeExpandBtn';
+    expand.setAttribute('aria-label', 'Expand code');
+    expand.setAttribute('aria-expanded', 'false');
+    expand.setAttribute('title', 'Expand');
+    expand.textContent = 'Expand';
+    toolbar.appendChild(expand);
+
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'codeCopyBtn';
+    copy.setAttribute('aria-label', 'Copy code');
+    copy.setAttribute('title', 'Copy');
+    copy.textContent = 'Copy';
+    toolbar.appendChild(copy);
+
+    wrapper.appendChild(toolbar);
   }
   return tpl.innerHTML;
 }
