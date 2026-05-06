@@ -47,6 +47,59 @@ do framework — ver tabela abaixo.
 
 ---
 
+## O que vem no fresh install
+
+`make install` (= `bootstrap-env.sh` + reconcile + build + up) deixa
+sua instância com o seguinte estado **runnable end-to-end**:
+
+### Em `instance/agents/`
+
+- **`agents.yaml`** ← `framework/examples/agents.yaml.example`. Define **5 agentes** que cobrem os workflows shipados:
+  - `triager` — primeiro contato + wrap-up.
+  - `planner` — desenha planos técnicos (Opus, effort high).
+  - `executor` — implementa código (Bash + worktrees, Opus, effort high).
+  - `reviewer` — revisa código + roda testes.
+  - `researcher` — investigação sem código (WebFetch/WebSearch).
+  - **Hook `block-push-main` ativo por default** — bloqueia agentes de pushar em `main`/`master`.
+- **`<nome>/CLAUDE.md`** ← gerado por agente pelo reconcile a partir do template (identidade + descrição), pronto pra editar.
+
+### Em `instance/company/`
+
+- **`CONTEXT.md`** ← `framework/templates/CONTEXT.md.example`. Skeleton com placeholders pra preencher (nome, setor, missão, convenções de data/moeda/idioma). **Importante**: este arquivo é injetado no system prompt de TODO agente em TODA invocação — fonte de verdade compartilhada.
+- **`workflows.yaml`** ← `framework/examples/workflows.yaml.example`. **2 workflows** prontos:
+  - `default` (5 steps): `intake` → `plan` → `build` → `review` → `wrap`.
+  - `research` (3 steps): `intake` → `investigate` → `wrap`.
+- **`philosophy.md`** ← stub vazio com hint pra ver os templates abaixo.
+
+### Em `framework/templates/philosophies/` (não copiados — você escolhe)
+
+8 templates de filosofia operacional disponíveis pra `cp` em `instance/company/philosophy.md`. Cada um segue o mesmo skeleton (princípios-chave, estrutura de tasks, vocabulário, agentes arquetípicos, cadência) pra que o claude_runner injete consistentemente:
+
+- `tdd.md` — Test-Driven Development
+- `bdd.md` — Behavior-Driven Development
+- `sdd.md` — Spec-Driven Development
+- `ddd.md` — Domain-Driven Design (bounded contexts → agents)
+- `tbd.md` — Trunk-Based Development
+- `hexagonal.md` — Hexagonal / Clean Architecture
+- `context-management.md` — disciplina de what-goes-into-prompt
+- `custom.md` — esqueleto vazio pra escrever do zero
+
+Misture várias se quiser — não são canônicas, são pontos de partida.
+
+### Subpastas que NÃO são pré-criadas
+
+`CONTEXT.md` referencia `company/ideas/`, `company/notes/`, `company/decisions/`, `company/tasks/`. Essas pastas são criadas **lazy** pelos agentes quando o caminho é usado pela primeira vez (write_access tem `company` como rw). Não precisa criar à mão.
+
+### Em `instance/repos/` e `instance/worktrees/`
+
+Vazias. Você popula `instance/repos/<nome>/` clonando os repos que seus agentes vão consumir (ou aponta `REPOS_DIR` pra fora do framework — recomendado pra não aninhar gits no workspace do editor). `worktrees/` é populado dinamicamente pela tool `create_worktree` quando agentes começam tasks.
+
+### `.env`
+
+Gerado pelo wizard interativo do `install.sh` com secrets random + perguntas (porta, admin password, device do Whisper, etc). Ver tabela completa em [Configuração (`.env`)](#configuração-env).
+
+---
+
 ## Configuração (`.env`)
 
 `make install` gera o `.env` interativamente; pra inspecionar/editar
