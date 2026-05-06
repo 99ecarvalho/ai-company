@@ -316,11 +316,17 @@ export function renderBotMessage(raw: string, botAuthor?: string | null): string
 }
 
 /**
- * For human messages — same pipeline but HTML-escaped first to be safe
- * even with no marked.
+ * Mensagens de humanos passam pelo mesmo pipeline mas com `breaks: true`
+ * — soft breaks (single \n) viram <br>. CommonMark default colapsa
+ * single \n em espaco, e na pratica o humano espera "WYSIWYG" estilo
+ * Slack/Discord (especialmente em paste de relatorio/output). Bots LLM
+ * separam paragrafo com linha em branco, entao manter `breaks: false`
+ * pra eles preserva markdown intencional.
  */
 export function renderUserMessage(raw: string): string {
-  return renderBotMessage(raw);
+  const md = marked.parse(raw || '', { async: false, breaks: true }) as string;
+  const safe = sanitizeHtml(md);
+  return addCodeCopyButtons(linkifyFilePaths(expandEmojis(safe)));
 }
 
 /**

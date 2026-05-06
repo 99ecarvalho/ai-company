@@ -4,7 +4,7 @@
   import type { Message } from '$lib/api';
   import { fileDownloadUrl, synthesizeSpeech, ApiError } from '$lib/api';
   import { fmtClock } from '$lib/services/format';
-  import { renderBotMessage } from '$lib/services/markdown';
+  import { renderBotMessage, renderUserMessage } from '$lib/services/markdown';
   import { basename, isViewable } from '$lib/services/paths';
   import { fileViewerTarget, logEvent, openOverlay } from '$lib/stores/ui';
   import { currentUser } from '$lib/stores/auth';
@@ -23,8 +23,13 @@
       (!!$currentUser?.username && msg.sender === $currentUser.username)
   );
   const variant = $derived(isSelf ? 'self' : msg.is_bot ? 'bot' : 'other');
+  // Bot mantem CommonMark default (breaks: false) pra preservar markdown
+  // intencional do LLM. Humano usa renderUserMessage (breaks: true) — soft
+  // breaks viram <br>, comportamento Slack-like esperado em paste.
   const html = $derived(
-    renderBotMessage(msg.content || '', msg.is_bot ? msg.sender : null)
+    msg.is_bot
+      ? renderBotMessage(msg.content || '', msg.sender)
+      : renderUserMessage(msg.content || '')
   );
   const display = $derived(msg.sender_full_name || msg.sender || '');
 
