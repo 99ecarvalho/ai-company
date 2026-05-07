@@ -866,26 +866,14 @@ async def list_unified_conversations(
                          AND pa.kind = 'ask_human') AS awaiting_human,
                EXISTS(SELECT 1 FROM messaging.messages m2
                        WHERE m2.conversation_id = c.id AND m2.sender_id = $1) AS participating,
-               -- D-84: modelo unificado de estado. Lemos so o ultimo
-               -- run_start/run_end + ts pra derivar is_running/is_stuck.
-               -- O conceito antigo de "queued" (trigger sem run) foi
-               -- descontinuado — quando aparecia, era pool_size baixo,
-               -- problema operacional, nao estado merecedor de UI.
-               (SELECT le.ts FROM telemetry.live_events le
-                  WHERE le.conversation_id = c.id
-                    AND le.kind IN ('run_start', 'run_end')
-                  ORDER BY le.id DESC LIMIT 1) AS last_run_activity_at,
-               (SELECT le.kind FROM telemetry.live_events le
-                  WHERE le.conversation_id = c.id
-                    AND le.kind IN ('run_start', 'run_end')
-                  ORDER BY le.id DESC LIMIT 1) AS last_run_kind,
-               -- Subtype do ultimo run_end (se for o evento mais recente).
-               -- Convencao Claude CLI: NULL ou 'success' = ok, qualquer
-               -- outro 'error_*' = erro. Usado pra is_errored.
-               (SELECT le.data->>'subtype' FROM telemetry.live_events le
-                  WHERE le.conversation_id = c.id
-                    AND le.kind IN ('run_start', 'run_end')
-                  ORDER BY le.id DESC LIMIT 1) AS last_run_subtype,
+               -- D-84: modelo unificado de estado. Migration 030 introduziu
+               -- messaging.runs como single source of truth — 1 row por
+               -- execucao do CLI, atualizada transacionalmente pelo broker
+               -- quando ingere live_events. Substituiu 3 subqueries em
+               -- telemetry.live_events por um LATERAL com 1 lookup.
+               r.status            AS run_status,
+               r.last_heartbeat_at AS run_last_heartbeat_at,
+               r.exit_reason       AS run_exit_reason,
                -- Task metadata: primeiro tenta match pela origem (conv que
                -- criou a task via primeiro complete_phase); senao tenta match
                -- por topic = 'task-<slug>' (convs intermediárias em streams
@@ -917,6 +905,12 @@ async def list_unified_conversations(
                END AS task_not_current_agent
           FROM messaging.conversations c
           JOIN messaging.streams s ON s.id = c.stream_id
+          LEFT JOIN LATERAL (
+                SELECT status, last_heartbeat_at, exit_reason
+                  FROM messaging.runs
+                 WHERE conversation_id = c.id
+                 ORDER BY started_at DESC LIMIT 1
+          ) r ON true
           LEFT JOIN tasks.tasks t
                  ON t.origin_stream = s.name
                 AND t.origin_topic = c.topic_name
@@ -966,26 +960,30 @@ async def list_unified_conversations(
         # D-84: modelo unificado de estado — 4 sinais flat, mutuamente
         # exclusivos por construcao via precedencia:
         #   awaiting_human > is_stuck > is_running > is_errored > idle
+        # Fonte (migration 030): messaging.runs.status. Reaper transiciona
+        # running -> stale quando heartbeat fica obsoleto, entao stuck
+        # vira automatico quando elapsed > RUNNER_STUCK_SEC mesmo antes
+        # do reaper rodar (cobre janela entre heartbeat antigo e proxima
+        # passada do scheduler).
         awaiting_human = bool(r["awaiting_human"])
-        run_activity_at = r["last_run_activity_at"]
+        run_status = r["run_status"]
+        heartbeat_at = r["run_last_heartbeat_at"]
         elapsed: float | None = None
-        if run_activity_at is not None:
-            elapsed = (datetime.now(tz=timezone.utc) - run_activity_at).total_seconds()
+        if heartbeat_at is not None:
+            elapsed = (datetime.now(tz=timezone.utc) - heartbeat_at).total_seconds()
         is_stuck = bool(
-            r["last_run_kind"] == "run_start"
+            run_status == "running"
             and elapsed is not None
             and elapsed > RUNNER_STUCK_SEC
             and not awaiting_human
         )
         is_running = bool(
-            r["last_run_kind"] == "run_start"
-            and (elapsed is None or elapsed <= RUNNER_STUCK_SEC)
-            and not awaiting_human
+            run_status == "running"
             and not is_stuck
+            and not awaiting_human
         )
         is_errored = bool(
-            r["last_run_kind"] == "run_end"
-            and r["last_run_subtype"] not in (None, "success")
+            run_status == "error"
             and not awaiting_human
         )
         item = dict(

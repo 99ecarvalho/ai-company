@@ -15,6 +15,8 @@ Actions suportadas:
   cleanup_sessions          DELETE web.sessions WHERE expires_at < now()
   cleanup_telemetry         days: <n>  (default 90)
   cleanup_live_events       days: <n>  (default 7)
+  reaper_runs               seconds: <n>  (default 600) — running -> stale
+  cleanup_runs              days: <n>  (default 7) — DELETE rows terminados
   cost_budget_check         posta alert em budget-alerts quando agente excede cap
 """
 from __future__ import annotations
@@ -374,6 +376,47 @@ def run_cleanup_live_events(job: dict) -> None:
     )
 
 
+def run_reaper_runs(job: dict) -> None:
+    """Transiciona messaging.runs com status='running' e heartbeat antigo
+    pra status='stale'. Migration 030: messaging.runs eh single source of
+    truth do estado do CLI; o trigger trg_notify_runs_stale dispara
+    pg_notify('conv_activity', kind='run_stale') pra atualizar a sidebar
+    do PWA.
+
+    Threshold default 600s (espelha RUNNER_STUCK_SEC do web). Cobre
+    SIGKILL hard, container kill sem run_end, network glitch perdendo
+    o run_end fire-and-forget."""
+    seconds = max(60, int(job.get("seconds", 600)))
+    _run_cleanup_sql(
+        "WITH u AS ("
+        "  UPDATE messaging.runs"
+        "     SET status = 'stale',"
+        "         exit_reason = 'heartbeat_timeout',"
+        "         finished_at = now()"
+        f"   WHERE status = 'running'"
+        f"     AND last_heartbeat_at < now() - INTERVAL '{seconds} seconds'"
+        "   RETURNING 1"
+        ") SELECT COUNT(*) FROM u;",
+        "reaper_runs", job.get("id"),
+    )
+
+
+def run_cleanup_runs(job: dict) -> None:
+    """DELETE messaging.runs terminados (done/error/stale) mais velhos que
+    job.days (default 7). Espelha o TTL de telemetry.live_events. Nunca
+    deleta rows com status='running' — reaper transiciona antes."""
+    days = max(1, int(job.get("days", 7)))
+    _run_cleanup_sql(
+        "WITH d AS ("
+        "  DELETE FROM messaging.runs"
+        "   WHERE status IN ('done','error','stale')"
+        f"     AND COALESCE(finished_at, started_at) < now() - INTERVAL '{days} days'"
+        "   RETURNING 1"
+        ") SELECT COUNT(*) FROM d;",
+        "cleanup_runs", job.get("id"),
+    )
+
+
 def run_cleanup_live_events_output_full(job: dict) -> None:
     """Remove o campo `output_full` do data JSONB em eventos > job.hours
     (default 48h). Linha permanece (output inline 5KB + is_error + meta
@@ -512,6 +555,10 @@ def dispatch_job(job: dict) -> None:
             run_cleanup_live_events(job)
         elif action == "cleanup_live_events_output_full":
             run_cleanup_live_events_output_full(job)
+        elif action == "reaper_runs":
+            run_reaper_runs(job)
+        elif action == "cleanup_runs":
+            run_cleanup_runs(job)
         elif action == "cost_budget_check":
             run_cost_budget_check(job)
         else:

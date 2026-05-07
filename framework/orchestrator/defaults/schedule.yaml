@@ -26,6 +26,21 @@ jobs:
     action: cleanup_live_events_output_full
     hours: 48
 
+  # ---- Reaper: messaging.runs com heartbeat antigo -> stale ----
+  # Single source of truth do estado do CLI (migration 030). Cobre
+  # crashes/SIGKILL que nao emitem run_end. Cadence 60s pra fechar a
+  # janela de divergencia com o PWA. Trigger faz pg_notify automatico.
+  - id: reaper-runs
+    cron: "* * * * *"            # a cada 60s
+    action: reaper_runs
+    seconds: 600
+
+  # ---- Cleanup: messaging.runs terminados (TTL 7d, espelha live_events) ----
+  - id: cleanup-runs
+    cron: "45 2 * * *"           # diario 02:45 (offset pra nao colidir)
+    action: cleanup_runs
+    days: 7
+
   # ---- Cleanup: telemetry events (cost/tokens) — retencao longa ----
   - id: cleanup-telemetry
     cron: "30 2 * * *"           # diario 02:30 (offset pra nao colidir)

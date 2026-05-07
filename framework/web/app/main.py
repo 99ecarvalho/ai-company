@@ -848,26 +848,24 @@ RUNNER_STUCK_SEC = int(os.environ.get("RUNNER_STUCK_SEC", "600"))
 async def _compute_runner_state(conv_id: int) -> dict:
     """Deriva o estado corrente do runner pra uma conversation.
 
-    Fonte: `telemetry.live_events` (emitidos pelo claude_runner) +
-    `messaging.pending_asks` (ask_human ativo). Zero estado novo em disco.
+    Fonte: `messaging.runs` (single source of truth, migration 030) +
+    `messaging.pending_asks` (ask_human ativo). O dual-write no handler
+    de telemetry.live_events mantem `runs` em sync; o reaper do scheduler
+    fecha runs orfas como 'stale'.
 
     Estados:
-      - `idle`: nenhum run_start (ou ultimo run_end posterior ao run_start).
-      - `running`: ultimo evento e run_start, sem run_end depois.
-      - `errored`: ultimo run_end tem subtype de erro.
-      - `blocked_on_ask_human`: ha pending_ask nao resolvido.
-      - `stuck`: running + ultimo live_event ha > RUNNER_STUCK_SEC.
+      - `idle`: nenhuma run ou ultima run terminou (done/stale).
+      - `running`: ultima run com status='running' e heartbeat fresco.
+      - `errored`: ultima run com status='error'.
+      - `blocked_on_ask_human`: ha pending_ask kind='ask_human' nao resolvido.
+      - `stuck`: status='running' mas heartbeat antigo (> RUNNER_STUCK_SEC).
     """
-    # Pega os N eventos mais recentes — suficiente pra achar o ultimo run_start
-    # e o ultimo run_end; 20 e folga pra casos com muitos tool_use entre eles.
-    rows = await db.fetch_all(
-        """
-        SELECT kind, ts, data, summary
-          FROM telemetry.live_events
-         WHERE conversation_id = $1
-         ORDER BY ts DESC
-         LIMIT 20
-        """,
+    run = await db.fetch_one(
+        """SELECT status, started_at, last_heartbeat_at, finished_at, exit_reason
+             FROM messaging.runs
+            WHERE conversation_id = $1
+            ORDER BY started_at DESC
+            LIMIT 1""",
         conv_id,
     )
     # D-111: blocked_on_ask_human = literalmente bloqueado em humano.
@@ -879,19 +877,6 @@ async def _compute_runner_state(conv_id: int) -> dict:
         "  AND kind = 'ask_human'",
         conv_id,
     )
-
-    last_run_start = None
-    last_run_end = None
-    last_any_ts = None
-    for r in rows:
-        if last_any_ts is None:
-            last_any_ts = r["ts"]
-        if r["kind"] == "run_start" and last_run_start is None:
-            last_run_start = r
-        elif r["kind"] == "run_end" and last_run_end is None:
-            last_run_end = r
-        if last_run_start and last_run_end:
-            break
 
     now = time.time()
     state = "idle"
@@ -905,31 +890,20 @@ async def _compute_runner_state(conv_id: int) -> dict:
     if pending is not None:
         state = "awaiting_human"
         since = pending["asked_at"]
-    elif last_run_start is not None and (
-        last_run_end is None or last_run_end["ts"] < last_run_start["ts"]
-    ):
-        state = "running"
-        since = last_run_start["ts"]
-        if last_any_ts is not None:
-            elapsed = now - last_any_ts.timestamp()
+    elif run is not None:
+        if run["status"] == "running":
+            since = run["started_at"]
+            elapsed = now - run["last_heartbeat_at"].timestamp()
             if elapsed > RUNNER_STUCK_SEC:
                 state = "stuck"
                 stuck = True
-    elif last_run_end is not None:
-        data = last_run_end["data"] or {}
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except Exception:
-                data = {}
-        subtype = data.get("subtype") if isinstance(data, dict) else None
-        # Convencao do Claude CLI: subtype is None/"success" => ok;
-        # "error_*" => erro; None em combinacao com ausencia de texto tambem
-        # e erro (filtrado em RunOutcome.ok no runner).
-        if subtype and subtype != "success":
+            else:
+                state = "running"
+        elif run["status"] == "error":
             state = "errored"
-            since = last_run_end["ts"]
-            last_error = last_run_end["summary"]
+            since = run["finished_at"] or run["started_at"]
+            last_error = run["exit_reason"]
+        # done / stale → idle (default)
 
     can_retry = state in ("errored", "stuck")
     # Cancel so faz sentido quando ha computacao em andamento (Claude CLI
@@ -2983,20 +2957,23 @@ async def search_messages(q: str = "", limit: int = 30, _: Principal = Depends(g
 @app.post("/api/telemetry/live-event")
 async def telemetry_live_event(payload: dict, principal: Principal = Depends(get_principal)):
     """Aceita {stream, topic, kind, summary?, data?, agent?}. Resolve conv_id
-    via stream+topic; INSERT dispara pg_notify pro SSE."""
+    via stream+topic; INSERT dispara pg_notify pro SSE.
+
+    Dual-write (D-NN, migration 030): mantém messaging.runs em sync com o
+    stream de live_events na mesma transaction:
+      * run_start  → INSERT row com status='running' (ON CONFLICT bate
+                     heartbeat se ja existir running pra mesma conv).
+      * run_end    → UPDATE running row pra done/error conforme subtype.
+      * qualquer   → bumps last_heartbeat_at na running row (heartbeat
+                     piggyback, granularidade fina sem timer separado).
+    Se a parte do runs falhar, rollback leva o live_event junto — eh
+    aceitavel: fire-and-forget do runner re-emite ou reaper compensa.
+    """
     stream = payload.get("stream")
     topic = payload.get("topic")
     kind = payload.get("kind")
     if not (stream and topic and kind):
         raise HTTPException(status_code=400, detail="stream, topic, kind obrigatorios")
-    row = await db.fetch_one(
-        """SELECT c.id FROM messaging.conversations c
-             JOIN messaging.streams s ON s.id = c.stream_id
-            WHERE s.name = $1 AND c.topic_name = $2""",
-        stream, topic,
-    )
-    if row is None:
-        raise HTTPException(status_code=404, detail="conv nao existe")
     # thinking pode ser multi-paragrafo; cap alto mas existente pra evitar
     # payload absurdo chegando do runner. UI renderiza o texto cheio como bubble.
     summary = payload.get("summary")
@@ -3012,17 +2989,82 @@ async def telemetry_live_event(payload: dict, principal: Principal = Depends(get
             seq_num = int(seq_num)
         except (TypeError, ValueError):
             seq_num = None
-    await db.execute(
-        """INSERT INTO telemetry.live_events
-           (conversation_id, agent, kind, summary, data, seq_num)
-           VALUES ($1, $2, $3, $4, $5, $6)""",
-        row["id"],
-        payload.get("agent", principal.username),
-        kind, summary,
-        json.dumps(payload.get("data") or {}),
-        seq_num,
-    )
+    data = payload.get("data") or {}
+    agent = payload.get("agent", principal.username)
+    async with db.connection() as conn:
+        row = await conn.fetchrow(
+            """SELECT c.id FROM messaging.conversations c
+                 JOIN messaging.streams s ON s.id = c.stream_id
+                WHERE s.name = $1 AND c.topic_name = $2""",
+            stream, topic,
+        )
+        if row is None:
+            raise HTTPException(status_code=404, detail="conv nao existe")
+        conv_id = row["id"]
+        async with conn.transaction():
+            await conn.execute(
+                """INSERT INTO telemetry.live_events
+                   (conversation_id, agent, kind, summary, data, seq_num)
+                   VALUES ($1, $2, $3, $4, $5, $6)""",
+                conv_id, agent, kind, summary, json.dumps(data), seq_num,
+            )
+            await _runs_apply_event(conn, conv_id, agent, stream, topic, kind, data)
     return {"ok": True}
+
+
+async def _runs_apply_event(
+    conn, conv_id: int, agent: str, stream: str, topic: str,
+    kind: str, data: dict,
+) -> None:
+    """Mantem messaging.runs em sync com o evento. Chamado dentro da txn
+    do telemetry_live_event handler."""
+    if kind == "run_start":
+        # Idempotente: se ja ha row 'running' pra essa conv (re-emit do
+        # runner ou jitter de POSTs duplicados), so bate o heartbeat.
+        # Caso normal: cria nova row 'running'. Reaper transiciona pra
+        # 'stale' caso o run anterior tenha morrido sem run_end — quando
+        # isso ocorre, o INSERT abaixo nao bate o partial unique index
+        # (que so cobre status='running') e cria row nova como esperado.
+        await conn.execute(
+            """INSERT INTO messaging.runs
+                 (conversation_id, agent, topic_slug, status, metadata)
+               VALUES ($1, $2, $3, 'running', $4::jsonb)
+               ON CONFLICT (conversation_id) WHERE status = 'running'
+               DO UPDATE SET last_heartbeat_at = now()""",
+            conv_id, agent, topic,
+            json.dumps({"start_summary": data} if data else {}),
+        )
+    elif kind == "run_end":
+        # Convencao Claude CLI: subtype None ou 'success' = ok; senao erro.
+        # synthetic run_end (D-71, claude_runner.py:1290) tambem manda
+        # subtype; tratamos igual.
+        subtype = data.get("subtype") if isinstance(data, dict) else None
+        new_status = "done" if subtype in (None, "success") else "error"
+        # Update the most recent running row pra essa conv. Subquery por
+        # PK pra UPDATE conseguir ORDER BY/LIMIT.
+        await conn.execute(
+            """UPDATE messaging.runs
+                  SET status = $2,
+                      finished_at = now(),
+                      exit_reason = $3,
+                      last_heartbeat_at = now()
+                WHERE id = (
+                    SELECT id FROM messaging.runs
+                     WHERE conversation_id = $1 AND status = 'running'
+                     ORDER BY started_at DESC LIMIT 1
+                )""",
+            conv_id, new_status, subtype,
+        )
+    else:
+        # thinking / tool_use / tool_result / etc → heartbeat free.
+        # No-op se nao houver row 'running' (defensivo; pode acontecer se
+        # run_start foi perdido no fire-and-forget).
+        await conn.execute(
+            """UPDATE messaging.runs
+                  SET last_heartbeat_at = now()
+                WHERE conversation_id = $1 AND status = 'running'""",
+            conv_id,
+        )
 
 
 @app.get("/api/conversations/{conv_id:path}/live/recent")
