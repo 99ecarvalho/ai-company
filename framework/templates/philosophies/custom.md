@@ -1,15 +1,15 @@
 # Custom
 
-> **summary:** Esqueleto em branco — escreva sua propria filosofia ou misture varias.
+> **summary:** Blank skeleton — write your own philosophy or mix several.
 
-## Princípios chave
+## Key principles
 
 -
 
-## Estrutura de tasks
+## Task structure
 
-## Vocabulário
+## Vocabulary
 
-## Agentes arquetípicos
+## Archetypal agents
 
-## Cadência sugerida
+## Suggested cadence

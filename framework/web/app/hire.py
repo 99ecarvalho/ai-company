@@ -102,19 +102,19 @@ Retorne APENAS o JSON. Nenhum texto fora, sem fences.
 
 def validate_name(name: str) -> None:
     if not NAME_RE.match(name):
-        raise ValueError(f"nome invalido '{name}': use lowercase a-z0-9- (ate 31 chars)")
+        raise ValueError(f"invalid name '{name}': use lowercase a-z0-9- (max 31 chars)")
 
 
 def validate_mounts(write_access: list[str], read_access: list[str]) -> None:
     for m in write_access or []:
         if m not in VALID_MOUNTS:
-            raise ValueError(f"write_access invalido: {m!r}. Use {VALID_MOUNTS}")
+            raise ValueError(f"invalid write_access: {m!r}. Use {VALID_MOUNTS}")
     for m in read_access or []:
         if m not in VALID_MOUNTS:
-            raise ValueError(f"read_access invalido: {m!r}. Use {VALID_MOUNTS}")
+            raise ValueError(f"invalid read_access: {m!r}. Use {VALID_MOUNTS}")
     overlap = set(write_access or []) & set(read_access or [])
     if overlap:
-        raise ValueError(f"mesmo mount em write e read: {overlap}")
+        raise ValueError(f"same mount in both write and read: {overlap}")
 
 
 def build_data_block(data: dict) -> str:
@@ -157,9 +157,9 @@ async def generate_draft(data: dict) -> dict:
         container = client.containers.get(EXEC_CONTAINER)
     except docker.errors.NotFound:
         raise RuntimeError(
-            f"container {EXEC_CONTAINER} nao encontrado — precisa de um container "
-            "de agente rodando pra gerar o draft (claude CLI + creds). "
-            "Suba a stack ou ajuste HIRE_AGENT_CONTAINER no env."
+            f"container {EXEC_CONTAINER} not found — a running agent container "
+            "is required to generate the draft (claude CLI + creds). "
+            "Start the stack or adjust HIRE_AGENT_CONTAINER in env."
         )
 
     # exec_run com stdin=False; claude -p recebe prompt via argv
@@ -183,7 +183,7 @@ async def generate_draft(data: dict) -> dict:
     stderr_s = (stderr or b"").decode("utf-8", errors="replace")
     if rc != 0:
         log.error("hire.exec_failed", rc=rc, stderr=stderr_s[:500])
-        raise RuntimeError(f"claude falhou (rc={rc}): {stderr_s[:500]}")
+        raise RuntimeError(f"claude failed (rc={rc}): {stderr_s[:500]}")
 
     # claude --output-format json retorna envelope; extrai o `result` que eh texto do modelo
     try:
@@ -202,14 +202,14 @@ async def generate_draft(data: dict) -> dict:
     except Exception:
         log.error("hire.parse_failed", preview=result_text[:400])
         raise RuntimeError(
-            "Claude retornou formato invalido — esperava JSON. "
+            "Claude returned invalid format — expected JSON. "
             "Preview: " + result_text[:300]
         )
 
     entry = parsed.get("entry")
     claude_md = parsed.get("claude_md", "").strip()
     if not isinstance(entry, dict) or not claude_md:
-        raise RuntimeError("Resposta sem entry (objeto) ou claude_md")
+        raise RuntimeError("Response missing entry (object) or claude_md")
 
     # Forca name canonica (o que o usuario digitou, nao o que Claude inventou)
     entry["name"] = name
@@ -243,13 +243,13 @@ async def apply_hire(payload: dict) -> dict:
     claude_md = (payload.get("claude_md") or "").strip()
     validate_name(name)
     if not yaml_entry or not claude_md:
-        raise ValueError("yaml_entry e claude_md obrigatorios")
+        raise ValueError("yaml_entry and claude_md are required")
 
     # Ja existe no agents.yaml?
     if AGENTS_YAML.exists():
         existing = AGENTS_YAML.read_text(encoding="utf-8")
         if re.search(rf"^\s*-\s*name:\s*{re.escape(name)}\s*$", existing, re.MULTILINE):
-            raise ValueError(f"agente '{name}' ja existe em agents.yaml")
+            raise ValueError(f"agent '{name}' already exists in agents.yaml")
 
     # Normaliza yaml_entry: parse + re-serialize com indent correto.
     # O yaml_entry chega como item de lista, indentado 2 espacos (pra ser
@@ -265,9 +265,9 @@ async def apply_hire(payload: dict) -> dict:
         elif isinstance(parsed, dict):
             entry_dict = parsed
         else:
-            raise ValueError("yaml_entry nao eh uma lista nem dict apos parse")
+            raise ValueError("yaml_entry is neither a list nor dict after parsing")
     except Exception as e:
-        raise ValueError(f"yaml_entry nao eh YAML valido: {e}")
+        raise ValueError(f"yaml_entry is not valid YAML: {e}")
 
     # Re-serializa com indent controlado
     yaml_text = yaml.safe_dump({"agents": [entry_dict]}, sort_keys=False, allow_unicode=True, default_flow_style=False)
@@ -309,7 +309,7 @@ async def apply_hire(payload: dict) -> dict:
         reconcile_log = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output)
     except Exception as e:
         log.exception("hire.reconcile_failed", name=name)
-        raise RuntimeError(f"CLAUDE.md + yaml criados, mas reconcile falhou: {e}")
+        raise RuntimeError(f"CLAUDE.md + yaml created, but reconcile failed: {e}")
 
     # Depois do reconcile, sobe o container novo
     try:
@@ -326,7 +326,7 @@ async def apply_hire(payload: dict) -> dict:
         "ok": True,
         "name": name,
         "reconcile_log": reconcile_log[-2000:] if reconcile_log else "",
-        "note": f"Agente registrado. Para subir o container: docker compose up -d agent-{name}",
+        "note": f"Agent registered. To start the container: docker compose up -d agent-{name}",
     }
 
 

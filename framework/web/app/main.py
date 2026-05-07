@@ -345,7 +345,7 @@ async def _resolve_conv_id(conv_id: str) -> int:
     if conv_id.isdigit():
         return int(conv_id)
     if "/" not in conv_id:
-        raise HTTPException(status_code=400, detail="conv_id invalido (use stream/topic)")
+        raise HTTPException(status_code=400, detail="invalid conv_id (use stream/topic)")
     stream, topic = conv_id.split("/", 1)
     row = await db.fetch_one(
         """SELECT c.id FROM messaging.conversations c
@@ -354,7 +354,7 @@ async def _resolve_conv_id(conv_id: str) -> int:
         stream, topic,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="conversa nao existe")
+        raise HTTPException(status_code=404, detail="conversation does not exist")
     return row["id"]
 
 
@@ -374,7 +374,7 @@ async def conversation_messages_alias(conv_id: str, principal: Principal = Depen
         numeric_id,
     )
     if not rows:
-        raise HTTPException(status_code=404, detail="conversa sem mensagens")
+        raise HTTPException(status_code=404, detail="conversation has no messages")
     first = rows[0]
     # D-111: kind='ask_human' — badge needs-you so dispara em ask humano,
     # nao em ask_agent (agente target responde, silencioso pra humano).
@@ -578,7 +578,7 @@ async def conversation_patch(
     e `custom_title || task.title || topic`). Passar string vazia ou null
     apaga o override (volta pro fallback). Migration 027."""
     if "custom_title" not in payload:
-        raise HTTPException(status_code=400, detail="custom_title obrigatorio")
+        raise HTTPException(status_code=400, detail="custom_title is required")
     raw = payload.get("custom_title")
     if raw is None:
         new_title: str | None = None
@@ -586,9 +586,9 @@ async def conversation_patch(
         trimmed = raw.strip()
         new_title = trimmed if trimmed else None
     else:
-        raise HTTPException(status_code=400, detail="custom_title deve ser string ou null")
+        raise HTTPException(status_code=400, detail="custom_title must be string or null")
     if new_title is not None and len(new_title) > 200:
-        raise HTTPException(status_code=400, detail="custom_title acima de 200 caracteres")
+        raise HTTPException(status_code=400, detail="custom_title exceeds 200 characters")
     numeric_id = await _resolve_conv_id(conv_id)
     row = await db.fetch_one(
         """UPDATE messaging.conversations
@@ -598,7 +598,7 @@ async def conversation_patch(
         numeric_id, new_title,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="conversa nao existe")
+        raise HTTPException(status_code=404, detail="conversation does not exist")
     return {"ok": True, "id": row["id"], "custom_title": row["custom_title"]}
 
 
@@ -623,9 +623,9 @@ async def conversation_archive(conv_id: str, principal: Principal = Depends(get_
         numeric_id,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="conversa nao existe")
+        raise HTTPException(status_code=404, detail="conversation does not exist")
     if row["archived_at"] is not None:
-        raise HTTPException(status_code=409, detail="conversa ja esta arquivada")
+        raise HTTPException(status_code=409, detail="conversation is already archived")
     if principal.kind == "bot" and principal.user_id is not None:
         # D-111: bloqueia archive apenas se ha ask_human pendente proprio.
         # ask_agent pendente (cross-agent) nao deve bloquear archive — bot
@@ -685,9 +685,9 @@ async def conversation_unarchive(conv_id: str, _: Principal = Depends(get_princi
         numeric_id,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="conversa nao existe")
+        raise HTTPException(status_code=404, detail="conversation does not exist")
     if row["archived_at"] is None:
-        raise HTTPException(status_code=409, detail="conversa nao esta arquivada")
+        raise HTTPException(status_code=409, detail="conversation is not archived")
     descendants = await _collect_descendant_conv_ids(numeric_id)
     all_ids = [numeric_id, *descendants]
     result = await db.execute(
@@ -719,7 +719,7 @@ async def conversation_delete_alias(conv_id: str, principal: Principal = Depends
     topics sao cancelados via agent_ctrl antes do DELETE, pra nao ficarem
     fantasmas segurando slot de pool do agente."""
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     numeric_id = await _resolve_conv_id(conv_id)
     descendants = await _collect_descendant_conv_ids(numeric_id)
     all_ids = [numeric_id, *descendants]
@@ -811,7 +811,7 @@ async def conversation_cancel(conv_id: str, principal: Principal = Depends(get_p
     proc ao inves de responder "tarde demais".
     """
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     numeric_id = await _resolve_conv_id(conv_id)
     row = await db.fetch_one(
         """SELECT s.name AS stream, c.topic_name AS topic
@@ -821,7 +821,7 @@ async def conversation_cancel(conv_id: str, principal: Principal = Depends(get_p
         numeric_id,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="conversa nao existe")
+        raise HTTPException(status_code=404, detail="conversation does not exist")
     payload = json.dumps({
         "type": "cancel_topic",
         "stream": row["stream"],
@@ -953,13 +953,13 @@ async def conversation_retry(
     double-dispatch acidental em run ativa.
     """
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     numeric_id = await _resolve_conv_id(conv_id)
     state = await _compute_runner_state(numeric_id)
     if not state["can_retry"]:
         raise HTTPException(
             status_code=409,
-            detail=f"retry indisponivel no estado atual: {state['state']}",
+            detail=f"retry unavailable in current state: {state['state']}",
         )
     # Busca conversation + stream_id + nome do bot da stream (= nome do
     # agente, convencao). Ignoramos mensagens desse bot pra achar o ultimo
@@ -972,7 +972,7 @@ async def conversation_retry(
         numeric_id,
     )
     if conv is None:
-        raise HTTPException(status_code=404, detail="conversa nao existe")
+        raise HTTPException(status_code=404, detail="conversation does not exist")
     # Ultima msg cujo sender nao seja o proprio agente (bot com agent_name =
     # stream_name). Fallback: qualquer ultima msg.
     trigger = await db.fetch_one(
@@ -995,7 +995,7 @@ async def conversation_retry(
         if trigger is None:
             raise HTTPException(
                 status_code=400,
-                detail="conversa sem mensagens pra re-processar",
+                detail="conversation has no messages to reprocess",
             )
     # Reemite o mesmo shape de payload que o trigger `messaging.notify_message`
     # produz (ver migrations/007_notify_payload_slim.sql).
@@ -1110,7 +1110,7 @@ async def auth_login(payload: dict, request: Request, response: Response):
     email = (payload.get("email") or "").strip().lower()
     password = payload.get("password") or ""
     if not email or not password:
-        raise HTTPException(status_code=400, detail="email e password obrigatorios")
+        raise HTTPException(status_code=400, detail="email and password are required")
 
     # Throttle ANTES da query/bcrypt — atacante nao acelera com 50 reqs/seg.
     fail_count = _login_failure_count(email)
@@ -1145,7 +1145,7 @@ async def auth_login(payload: dict, request: Request, response: Response):
             email=email, ip=_real_client_ip(request),
             fail_count=new_count, user_exists=bool(row),
         )
-        raise HTTPException(status_code=401, detail="credenciais invalidas")
+        raise HTTPException(status_code=401, detail="invalid credentials")
 
     _clear_login_failures(email)
     ua = request.headers.get("user-agent")
@@ -1260,13 +1260,13 @@ async def task_archive(slug: str, _: Principal = Depends(get_principal)):
     pode estar despachando."""
     row = await _fetch_task_row(slug)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"task '{slug}' não encontrada")
+        raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
     if row["archived_at"] is not None:
-        raise HTTPException(status_code=409, detail="task já está arquivada")
+        raise HTTPException(status_code=409, detail="task is already archived")
     if row["status"] not in _TERMINAL_STATUSES:
         raise HTTPException(
             status_code=409,
-            detail=f"só dá pra arquivar task em status terminal; status atual: {row['status']!r}",
+            detail=f"can only archive task in terminal status; current status: {row['status']!r}",
         )
     await db.execute(
         "UPDATE tasks.tasks SET archived_at = now() WHERE slug = $1",
@@ -1281,9 +1281,9 @@ async def task_unarchive(slug: str, _: Principal = Depends(get_principal)):
     """Unset archived_at."""
     row = await _fetch_task_row(slug)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"task '{slug}' não encontrada")
+        raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
     if row["archived_at"] is None:
-        raise HTTPException(status_code=409, detail="task não está arquivada")
+        raise HTTPException(status_code=409, detail="task is not archived")
     await db.execute(
         "UPDATE tasks.tasks SET archived_at = NULL WHERE slug = $1",
         slug,
@@ -1300,11 +1300,11 @@ async def task_delete(slug: str, _: Principal = Depends(get_principal)):
     import shutil as _shutil
     row = await _fetch_task_row(slug)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"task '{slug}' não encontrada")
+        raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
     if row["archived_at"] is None:
         raise HTTPException(
             status_code=409,
-            detail="task ativa; arquive primeiro antes de deletar",
+            detail="task is active; archive it before deleting",
         )
     events_purged = await db.execute(
         "DELETE FROM orchestrator.events WHERE task_slug = $1",
@@ -1408,7 +1408,7 @@ def _write_workflows_yaml(full: dict) -> int:
     if len(encoded) > _WORKFLOWS_YAML_MAX_BYTES:
         raise HTTPException(
             status_code=413,
-            detail=f"workflows.yaml excede {_WORKFLOWS_YAML_MAX_BYTES} bytes",
+            detail=f"workflows.yaml exceeds {_WORKFLOWS_YAML_MAX_BYTES} bytes",
         )
     _WORKFLOWS_YAML_PATH.parent.mkdir(parents=True, exist_ok=True)
     _WORKFLOWS_YAML_PATH.write_text(text, encoding="utf-8")
@@ -1478,7 +1478,7 @@ def _normalize_workflow_body(body: dict) -> dict:
                 if len(cleaned.encode("utf-8")) > 32 * 1024:
                     raise HTTPException(
                         status_code=413,
-                        detail=f"step {s_name!r}: instructions excede 32 KB",
+                        detail=f"step {s_name!r}: instructions exceeds 32 KB",
                     )
                 entry["instructions"] = cleaned
         overrides = _normalize_step_overrides(s_body.get("overrides"))
@@ -1524,32 +1524,32 @@ def _validate_workflow_body(name: str, body: dict) -> None:
     if not isinstance(name, str) or not _WORKFLOW_NAME_RE.match(name):
         raise HTTPException(
             status_code=400,
-            detail="nome invalido: use minusculas/digitos/-/_ (1-64 chars, comeca com alfanumerico)",
+            detail="invalid name: use lowercase/digits/-/_ (1-64 chars, starts with alphanumeric)",
         )
     if name in _WORKFLOW_TERMINALS:
         raise HTTPException(
             status_code=400,
-            detail=f"nome colide com terminal reservado do framework: {name}",
+            detail=f"name collides with reserved framework terminal: {name}",
         )
     steps = body.get("steps") or {}
     if not isinstance(steps, dict) or not steps:
-        raise HTTPException(status_code=400, detail="steps obrigatorio e nao pode ser vazio")
+        raise HTTPException(status_code=400, detail="steps is required and cannot be empty")
     for s_name in steps.keys():
         if not isinstance(s_name, str) or not _WORKFLOW_NAME_RE.match(s_name):
             raise HTTPException(
                 status_code=400,
-                detail=f"nome de step invalido: {s_name!r} (use minusculas/digitos/-/_)",
+                detail=f"invalid step name: {s_name!r} (use lowercase/digits/-/_)",
             )
         if s_name in _WORKFLOW_TERMINALS:
             raise HTTPException(
                 status_code=400,
-                detail=f"nome de step colide com terminal reservado: {s_name}",
+                detail=f"step name collides with reserved terminal: {s_name}",
             )
     initial = body.get("initial_step") or ""
     if not initial or initial not in steps:
         raise HTTPException(
             status_code=400,
-            detail=f"initial_step {initial!r} precisa existir em steps",
+            detail=f"initial_step {initial!r} must exist in steps",
         )
     valid_targets = set(steps.keys()) | _WORKFLOW_TERMINALS
     for s_name, s_body in steps.items():
@@ -1557,16 +1557,16 @@ def _validate_workflow_body(name: str, body: dict) -> None:
         if not nxt:
             raise HTTPException(
                 status_code=400,
-                detail=f"step {s_name!r}: next nao pode ser vazio (use [done]/[halt]/... se for fim)",
+                detail=f"step {s_name!r}: next cannot be empty (use [done]/[halt]/... if terminal)",
             )
         for target in nxt:
             if target not in valid_targets:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"step {s_name!r}: next {target!r} nao existe. "
-                        f"Alvos validos: steps declarados ({sorted(steps.keys())}) "
-                        f"ou terminais ({sorted(_WORKFLOW_TERMINALS)})."
+                        f"step {s_name!r}: next {target!r} does not exist. "
+                        f"Valid targets: declared steps ({sorted(steps.keys())}) "
+                        f"or terminals ({sorted(_WORKFLOW_TERMINALS)})."
                     ),
                 )
         if "overrides" in s_body:
@@ -1582,14 +1582,14 @@ def _validate_step_overrides(s_name: str, overrides: Any) -> None:
     if not isinstance(overrides, dict):
         raise HTTPException(
             status_code=400,
-            detail=f"step {s_name!r}: overrides deve ser objeto",
+            detail=f"step {s_name!r}: overrides must be an object",
         )
     if "model" in overrides:
         model = overrides["model"]
         if not isinstance(model, str) or not model.strip():
             raise HTTPException(
                 status_code=400,
-                detail=f"step {s_name!r}: overrides.model deve ser string nao-vazia",
+                detail=f"step {s_name!r}: overrides.model must be non-empty string",
             )
     if "effort" in overrides:
         effort = overrides["effort"]
@@ -1606,19 +1606,19 @@ def _validate_step_overrides(s_name: str, overrides: Any) -> None:
         if not isinstance(mem, dict):
             raise HTTPException(
                 status_code=400,
-                detail=f"step {s_name!r}: overrides.memory deve ser objeto",
+                detail=f"step {s_name!r}: overrides.memory must be an object",
             )
         if "enabled" in mem and not isinstance(mem["enabled"], bool):
             raise HTTPException(
                 status_code=400,
-                detail=f"step {s_name!r}: overrides.memory.enabled deve ser bool",
+                detail=f"step {s_name!r}: overrides.memory.enabled must be a boolean",
             )
         if "auto_inject_limit" in mem:
             lim = mem["auto_inject_limit"]
             if not isinstance(lim, int) or isinstance(lim, bool) or lim < 0:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"step {s_name!r}: overrides.memory.auto_inject_limit deve ser int >= 0",
+                    detail=f"step {s_name!r}: overrides.memory.auto_inject_limit must be int >= 0",
                 )
 
 
@@ -1696,7 +1696,7 @@ async def workflow_get(name: str, _: Principal = Depends(get_principal)):
     wfs = _load_workflows_raw()
     wf = wfs.get(name)
     if not wf:
-        raise HTTPException(status_code=404, detail=f"workflow '{name}' nao declarado em workflows.yaml")
+        raise HTTPException(status_code=404, detail=f"workflow '{name}' not declared in workflows.yaml")
     return _serialize_workflow(name, wf)
 
 
@@ -1726,7 +1726,7 @@ async def workflow_delete(name: str, _: Principal = Depends(get_principal)):
     full = _load_workflows_full()
     wfs = full.get("workflows") or {}
     if name not in wfs:
-        raise HTTPException(status_code=404, detail=f"workflow '{name}' nao existe")
+        raise HTTPException(status_code=404, detail=f"workflow '{name}' does not exist")
     del wfs[name]
     full["workflows"] = wfs
     size = _write_workflows_yaml(full)
@@ -1744,18 +1744,18 @@ async def workflow_rename(
     if not _WORKFLOW_NAME_RE.match(new_name):
         raise HTTPException(
             status_code=400,
-            detail="new_name invalido: use minusculas/digitos/-/_ (1-64 chars)",
+            detail="invalid new_name: use lowercase/digits/-/_ (1-64 chars)",
         )
     if new_name in _WORKFLOW_TERMINALS:
-        raise HTTPException(status_code=400, detail=f"new_name colide com terminal: {new_name}")
+        raise HTTPException(status_code=400, detail=f"new_name collides with terminal: {new_name}")
     if new_name == name:
-        raise HTTPException(status_code=400, detail="new_name igual ao atual")
+        raise HTTPException(status_code=400, detail="new_name is same as current")
     full = _load_workflows_full()
     wfs = full.get("workflows") or {}
     if name not in wfs:
-        raise HTTPException(status_code=404, detail=f"workflow '{name}' nao existe")
+        raise HTTPException(status_code=404, detail=f"workflow '{name}' does not exist")
     if new_name in wfs:
-        raise HTTPException(status_code=409, detail=f"workflow '{new_name}' ja existe")
+        raise HTTPException(status_code=409, detail=f"workflow '{new_name}' already exists")
     # Preserva a ordem: substitui a chave in-place em vez de append no final.
     renamed: dict = {}
     for k, v in wfs.items():
@@ -1824,13 +1824,13 @@ async def backlog_create(payload: dict, principal: Principal = Depends(get_princ
     slug = (payload.get("slug") or "").strip()
     title = (payload.get("title") or "").strip()
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido (kebab-case)")
+        raise HTTPException(status_code=400, detail="invalid slug (kebab-case)")
     if not title:
-        raise HTTPException(status_code=400, detail="title obrigatorio")
+        raise HTTPException(status_code=400, detail="title is required")
     priority = int(payload.get("priority") or 0)
     status = (payload.get("status") or "aberto").strip()
     if status not in _BACKLOG_STATUSES:
-        raise HTTPException(status_code=400, detail=f"status invalido: {status!r}")
+        raise HTTPException(status_code=400, detail=f"invalid status: {status!r}")
     await db.execute(
         """INSERT INTO tasks.backlog (slug, title, content, priority, impact, effort, status, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -1851,9 +1851,9 @@ async def backlog_create(payload: dict, principal: Principal = Depends(get_princ
 @app.patch("/api/backlog/{slug}")
 async def backlog_patch(slug: str, payload: dict, _: Principal = Depends(get_principal)):
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido")
+        raise HTTPException(status_code=400, detail="invalid slug")
     if payload.get("status") and payload["status"] not in _BACKLOG_STATUSES:
-        raise HTTPException(status_code=400, detail=f"status invalido: {payload['status']!r}")
+        raise HTTPException(status_code=400, detail=f"invalid status: {payload['status']!r}")
     fields = []
     params: list = []
     idx = 1
@@ -1867,26 +1867,26 @@ async def backlog_patch(slug: str, payload: dict, _: Principal = Depends(get_pri
         params.append(int(payload["priority"]))
         idx += 1
     if not fields:
-        raise HTTPException(status_code=400, detail="nenhum campo pra atualizar")
+        raise HTTPException(status_code=400, detail="no fields to update")
     params.append(slug)
     row = await db.fetch_one(
         f"UPDATE tasks.backlog SET {', '.join(fields)} WHERE slug = ${idx} RETURNING slug, priority, status",
         *params,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"backlog item '{slug}' nao existe")
+        raise HTTPException(status_code=404, detail=f"backlog item '{slug}' does not exist")
     return {"ok": True, "slug": row["slug"], "priority": int(row["priority"] or 0), "status": row["status"]}
 
 
 @app.delete("/api/backlog/{slug}")
 async def backlog_delete(slug: str, _: Principal = Depends(get_principal)):
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido")
+        raise HTTPException(status_code=400, detail="invalid slug")
     row = await db.fetch_one(
         "DELETE FROM tasks.backlog WHERE slug = $1 RETURNING slug", slug,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"backlog item '{slug}' nao existe")
+        raise HTTPException(status_code=404, detail=f"backlog item '{slug}' does not exist")
     return {"ok": True, "slug": slug, "deleted": True}
 
 
@@ -1905,10 +1905,10 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
     — comportamento equivalente ao pre-D-110.
     """
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido")
+        raise HTTPException(status_code=400, detail="invalid slug")
     task_slug = (payload.get("task_slug") or slug).strip()
     if not _SLUG_RE.match(task_slug):
-        raise HTTPException(status_code=400, detail="task_slug invalido")
+        raise HTTPException(status_code=400, detail="invalid task_slug")
     workflow = payload.get("workflow")
     next_agent = payload.get("next_agent")
     initial_topic = (payload.get("initial_topic") or f"task-{task_slug}").strip()
@@ -1930,7 +1930,7 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
     if not next_agent:
         raise HTTPException(
             status_code=400,
-            detail="next_agent obrigatorio (passe explicito ou defina workflow com initial_step.agent)",
+            detail="next_agent is required (pass explicitly or define workflow with initial_step.agent)",
         )
     # orchestrator: campo do workflow > fallback pro next_agent.
     if not orchestrator:
@@ -1944,7 +1944,7 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
                 slug,
             )
             if item is None:
-                raise HTTPException(status_code=404, detail=f"backlog '{slug}' nao existe")
+                raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
             existing = await conn.fetchval(
                 "SELECT id FROM tasks.tasks WHERE slug = $1", task_slug,
             )
@@ -2008,7 +2008,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
     cria automatico).
     """
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido")
+        raise HTTPException(status_code=400, detail="invalid slug")
     async with db.connection() as conn:
         async with conn.transaction():
             bl = await conn.fetchrow(
@@ -2017,11 +2017,11 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                 slug,
             )
             if bl is None:
-                raise HTTPException(status_code=404, detail=f"backlog '{slug}' nao existe")
+                raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
             if bl["status"] != "promovido" or not bl["promoted_task_slug"]:
                 raise HTTPException(
                     status_code=409,
-                    detail="item nao esta em estado 'promovido' — nada pra desfazer",
+                    detail="item is not in 'promoted' state — nothing to undo",
                 )
             task_slug = bl["promoted_task_slug"]
 
@@ -2039,7 +2039,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                 if phases_done and phases_done > 0:
                     raise HTTPException(
                         status_code=409,
-                        detail=f"task ja tem {phases_done} phase(s) completada(s) — nao da pra reverter sem perder trabalho",
+                        detail=f"task already has {phases_done} completed phase(s) — cannot revert without losing work",
                     )
                 human_msgs = await conn.fetchval(
                     """SELECT count(*) FROM messaging.messages m
@@ -2054,7 +2054,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                 if human_msgs and human_msgs > 0:
                     raise HTTPException(
                         status_code=409,
-                        detail="humano ja postou na conv da task — responda ali em vez de reverter",
+                        detail="human already posted in task conversation — reply there instead of reverting",
                     )
 
                 # Cancela pending_asks de todas as convs da task.
@@ -2123,7 +2123,7 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
     Frontend deve confirmar via modal — endpoint nao tem soft mode."""
     import shutil as _shutil
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido")
+        raise HTTPException(status_code=400, detail="invalid slug")
     async with db.connection() as conn:
         async with conn.transaction():
             bl = await conn.fetchrow(
@@ -2132,7 +2132,7 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
                 slug,
             )
             if bl is None:
-                raise HTTPException(status_code=404, detail=f"backlog '{slug}' nao existe")
+                raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
             task_slug = bl["promoted_task_slug"]
             if not task_slug:
                 # Item nao foi promovido (ou ja foi resetado antes). Devolve pra
@@ -2222,17 +2222,17 @@ async def backlog_reopen_endpoint(slug: str, principal: Principal = Depends(get_
     Aceita apenas status='descartado'. Usa /revert pra promovido→aberto.
     """
     if not _SLUG_RE.match(slug):
-        raise HTTPException(status_code=400, detail="slug invalido")
+        raise HTTPException(status_code=400, detail="invalid slug")
     row = await db.fetch_one(
         "SELECT status FROM tasks.backlog WHERE slug = $1",
         slug,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"backlog '{slug}' nao existe")
+        raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
     if row["status"] != "descartado":
         raise HTTPException(
             status_code=409,
-            detail=f"item esta em '{row['status']}', nao em 'descartado' — use /revert pra promovido",
+            detail=f"item is in '{row['status']}', not 'discarded' — use /revert for promoted",
         )
     await db.execute(
         "UPDATE tasks.backlog SET status = 'aberto', updated_at = now() WHERE slug = $1",
@@ -2334,7 +2334,7 @@ async def task_stats(slug: str, _: Principal = Depends(get_principal)):
     """
     task_row = await _fetch_task_row(slug)
     if task_row is None:
-        raise HTTPException(status_code=404, detail=f"task '{slug}' nao encontrada")
+        raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
     phase_rows = await db.fetch_all(
         """SELECT agent, started_at, completed_at
              FROM tasks.phases WHERE task_id = $1 ORDER BY idx ASC""",
@@ -2381,7 +2381,7 @@ async def task_telemetry(slug: str, _: Principal = Depends(get_principal)):
     rows cujas convs ja foram deletadas."""
     task_row = await _fetch_task_row(slug)
     if task_row is None:
-        raise HTTPException(status_code=404, detail=f"task '{slug}' nao encontrada")
+        raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
 
     totals_row = await db.fetch_one(
         """SELECT COUNT(*)                                   AS runs,
@@ -2442,7 +2442,7 @@ async def task_timeline(slug: str, _: Principal = Depends(get_principal)):
     """
     task_row = await _fetch_task_row(slug)
     if task_row is None:
-        raise HTTPException(status_code=404, detail=f"task '{slug}' nao encontrada")
+        raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
     # Carrega phases do banco (schema tasks).
     phase_rows = await db.fetch_all(
         """SELECT step, agent, started_at, completed_at, artifact, summary
@@ -2731,7 +2731,7 @@ async def manifest_icon(size: int):
     """D-94: serve icone do PWA — prioriza override por instancia em
     `instance/web/icons/icon-<size>.png`, cai pro default do framework."""
     if size not in (192, 512):
-        raise HTTPException(status_code=404, detail="size invalido")
+        raise HTTPException(status_code=404, detail="invalid size")
     instance_path = INSTANCE_WEB_DIR / "icons" / f"icon-{size}.png"
     if instance_path.is_file():
         return FileResponse(instance_path, media_type="image/png", headers=_LONG_CACHE)
@@ -2775,10 +2775,10 @@ async def tts_synthesize(payload: dict, _: Principal = Depends(get_principal)):
     """Proxy pra container TTS interno (Piper). Retorna audio/wav."""
     url = os.environ.get("TTS_URL")
     if not url:
-        raise HTTPException(status_code=503, detail="TTS nao configurado")
+        raise HTTPException(status_code=503, detail="TTS not configured")
     text = (payload.get("text") or "").strip()
     if not text:
-        raise HTTPException(status_code=400, detail="text obrigatorio")
+        raise HTTPException(status_code=400, detail="text is required")
     if len(text) > 5000:
         raise HTTPException(status_code=413, detail="text > 5000 chars")
     timeout = aiohttp.ClientTimeout(total=60)
@@ -2791,7 +2791,7 @@ async def tts_synthesize(payload: dict, _: Principal = Depends(get_principal)):
                 body = await resp.text()
                 raise HTTPException(
                     status_code=502,
-                    detail=f"TTS retornou {resp.status}: {body[:200]}",
+                    detail=f"TTS returned {resp.status}: {body[:200]}",
                 )
             data = await resp.read()
     from fastapi.responses import Response as _Response
@@ -2807,7 +2807,7 @@ async def transcribe_preview(
 ):
     url = os.environ.get("TRANSCRIBER_URL")
     if not url:
-        raise HTTPException(status_code=503, detail="Transcriber nao configurado")
+        raise HTTPException(status_code=503, detail="Transcriber not configured")
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Arquivo vazio")
@@ -2823,7 +2823,7 @@ async def transcribe_preview(
         async with session.post(url.rstrip("/") + "/transcribe", data=form) as resp:
             body = await resp.text()
             if resp.status != 200:
-                raise HTTPException(status_code=502, detail=f"Transcriber retornou {resp.status}: {body[:200]}")
+                raise HTTPException(status_code=502, detail=f"Transcriber returned {resp.status}: {body[:200]}")
             return json.loads(body)
 
 
@@ -2845,7 +2845,7 @@ async def push_subscribe(payload: dict, principal: Principal = Depends(get_princ
     p256dh = keys.get("p256dh")
     auth_key = keys.get("auth")
     if not (endpoint and p256dh and auth_key):
-        raise HTTPException(status_code=400, detail="subscription invalida")
+        raise HTTPException(status_code=400, detail="invalid subscription")
     await db.execute(
         """INSERT INTO web.push_subscriptions (endpoint, p256dh, auth, user_id, user_agent)
            VALUES ($1, $2, $3, $4, $5)
@@ -2860,7 +2860,7 @@ async def push_subscribe(payload: dict, principal: Principal = Depends(get_princ
 async def push_unsubscribe(payload: dict):
     endpoint = payload.get("endpoint")
     if not endpoint:
-        raise HTTPException(status_code=400, detail="endpoint ausente")
+        raise HTTPException(status_code=400, detail="endpoint missing")
     await db.execute("DELETE FROM web.push_subscriptions WHERE endpoint = $1", endpoint)
     return {"ok": True}
 
@@ -2869,7 +2869,7 @@ async def push_unsubscribe(payload: dict):
 async def push_test(delay_seconds: float = 0.0):
     dispatcher = app.state.push_dispatcher
     if dispatcher is None:
-        raise HTTPException(status_code=503, detail="VAPID nao configurado")
+        raise HTTPException(status_code=503, detail="VAPID not configured")
 
     async def _dispatch():
         subs = await db.fetch_all("SELECT endpoint, p256dh, auth FROM web.push_subscriptions")
@@ -2973,7 +2973,7 @@ async def telemetry_live_event(payload: dict, principal: Principal = Depends(get
     topic = payload.get("topic")
     kind = payload.get("kind")
     if not (stream and topic and kind):
-        raise HTTPException(status_code=400, detail="stream, topic, kind obrigatorios")
+        raise HTTPException(status_code=400, detail="stream, topic, kind are required")
     # thinking pode ser multi-paragrafo; cap alto mas existente pra evitar
     # payload absurdo chegando do runner. UI renderiza o texto cheio como bubble.
     summary = payload.get("summary")
@@ -2999,7 +2999,7 @@ async def telemetry_live_event(payload: dict, principal: Principal = Depends(get
             stream, topic,
         )
         if row is None:
-            raise HTTPException(status_code=404, detail="conv nao existe")
+            raise HTTPException(status_code=404, detail="conv does not exist")
         conv_id = row["id"]
         async with conn.transaction():
             await conn.execute(
@@ -3183,7 +3183,7 @@ async def live_event_full(event_id: int, _: Principal = Depends(get_principal)):
         event_id,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="live_event nao existe")
+        raise HTTPException(status_code=404, detail="live_event does not exist")
     data = row["data"]
     if isinstance(data, str):
         try:
@@ -3562,7 +3562,7 @@ async def company_context_get(_: Principal = Depends(get_principal)):
 async def company_context_set(payload: dict, _: Principal = Depends(get_principal)):
     content = payload.get("content", "")
     if not isinstance(content, str):
-        raise HTTPException(status_code=400, detail="content deve ser string")
+        raise HTTPException(status_code=400, detail="content must be a string")
     size = _write_company_file(COMPANY_CONTEXT_PATH, content)
     return {"ok": True, "size": size}
 
@@ -3576,7 +3576,7 @@ async def company_philosophy_get(_: Principal = Depends(get_principal)):
 async def company_philosophy_set(payload: dict, _: Principal = Depends(get_principal)):
     content = payload.get("content", "")
     if not isinstance(content, str):
-        raise HTTPException(status_code=400, detail="content deve ser string")
+        raise HTTPException(status_code=400, detail="content must be a string")
     size = _write_company_file(COMPANY_PHILOSOPHY_PATH, content)
     return {"ok": True, "size": size}
 
@@ -3663,7 +3663,7 @@ async def upsert_agent_policy(payload: dict, _: Principal = Depends(get_principa
     can_ask=['x','y'] => whitelist."""
     agent = (payload.get("agent") or "").strip()
     if not agent:
-        raise HTTPException(status_code=400, detail="agent obrigatorio")
+        raise HTTPException(status_code=400, detail="agent is required")
 
     def _norm(v):
         if v is None:
@@ -3758,7 +3758,7 @@ def _agent_claude_md_path(agent: str) -> Path:
     # Valida nome (mesma regex do reconcile NAME_RE) pra evitar path traversal.
     import re
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", agent):
-        raise HTTPException(status_code=400, detail=f"agent name invalido: {agent!r}")
+        raise HTTPException(status_code=400, detail=f"invalid agent name: {agent!r}")
     return AGENTS_CONTAINER_DIR / agent / "CLAUDE.md"
 
 
@@ -3785,7 +3785,7 @@ def _read_section(key: str) -> tuple[Path, str]:
 
 def _write_section(key: str, content: str) -> int:
     if not isinstance(content, str):
-        raise HTTPException(status_code=400, detail="content deve ser string")
+        raise HTTPException(status_code=400, detail="content must be a string")
     if len(content.encode("utf-8")) > SYSTEM_PROMPT_SECTION_FILE:
         raise HTTPException(
             status_code=413,
@@ -3900,13 +3900,13 @@ async def system_prompts_config_get(_: Principal = Depends(get_principal)):
 async def system_prompts_config_set(payload: dict, _: Principal = Depends(get_principal)):
     toggles_in = payload.get("toggles") or {}
     if not isinstance(toggles_in, dict):
-        raise HTTPException(status_code=400, detail="toggles deve ser objeto")
+        raise HTTPException(status_code=400, detail="toggles must be an object")
     current = _read_system_prompt_config()
     for key, val in toggles_in.items():
         if key not in SYSTEM_PROMPT_TOGGLE_DEFAULTS:
             raise HTTPException(status_code=400, detail=f"toggle desconhecido: {key!r}")
         if not isinstance(val, bool):
-            raise HTTPException(status_code=400, detail=f"{key}: deve ser boolean")
+            raise HTTPException(status_code=400, detail=f"{key}: must be boolean")
         current[key] = val
     _write_system_prompt_config(current)
     return {"ok": True, "toggles": current}
@@ -4277,13 +4277,13 @@ async def cost_budget_upsert(payload: dict, _: Principal = Depends(get_principal
     agent = (payload.get("agent") or "").strip()
     limit = payload.get("daily_usd_limit")
     if not agent or not limit:
-        raise HTTPException(status_code=400, detail="agent + daily_usd_limit obrigatorios")
+        raise HTTPException(status_code=400, detail="agent + daily_usd_limit are required")
     try:
         limit_f = float(limit)
         if limit_f <= 0:
             raise ValueError("limit must be positive")
     except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="daily_usd_limit invalido")
+        raise HTTPException(status_code=400, detail="invalid daily_usd_limit")
     await db.execute(
         """INSERT INTO web.cost_budgets (agent, daily_usd_limit, alert_message)
            VALUES ($1, $2, $3)
@@ -4345,7 +4345,7 @@ async def memory_save(agent: str, payload: dict):
     value = payload.get("value")
     tags = payload.get("tags") or []
     if not key or value is None:
-        raise HTTPException(status_code=400, detail="key e value obrigatorios")
+        raise HTTPException(status_code=400, detail="key and value are required")
     await db.execute(
         """INSERT INTO memory.facts (agent, key, value, tags)
            VALUES ($1, $2, $3, $4)
@@ -4361,7 +4361,7 @@ async def memory_edit(agent: str, key: str, payload: dict):
     value = payload.get("value")
     tags = payload.get("tags")
     if value is None and tags is None:
-        raise HTTPException(status_code=400, detail="informe 'value' e/ou 'tags'")
+        raise HTTPException(status_code=400, detail="provide 'value' and/or 'tags'")
     sets: list[str] = []
     params: list = [agent, key]
     if value is not None:
@@ -4380,7 +4380,7 @@ async def memory_edit(agent: str, key: str, payload: dict):
     )
     row = await db.fetch_one(sql, *params)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"fact '{key}' nao existe em {agent}")
+        raise HTTPException(status_code=404, detail=f"fact '{key}' does not exist in {agent}")
     return {"ok": True, "item": dict(row)}
 
 
@@ -4390,7 +4390,7 @@ async def memory_delete(agent: str, key: str):
         "DELETE FROM memory.facts WHERE agent = $1 AND key = $2", agent, key,
     )
     if isinstance(status, str) and not status.endswith(" 1"):
-        raise HTTPException(status_code=404, detail=f"fact '{key}' nao existe em {agent}")
+        raise HTTPException(status_code=404, detail=f"fact '{key}' does not exist in {agent}")
     return {"ok": True}
 
 
@@ -4423,7 +4423,7 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     company_md = (payload.get("company_md") or "").strip()
     philosophy_md = (payload.get("philosophy_md") or "").strip()
     if not company_md:
-        raise HTTPException(status_code=400, detail="company_md obrigatorio")
+        raise HTTPException(status_code=400, detail="company_md is required")
 
     container_name = os.environ.get(
         "HIRE_AGENT_CONTAINER", "agent-framework-agent-executor-1"
@@ -4472,7 +4472,7 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     except docker.errors.NotFound:
         raise HTTPException(
             status_code=503,
-            detail=f"container {container_name} nao encontrado pra rodar Claude. "
+            detail=f"container {container_name} not found to run Claude. "
                    "Suba os agentes ou ajuste HIRE_AGENT_CONTAINER.",
         )
 
@@ -4492,10 +4492,10 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
         import re as _re
         m = _re.search(r"\{[\s\S]*\"agents\"[\s\S]*\}", result_text)
         if not m:
-            raise ValueError("LLM nao retornou JSON com 'agents'")
+            raise ValueError("LLM did not return JSON with 'agents'")
         proposal = json.loads(m.group(0))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"parse falhou: {e}; raw: {(out or b'')[:300]}")
+        raise HTTPException(status_code=502, detail=f"parse failed: {e}; raw: {(out or b'')[:300]}")
     return proposal
 
 
@@ -4510,7 +4510,7 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
     philosophy_md = payload.get("philosophy_md", "")
     agents = payload.get("agents") or []
     if not isinstance(agents, list) or not agents:
-        raise HTTPException(status_code=400, detail="agents obrigatorio (lista nao-vazia)")
+        raise HTTPException(status_code=400, detail="agents is required (non-empty list)")
 
     # Salva docs primeiro
     if company_md:
@@ -4598,7 +4598,7 @@ async def spa_fallback(full_path: str):
         raise HTTPException(status_code=404)
     f = _index_file()
     if not f.exists():
-        raise HTTPException(status_code=503, detail="frontend nao instalado")
+        raise HTTPException(status_code=503, detail="frontend not installed")
     # D-96: mesma estrategia do `/` — index.html nao deve cachear
     # (referencia bundles hashed; se cachear, app trava em versao velha
     # mesmo apos rebuild). Bundles `/_app/*` sao immutable via middleware.

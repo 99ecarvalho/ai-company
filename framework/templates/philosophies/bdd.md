@@ -1,39 +1,39 @@
 # Behavior-Driven Development
 
-> **summary:** Given/When/Then como interface; cenarios viraveis em testes.
+> **summary:** Given/When/Then as interface; scenarios as executable tests.
 
-_(Placeholder — preencher com seu uso real. Veja `_README.md`.)_
+_(Placeholder — fill with your real usage. See `_README.md`.)_
 
-## Princípios chave
+## Key principles
 
-- _(5-10 bullets nao-negociaveis desta filosofia)_
+- _(5-10 non-negotiable bullets for this philosophy)_
 
-## Estrutura de tasks
+## Task structure
 
 ```yaml
-# Sugestao de campos extras pra esta filosofia. Extensoes custom vao pro
-# JSONB `tasks.metadata_extra` via complete_phase — get_task_state devolve
-# junto no retorno. Dados core da task (status, current_step, workflow,
-# baseline, worktrees) ja sao geridos pelo framework.
+# Suggested extra fields for this philosophy. Custom extensions go into
+# JSONB `tasks.metadata_extra` via complete_phase — get_task_state returns
+# them in the payload. Core task data (status, current_step, workflow,
+# baseline, worktrees) is already managed by the framework.
 ```
 
-## Vocabulário
+## Vocabulary
 
-| Termo | Significado nesta filosofia |
+| Term | Meaning in this philosophy |
 |---|---|
-| _(ex: spec)_ | _(o que conta como spec valida)_ |
+| _(e.g. spec)_ | _(what counts as a valid spec)_ |
 
-## Agentes arquetípicos
+## Archetypal agents
 
-Papeis sugeridos pra empresa que adota esta filosofia (entram como
-proposta no wizard de onboarding):
+Roles suggested for a company adopting this philosophy (surface as
+proposals in the onboarding wizard):
 
-- **_(slug)_** — _(role em 1 linha)_
+- **_(slug)_** — _(role in one line)_
 
-## Cadência sugerida
+## Suggested cadence
 
 ```yaml
-# Sugestoes de cron pro instance/schedule.yaml
+# Suggested cron entries for instance/schedule.yaml
 # - id: ...
 #   cron: "..."
 #   action: ...

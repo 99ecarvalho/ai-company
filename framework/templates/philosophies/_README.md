@@ -1,26 +1,26 @@
 # Philosophy templates
 
-Cada arquivo `.md` aqui eh um **template** (semente) de filosofia
-operacional. Nao sao canonicos — sao pontos de partida pra escrever a
-sua. Copia o que servir pra `instance/company/philosophy.md` (ativa) ou
-mistura varios via wizard de onboarding (Fase B).
+Each `.md` file here is a **template** (seed) for an operating philosophy.
+They are not canonical — they are starting points for writing your own.
+Copy what fits into `instance/company/philosophy.md` (the active one) or
+mix several via the onboarding wizard (Phase B).
 
-Cada template segue o mesmo esqueleto pra que o claude_runner injete
-de forma consistente no system prompt:
+Each template follows the same skeleton so claude_runner can inject it
+consistently into the system prompt:
 
-- **Princípios chave** — 5-10 bullets nao-negociaveis
-- **Estrutura de tasks** — extensoes de `tasks.metadata_extra` + ciclos
-- **Vocabulário** — glossario de termos (ex: "spec" vs "ticket" vs "PRD")
-- **Agentes arquetípicos** — papeis sugeridos (alimenta wizard B)
-- **Cadência sugerida** — entradas pra `instance/schedule.yaml`
+- **Key principles** — 5-10 non-negotiable bullets
+- **Task structure** — extensions to `tasks.metadata_extra` + cycles
+- **Vocabulary** — glossary of terms (e.g. "spec" vs "ticket" vs "PRD")
+- **Archetypal agents** — suggested roles (feeds wizard B)
+- **Suggested cadence** — entries for `instance/schedule.yaml`
 
-Templates atuais (placeholders — preencher conforme uso real):
+Current templates (placeholders — fill with real usage):
 
 - `tdd.md` — Test-Driven Development
 - `sdd.md` — Spec-Driven Development
-- `context-management.md` — disciplina de what-goes-into-prompt
+- `context-management.md` — what-goes-into-prompt discipline
 - `bdd.md` — Behavior-Driven Development
 - `ddd.md` — Domain-Driven Design (bounded contexts → agents)
 - `tbd.md` — Trunk-Based Development
 - `hexagonal.md` — Hexagonal / Clean Architecture
-- `custom.md` — esqueleto vazio pra escrever do zero
+- `custom.md` — empty skeleton to write from scratch
