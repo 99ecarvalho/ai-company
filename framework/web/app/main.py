@@ -4403,11 +4403,29 @@ ONBOARDED_FLAG = Path("/workspace/company/.onboarded")
 async def onboard_status(_: Principal = Depends(get_principal)):
     """Detecta se o sistema precisa de onboarding inicial. Fresh =
     flag /workspace/.onboarded NAO existe. Tambem retorna count atual
-    de agentes pra UI exibir."""
+    de agentes pra UI exibir.
+
+    Side-effect: pre-warm assincrono do agent-executor pro step 3 do
+    wizard ja achar container running quando user clicar Generate.
+    Fire-and-forget — nao bloqueia o status response.
+    """
     rows = await db.fetch_all(
         "SELECT COUNT(*) AS c FROM messaging.users WHERE kind='bot'"
     )
     agents_count = int(rows[0]["c"]) if rows else 0
+
+    # Pre-warm: dispara em background sem bloquear response. So pra
+    # fresh setups (sem onboarded flag) — caso ja onboardado, executor
+    # provavelmente ja esta up via compose/scheduler.
+    if not ONBOARDED_FLAG.exists():
+        from . import agent_bootstrap as _ab
+        async def _prewarm():
+            try:
+                await _ab.ensure_agent_running("executor", timeout=60.0)
+            except Exception as e:
+                log.warning("onboard.prewarm_failed", err=str(e)[:200])
+        asyncio.create_task(_prewarm())
+
     return {
         "fresh": not ONBOARDED_FLAG.exists(),
         "agents_count": agents_count,
@@ -4466,23 +4484,32 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
             ],
         }
 
-    client = docker.from_env()
+    # Auto-bootstrap: garantee que o executor esteja running antes de
+    # tentar exec'ar claude nele. Cobre fresh setup (container nunca
+    # criado) + restart cycles (parado mas existente).
+    from . import agent_bootstrap as _ab
+    agent_slug = container_name.removeprefix("agent-framework-agent-").removesuffix("-1")
     try:
-        container = client.containers.get(container_name)
-    except docker.errors.NotFound:
+        await _ab.ensure_agent_running(agent_slug, timeout=45.0)
+    except Exception as e:
+        log.error("onboard.bootstrap_failed", agent=agent_slug, err=str(e)[:300])
         raise HTTPException(
             status_code=503,
-            detail=f"container {container_name} not found to run Claude. "
-                   "Suba os agentes ou ajuste HIRE_AGENT_CONTAINER.",
+            detail=(
+                f"Could not start agent container '{container_name}'. "
+                f"Bootstrap error: {str(e)[:300]}"
+            ),
         )
+
+    client = docker.from_env()
+    container = client.containers.get(container_name)
 
     cmd = ["claude", "-p", prompt, "--output-format", "json"]
     log.info("onboard.proposing", container=container_name, prompt_len=len(prompt))
-    import asyncio as _a
     def _run():
         return container.exec_run(cmd, stdout=True, stderr=True, demux=False, user="node",
                                   environment={"HOME": "/home/node"})
-    rc, out = await _a.get_event_loop().run_in_executor(None, _run)
+    rc, out = await asyncio.get_event_loop().run_in_executor(None, _run)
     if rc != 0:
         raise HTTPException(status_code=502, detail=f"claude rc={rc}: {out[:300] if out else ''}")
     try:
@@ -4495,7 +4522,7 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
             raise ValueError("LLM did not return JSON with 'agents'")
         proposal = json.loads(m.group(0))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"parse failed: {e}; raw: {(out or b'')[:300]}")
+        raise HTTPException(status_code=502, detail=f"parse to JSON failed: {e}; raw: {(out or b'')[:300]}")
     return proposal
 
 

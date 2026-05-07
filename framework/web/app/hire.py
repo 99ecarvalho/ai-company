@@ -287,39 +287,15 @@ async def apply_hire(payload: dict) -> dict:
 
     log.info("hire.files_written", name=name)
 
-    # Dispara reconcile via container efemero (mesma abordagem do scripts/reconcile.sh)
-    client = docker.from_env()
+    # Dispara reconcile via subprocess local — corre dentro deste container web,
+    # que ja tem pyyaml + requests + scripts/ + framework/ copiados no build.
+    # Substitui o antigo "spawn python:3.11-slim ephemeral + pip install" — sem
+    # rede pra pip a cada apply, stderr surface natural, paths consistentes.
     try:
-        output = client.containers.run(
-            image="python:3.11-slim",
-            command=["sh", "-c", "pip install -q pyyaml requests >/dev/null 2>&1 && python framework/scripts/reconcile.py --no-up"],
-            volumes={
-                PROJECT_ROOT_HOST: {"bind": "/work", "mode": "rw"},
-            },
-            working_dir="/work",
-            environment={
-                "PROJECT_ROOT": "/work",
-                **_dot_env(),
-            },
-            network_mode="host",
-            remove=True,
-            stdout=True,
-            stderr=True,
-        )
-        reconcile_log = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output)
+        reconcile_log = run_reconcile()
     except Exception as e:
         log.exception("hire.reconcile_failed", name=name)
         raise RuntimeError(f"CLAUDE.md + yaml created, but reconcile failed: {e}")
-
-    # Depois do reconcile, sobe o container novo
-    try:
-        # docker compose up -d precisa do cli (nao temos). Usa docker SDK:
-        # acha services do override e starts. Mais simples: spawn python:3.11
-        # com docker-cli? Overkill. Deixa o usuario rodar `make up` ou
-        # `docker compose up -d agent-<name>` depois.
-        pass
-    except Exception:
-        pass
 
     log.info("hire.apply_ok", name=name)
     return {
@@ -328,6 +304,60 @@ async def apply_hire(payload: dict) -> dict:
         "reconcile_log": reconcile_log[-2000:] if reconcile_log else "",
         "note": f"Agent registered. To start the container: docker compose up -d agent-{name}",
     }
+
+
+# Aliases pro main.py — routes esperam hire.apply / hire.draft.
+apply = apply_hire
+draft = generate_draft
+
+
+RECONCILE_SCRIPT = "/app/scripts/reconcile.py"
+
+
+def run_reconcile(extra_args: list[str] | None = None) -> str:
+    """Executa reconcile.py in-process (subprocess local). Retorna stdout+stderr
+    combinados. Levanta RuntimeError em rc != 0 com stderr na mensagem.
+
+    Path overrides: a .env da instancia tem AGENTS_DIR/COMPANY_DIR/REPOS_DIR
+    apontando relativos ao manager/ no host (ex: ../agents = instance root).
+    Dentro do container web, esses paths nao resolvem — sobrescreve com os
+    caminhos absolutos dos mounts existentes (/workspace/agents, etc).
+    """
+    import subprocess
+    import sys
+
+    args = list(extra_args or []) + ["--no-up"]
+    env = {
+        **os.environ,
+        **_dot_env(),
+        "PROJECT_ROOT": "/workspace",
+        # Mounts existentes no container web — bypassa as paths relativas
+        # do .env da instancia (que sao relativas ao manager/ no host).
+        "AGENTS_DIR": "/workspace/agents",
+        "COMPANY_DIR": "/workspace/company",
+        "REPOS_DIR": "/workspace/repos",
+        "SESSIONS_DIR": "/workspace/sessions",
+        # Reconcile so faz mkdir(exist_ok=True) destes — paths host-side
+        # ficam em ${BACKUPS_DIR:-...} no override.yml gerado, resolvidos
+        # pelo compose no host. /tmp eh writable e ephemeral — ok.
+        "BACKUPS_DIR": "/tmp/reconcile/backups",
+        "WORKTREES_DIR": "/tmp/reconcile/worktrees",
+        "HOOKS_DIR": "/tmp/reconcile/hooks",
+    }
+    proc = subprocess.run(
+        [sys.executable, RECONCILE_SCRIPT, *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    combined = proc.stdout + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+    if proc.returncode != 0:
+        log.error("reconcile.failed", rc=proc.returncode, stderr=proc.stderr[:2000])
+        raise RuntimeError(
+            f"reconcile failed (rc={proc.returncode}): {(proc.stderr or proc.stdout)[-500:]}"
+        )
+    return combined
 
 
 def _dot_env() -> dict:

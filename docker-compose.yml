@@ -57,6 +57,10 @@ services:
       SCHEDULER_URL: http://scheduler:8811
       LOG_LEVEL: INFO
       PROJECT_ROOT_HOST: ${PWD}
+      # HOME do usuario host — propagado pra que agent_bootstrap.py expanda
+      # ${HOME}/.claude/ ao montar volumes via SDK (compose normalmente
+      # resolve esse var no host; sem CLI, web faz manual via env).
+      HOST_HOME: ${HOME}
       TZ: ${TZ:-America/Sao_Paulo}
       # PWA — defaults genericos do framework, sobrescritos pelo .env da
       # instancia. Manifest renderizado dinamicamente em /manifest.webmanifest.
@@ -74,10 +78,13 @@ services:
       - ${AGENTS_DIR:-./instance/agents}:/workspace/agents      # rw pra "contratar" novo agent (reconcile)
       - ${COMPANY_DIR:-./instance/company}:/workspace/company   # rw pra viewer de arquivos + upload
       - ${REPOS_DIR:-./instance/repos}:/workspace/repos:ro      # ro pra viewer (dev workspace)
-      - ${SESSIONS_DIR:-./instance/sessions}:/workspace/sessions:ro  # ro: viewer/download de artefatos por task
+      - ${SESSIONS_DIR:-./instance/sessions}:/workspace/sessions  # rw: reconcile mkdir's <name>/ por agente novo
       - ${INSTANCE_WEB_DIR:-./instance/web}:/workspace/web:ro   # ro: PWA assets override (icons/)
-      - ./.env:/workspace/.env:ro                               # leitura de credenciais do .env (pra reconcile)
-      - /var/run/docker.sock:/var/run/docker.sock               # pra rodar reconcile (run)
+      # Reconcile in-process: .env e override.yml rw pra escrita de tokens
+      # rotacionados + geracao de service defs.
+      - ./.env:/workspace/.env                                  # rw: reconcile upsert_env (tokens rotacionados)
+      - ./docker-compose.override.yml:/workspace/docker-compose.override.yml  # rw: reconcile gera service defs
+      - /var/run/docker.sock:/var/run/docker.sock               # pra criar agentes via docker SDK + auto-bootstrap
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
       interval: 30s
