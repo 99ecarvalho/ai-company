@@ -164,6 +164,9 @@ async def generate_draft(data: dict) -> dict:
 
     # exec_run com stdin=False; claude -p recebe prompt via argv
     cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    hire_model = os.environ.get("HIRE_MODEL", "")
+    if hire_model:
+        cmd += ["--model", hire_model]
     log.info("hire.generating", container=EXEC_CONTAINER, cmd_len=len(prompt))
     import asyncio
     def _run():

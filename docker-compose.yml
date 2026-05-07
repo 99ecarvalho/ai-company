@@ -24,7 +24,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 5s
+      start_period: 120s
 
   # --- Web: broker HTTP (messages, events SSE, subs, users) + PWA ---
   # Porta 9090 no host (configuravel via WEB_PORT — util pra multi-empresa
@@ -70,6 +70,8 @@ services:
       PWA_START_URL: ${PWA_START_URL:-/}
       PWA_ORIENTATION: ${PWA_ORIENTATION:-any}
       INSTANCE_WEB_DIR: /workspace/web
+      HIRE_AGENT_CONTAINER: ${HIRE_AGENT_CONTAINER:-agent-framework-agent-executor-1}
+      HIRE_MODEL: ${HIRE_MODEL:-}
     volumes:
       - ${AGENTS_DIR:-./instance/agents}:/workspace/agents      # rw pra "contratar" novo agent (reconcile)
       - ${COMPANY_DIR:-./instance/company}:/workspace/company   # rw pra viewer de arquivos + upload

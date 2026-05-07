@@ -4435,6 +4435,9 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
         )
 
     cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    hire_model = os.environ.get("HIRE_MODEL", "")
+    if hire_model:
+        cmd += ["--model", hire_model]
     log.info("onboard.proposing", container=container_name, prompt_len=len(prompt))
     import asyncio as _a
     def _run():
@@ -4504,7 +4507,7 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
             f"      - mcp__agent_framework__memory_list\n"
         )
         try:
-            await _hire.apply({
+            await _hire.apply_hire({
                 "name": slug,
                 "yaml_entry": yaml_entry,
                 "claude_md": claude_md,

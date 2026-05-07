@@ -640,6 +640,11 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
             "TRANSCRIBER_LANGUAGE": "${TRANSCRIBER_LANGUAGE:-}",
             "TELEMETRY_URL": "http://web:8090/api/telemetry/event",
             "CLAUDE_MOCK": "${CLAUDE_MOCK:-}",
+            # Azure AI Foundry (Claude via Azure) — se preenchido, o CLI usa
+            # este provider em vez do Anthropic direto.
+            "CLAUDE_CODE_USE_FOUNDRY": "${CLAUDE_CODE_USE_FOUNDRY:-}",
+            "ANTHROPIC_FOUNDRY_RESOURCE": "${ANTHROPIC_FOUNDRY_RESOURCE:-}",
+            "ANTHROPIC_FOUNDRY_API_KEY": "${ANTHROPIC_FOUNDRY_API_KEY:-}",
             "POOL_SIZE": "${POOL_SIZE:-}",
             "IDLE_TIMEOUT_SEC": "${IDLE_TIMEOUT_SEC:-}",
             "TZ": "${TZ:-America/Sao_Paulo}",
