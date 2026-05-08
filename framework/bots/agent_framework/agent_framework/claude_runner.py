@@ -993,7 +993,17 @@ class ClaudeRunner:
                 cmd.extend(["--allowed-tools", " ".join(self.allowed_tools)])
         # Permite leitura fora do cwd (sandbox bloqueia sem --add-dir).
         # Knowledge do agente incluso pra ficar acessivel mesmo com cwd=worktree.
-        extra_dirs = ["/workspace/company", "/workspace/repos"]
+        # Subdirs de /workspace/company (tasks, ideas, notes, decisions) incluidos
+        # explicitamente: Claude Code permite Write em subdirs de --add-dir, mas
+        # o Bash tool restringe mkdir a raizes de --add-dir apenas (D-TODO).
+        extra_dirs = [
+            "/workspace/company",
+            "/workspace/company/tasks",
+            "/workspace/company/ideas",
+            "/workspace/company/notes",
+            "/workspace/company/decisions",
+            "/workspace/repos",
+        ]
         if self.agent_name:
             extra_dirs.append(f"/app/agents/{self.agent_name}/knowledge")
         for extra in extra_dirs:
