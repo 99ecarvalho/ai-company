@@ -124,7 +124,8 @@ precisam ser preenchidos pra usar o feature correspondente.
 | `ADMIN_PASSWORD` | _(vazio)_ | Plaintext; web bcrypta no startup. Setar pra forçar login. |
 | `WEB_AUTH_DEV_BYPASS` | `1` | DEV: admin implícito sem cookie/token. **Setar vazio em prod.** |
 | `WEB_COOKIE_SECURE` | _(vazio)_ | `1` quando servir com HTTPS (cookies marcados Secure). |
-| `WEB_DEFAULT_STREAM` | _(vazio)_ | Stream pré-selecionada no CapturePanel. Vazio = usuário escolhe. |
+
+> **Default stream + push (VAPID)**: configurados pelo PWA em `Settings → System`. Persistem em `web.app_settings` (DB).
 
 ### Service tokens (broker interno)
 
@@ -134,22 +135,15 @@ precisam ser preenchidos pra usar o feature correspondente.
 | `SCHEDULER_TOKEN` | _(gerado pelo bootstrap)_ | Auth do scheduler no broker. |
 | `AGENT_<NAME>_TOKEN` | _(gerado pelo reconcile)_ | Token de cada agente, automático. Não editar à mão. |
 
-### Web push (VAPID)
-
-Gere com `python3 framework/scripts/generate-vapid.py`.
-
-| Variável | Default | Descrição |
-|---|---|---|
-| `VAPID_PUBLIC_KEY` | _(vazio)_ | Public key VAPID. Sem isso, push notifications não funcionam. |
-| `VAPID_PRIVATE_KEY` | _(vazio)_ | Private key VAPID. |
-
 ### Transcriber (faster-whisper)
 
+GPU é **opt-in** via `docker-compose.gpu.yml` — adicione `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` em `.env` pra reservar NVIDIA + flipar pra cuda/large-v3/float16. Defaults rodam em CPU em qualquer host.
+
 | Variável | Default | Descrição |
 |---|---|---|
-| `WHISPER_MODEL` | `large-v3` | Tamanho do modelo. Sem GPU, installer ajusta pra `base`. |
-| `WHISPER_DEVICE` | `cuda` | `cuda` ou `cpu`. |
-| `WHISPER_COMPUTE_TYPE` | `float16` | `float16` (GPU) ou `int8` (CPU). |
+| `WHISPER_MODEL` | `small` | Tamanho do modelo. Com GPU layer: `large-v3`. |
+| `WHISPER_DEVICE` | `cpu` | `cuda` requer `docker-compose.gpu.yml` ativo. |
+| `WHISPER_COMPUTE_TYPE` | `int8` | `float16` quando em GPU. |
 | `WHISPER_LANGUAGE` | _(vazio = autodetect)_ | Force idioma (`pt`, `en`, etc.). |
 
 ### Deploy / multi-instância

@@ -502,7 +502,7 @@ async def create_stream(data: StreamIn, _: Principal = Depends(require_admin)):
 
 @router.get("/streams")
 async def list_streams(principal: Principal = Depends(get_principal)):
-    import os
+    from . import app_settings as _s
     # Inclui is_active pra UI poder esconder inativas. Por default lista
     # ativas+inativas (preservar acesso ao historico); UI filtra.
     rows = await db.fetch_all(
@@ -510,7 +510,8 @@ async def list_streams(principal: Principal = Depends(get_principal)):
     )
     streams = [dict(id=r["id"], name=r["name"], description=r["description"],
                     is_active=r["is_active"]) for r in rows]
-    return {"streams": streams, "default": os.environ.get("WEB_DEFAULT_STREAM", "")}
+    default = await _s.get_default_stream()
+    return {"streams": streams, "default": default}
 
 
 @router.patch("/streams/{name}/active")

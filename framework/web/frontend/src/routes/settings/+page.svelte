@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ScrollText, Eye, Save, RefreshCw, Users, ArrowLeft, Clock, Workflow } from 'lucide-svelte';
+  import { ScrollText, Eye, Save, RefreshCw, Users, ArrowLeft, Clock, Workflow, Settings as SettingsIcon } from 'lucide-svelte';
   import { page } from '$app/stores';
   import PageHeader from '$lib/components/ui/PageHeader.svelte';
   import RoutinesPanel from '$lib/components/settings/RoutinesPanel.svelte';
   import WorkflowsPanel from '$lib/components/settings/WorkflowsPanel.svelte';
+  import SystemPanel from '$lib/components/settings/SystemPanel.svelte';
   import {
     getSystemPromptsIndex,
     getSystemPromptSection,
@@ -20,11 +21,13 @@
   } from '$lib/api';
   import { logEvent } from '$lib/stores/ui';
 
-  type Tab = 'sections' | 'preview' | 'agents' | 'routines' | 'workflows';
+  type Tab = 'sections' | 'preview' | 'agents' | 'routines' | 'workflows' | 'system';
   // Tab inicial via ?tab= (deep-link de outras paginas, ex: /scheduler).
   const initialTab = (() => {
     const t = $page.url.searchParams.get('tab');
-    return t === 'preview' || t === 'agents' || t === 'routines' || t === 'workflows' ? t : 'sections';
+    return t === 'preview' || t === 'agents' || t === 'routines' || t === 'workflows' || t === 'system'
+      ? t
+      : 'sections';
   })();
   let tab = $state<Tab>(initialTab);
 
@@ -272,6 +275,17 @@
       onclick={() => (tab = 'workflows')}
     >
       <Workflow class="h-4 w-4" /> Workflows
+    </button>
+    <button
+      type="button"
+      class="inline-flex min-h-tap shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold transition-colors"
+      class:border-accent={tab === 'system'}
+      class:text-fg={tab === 'system'}
+      class:border-transparent={tab !== 'system'}
+      class:text-muted={tab !== 'system'}
+      onclick={() => (tab = 'system')}
+    >
+      <SettingsIcon class="h-4 w-4" /> System
     </button>
   </div>
 
@@ -531,6 +545,8 @@
     <RoutinesPanel />
   {:else if tab === 'workflows'}
     <WorkflowsPanel />
+  {:else if tab === 'system'}
+    <SystemPanel />
   {/if}
   </div>
 </div>

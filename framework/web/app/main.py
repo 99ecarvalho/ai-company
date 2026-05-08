@@ -127,6 +127,21 @@ async def _bootstrap_terminal_stream():
     log.info("web.terminal_stream_bootstrapped", stream=terminal)
 
 
+async def _reload_push_dispatcher() -> bool:
+    """(Re)cria app.state.push_dispatcher a partir da config corrente
+    (web.app_settings + fallback env). Retorna True se ficou habilitado."""
+    from . import app_settings as _s
+    cfg = await _s.get_vapid()
+    if not cfg:
+        app.state.push_dispatcher = None
+        return False
+    app.state.push_dispatcher = PushDispatcher(
+        vapid_private_key=cfg["private_key"],
+        vapid_claims_sub=cfg.get("contact_email") or "admin@example.com",
+    )
+    return True
+
+
 async def _push_notifier_loop():
     """LISTEN em msg_all e dispara push VAPID APENAS quando ha pending_ask
     nao resolvido na conversa (ou seja, um agente esta bloqueado aguardando
@@ -135,12 +150,11 @@ async def _push_notifier_loop():
 
     Racional: push e interrupcao — reservado pra demanda real de atencao
     (ask_human), nao pra cada bot reply/emoji de sinal.
-    """
-    dispatcher = app.state.push_dispatcher
-    if dispatcher is None:
-        log.info("web.push_notifier_disabled", reason="no_vapid")
-        return
 
+    Hot-reload: dispatcher eh lido fresh a cada msg em vez de cacheado,
+    pra que generate-vapid no PWA passe a disparar pushes sem restart.
+    Se ainda nao tem dispatcher, msg eh ignorada (sem panic loop).
+    """
     dsn = os.environ["DATABASE_URL"]
     while True:
         try:
@@ -187,6 +201,11 @@ async def _push_notifier_loop():
                     )
                     if not has_pending:
                         continue
+                    # Hot-reload: pega dispatcher corrente. Se generate-vapid
+                    # rodou no PWA, novo dispatcher ja esta ativo aqui.
+                    dispatcher = app.state.push_dispatcher
+                    if dispatcher is None:
+                        continue
                     content = (meta["content"] or "").strip()
                     first_line = content.splitlines()[0] if content else ""
                     title = f"{meta['username']} needs you"
@@ -214,20 +233,14 @@ async def lifespan(app: FastAPI):
     await _bootstrap_terminal_stream()
 
     app.state.push_dispatcher = None
-    vap_pub = os.environ.get("VAPID_PUBLIC_KEY")
-    vap_priv = os.environ.get("VAPID_PRIVATE_KEY")
-    if vap_pub and vap_priv:
-        app.state.push_dispatcher = PushDispatcher(
-            vapid_private_key=vap_priv,
-            vapid_claims_sub=os.environ.get("VAPID_CONTACT_EMAIL", "mailto:admin@example.com"),
-        )
+    await _reload_push_dispatcher()
 
     app.state.push_notifier_task = asyncio.create_task(_push_notifier_loop())
 
     log.info(
         "web.started",
         admin=os.environ.get("ADMIN_EMAIL"),
-        vapid_enabled=bool(vap_pub),
+        vapid_enabled=app.state.push_dispatcher is not None,
         transcriber=os.environ.get("TRANSCRIBER_URL", "(disabled)"),
     )
     yield
@@ -2647,7 +2660,7 @@ async def health():
     return {
         "status": "ok" if ok else "degraded",
         "db": ok,
-        "vapid_enabled": bool(os.environ.get("VAPID_PUBLIC_KEY")),
+        "vapid_enabled": app.state.push_dispatcher is not None,
         "transcriber_enabled": bool(os.environ.get("TRANSCRIBER_URL")),
     }
 
@@ -2827,13 +2840,138 @@ async def transcribe_preview(
             return json.loads(body)
 
 
+# ---------- App Settings (web.app_settings) ----------
+#
+# Settings de instancia editaveis via PWA Settings -> System tab. Substitui
+# (com fallback transparente) WEB_DEFAULT_STREAM + VAPID_* env vars.
+# Migration 031: web.app_settings.
+
+@app.get("/api/web-settings/general")
+async def web_settings_general(_: Principal = Depends(get_principal)):
+    """Retorna config visivel pro PWA. Private key VAPID NUNCA sai daqui —
+    so o flag 'configured' + public_key + email."""
+    from . import app_settings as _s
+    default_stream = await _s.get_default_stream()
+    vapid = await _s.get_vapid()
+    return {
+        "default_stream": default_stream,
+        "vapid": {
+            "configured": vapid is not None,
+            "public_key": (vapid or {}).get("public_key", ""),
+            "contact_email": (vapid or {}).get("contact_email", ""),
+        },
+    }
+
+
+@app.put("/api/web-settings/general")
+async def web_settings_update(payload: dict, principal: Principal = Depends(auth_mod.require_admin)):
+    """Atualiza default_stream e/ou vapid.contact_email. Nao mexe em
+    keypair — pra isso ha endpoint dedicado /vapid/generate."""
+    from . import app_settings as _s
+    if "default_stream" in payload:
+        await _s.set_default_stream(
+            (payload.get("default_stream") or "").strip(),
+            user_id=principal.user_id,
+        )
+    if "vapid_contact_email" in payload:
+        email = (payload.get("vapid_contact_email") or "").strip()
+        if email:
+            await _s.set_vapid_contact_email(email, user_id=principal.user_id)
+    return await web_settings_general(principal)  # type: ignore[arg-type]
+
+
+@app.post("/api/web-settings/vapid/generate")
+async def web_settings_vapid_generate(
+    payload: dict | None = None,
+    principal: Principal = Depends(auth_mod.require_admin),
+):
+    """Gera novo keypair VAPID e salva em web.app_settings.
+
+    Recusa por default se ja existem push subscriptions (rotacao de chaves
+    invalida TODAS as subscriptions existentes — clients precisam re-subscribe).
+    Caller passa {"force": true} pra confirmar a rotacao destrutiva.
+    """
+    from . import app_settings as _s
+    payload = payload or {}
+    force = bool(payload.get("force"))
+
+    sub_count_row = await db.fetch_one(
+        "SELECT COUNT(*)::int AS c FROM web.push_subscriptions"
+    )
+    sub_count = int((sub_count_row or {"c": 0})["c"])
+
+    current = await _s.get_vapid()
+    if current is not None and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"VAPID already configured. Pass force=true to rotate "
+                f"(will invalidate {sub_count} existing push subscription(s))."
+            ),
+        )
+
+    new_kp = _s.generate_vapid_keypair()
+    contact = (payload.get("contact_email") or (current or {}).get("contact_email") or "").strip()
+    await _s.set_vapid(
+        public_key=new_kp["public_key"],
+        private_key=new_kp["private_key"],
+        contact_email=contact or None,
+        user_id=principal.user_id,
+    )
+
+    # Rotacao destrutiva: limpa subscriptions antigas — proximo subscribe
+    # do client criara um novo registro com a nova chave.
+    invalidated = 0
+    if force and sub_count:
+        await db.execute("DELETE FROM web.push_subscriptions")
+        invalidated = sub_count
+
+    # Hot-reload do dispatcher pro novo keypair entrar em vigor sem restart.
+    await _reload_push_dispatcher()
+
+    log.info(
+        "web_settings.vapid_generated",
+        rotated=current is not None,
+        invalidated=invalidated,
+        by=principal.user_id,
+    )
+    return {
+        "ok": True,
+        "public_key": new_kp["public_key"],
+        "subscriptions_invalidated": invalidated,
+    }
+
+
+@app.delete("/api/web-settings/vapid")
+async def web_settings_vapid_clear(principal: Principal = Depends(auth_mod.require_admin)):
+    """Remove keypair VAPID + invalida subscriptions. Push fica desabilitado
+    ate que generate seja chamado de novo."""
+    from . import app_settings as _s
+    await _s.clear_vapid()
+    invalidated_row = await db.fetch_one(
+        "SELECT COUNT(*)::int AS c FROM web.push_subscriptions"
+    )
+    invalidated = int((invalidated_row or {"c": 0})["c"])
+    if invalidated:
+        await db.execute("DELETE FROM web.push_subscriptions")
+    await _reload_push_dispatcher()
+    log.info(
+        "web_settings.vapid_cleared",
+        invalidated=invalidated,
+        by=principal.user_id,
+    )
+    return {"ok": True, "subscriptions_invalidated": invalidated}
+
+
 # ---------- Push ----------
 
 @app.get("/api/push-config")
 async def push_config():
+    from . import app_settings as _s
+    cfg = await _s.get_vapid()
     return {
-        "enabled": bool(os.environ.get("VAPID_PUBLIC_KEY")),
-        "public_key": os.environ.get("VAPID_PUBLIC_KEY", ""),
+        "enabled": cfg is not None,
+        "public_key": (cfg or {}).get("public_key", ""),
     }
 
 

@@ -524,6 +524,33 @@ export async function readFile(path: string): Promise<FileReadResult> {
   return { kind: 'binary', mime: ct, path };
 }
 
+// ---------- App settings (web.app_settings) ----------
+
+export interface WebSettingsGeneral {
+  default_stream: string;
+  vapid: {
+    configured: boolean;
+    public_key: string;
+    contact_email: string;
+  };
+}
+
+export const getWebSettings = () =>
+  api.get<WebSettingsGeneral>('/api/web-settings/general');
+
+export const updateWebSettings = (
+  patch: Partial<{ default_stream: string; vapid_contact_email: string }>
+) => api.put<WebSettingsGeneral>('/api/web-settings/general', patch);
+
+export const generateVapid = (params?: { force?: boolean; contact_email?: string }) =>
+  api.post<{ ok: boolean; public_key: string; subscriptions_invalidated: number }>(
+    '/api/web-settings/vapid/generate',
+    params ?? {}
+  );
+
+export const clearVapid = () =>
+  api.del<{ ok: boolean; subscriptions_invalidated: number }>('/api/web-settings/vapid');
+
 // ---------- Push ----------
 
 export interface PushConfigResponse {

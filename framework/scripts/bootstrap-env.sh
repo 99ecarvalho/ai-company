@@ -114,14 +114,13 @@ WEB_COOKIE_SECURE=
 ORCHESTRATOR_TOKEN=$(gen)
 SCHEDULER_TOKEN=$(gen)
 
-# --- VAPID (gere depois com framework/scripts/generate-vapid.py se for usar push) ---
-VAPID_PUBLIC_KEY=
-VAPID_PRIVATE_KEY=
-
-# --- Transcriber (opcional; ajuste conforme GPU/CPU) ---
-WHISPER_MODEL=large-v3
-WHISPER_DEVICE=cuda
-WHISPER_COMPUTE_TYPE=float16
+# --- Transcriber ---
+# GPU: layer docker-compose.gpu.yml (COMPOSE_FILE=...:docker-compose.gpu.yml)
+# pra reservar NVIDIA + flipar pra cuda/large-v3/float16. Defaults aqui sao
+# conservadores (CPU/small/int8) pra rodar em qualquer host.
+WHISPER_MODEL=small
+WHISPER_DEVICE=cpu
+WHISPER_COMPUTE_TYPE=int8
 WHISPER_LANGUAGE=
 
 # --- Timezone ---
