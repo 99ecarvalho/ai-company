@@ -341,25 +341,25 @@ class Dispatcher:
             if no_task:
                 await self.broker_client.send_message(
                     key.stream, key.topic,
-                    "ℹ️ Nada pra cancelar — nenhum turno pendente.",
+                    "ℹ️ Nothing to cancel — no pending turn.",
                 )
                 log.info("dispatcher.cancel.no_task", topic=key.slug())
             elif too_late:
                 await self.broker_client.send_message(
                     key.stream, key.topic,
-                    "⚠️ Tarde demais — Claude ja esta encerrando este turno.",
+                    "⚠️ Too late — Claude is already finishing this turn.",
                 )
                 log.info("dispatcher.cancel.too_late", topic=key.slug())
             elif killed_proc is not None:
                 await self.broker_client.send_message(
                     key.stream, key.topic,
-                    "🚫 Cancelado pelo usuario (SIGTERM enviado ao Claude CLI).",
+                    "🚫 Cancelled by user (SIGTERM sent to the Claude CLI).",
                 )
                 log.info("dispatcher.cancel.kill_requested", topic=key.slug())
             else:
                 await self.broker_client.send_message(
                     key.stream, key.topic,
-                    "🚫 Cancelado pelo usuario.",
+                    "🚫 Cancelled by user.",
                 )
                 log.info("dispatcher.cancel.done", topic=key.slug())
         except Exception:

@@ -213,14 +213,14 @@ class McpBroker:
         """Helper completo: chama on_ask_agent pra postar a msg (que retorna
         TopicKey criado), registra Future, aguarda resolve/timeout."""
         if self._on_ask_agent is None:
-            return "[erro] ask_agent nao esta configurado neste agente."
+            return "[error] ask_agent is not configured on this agent."
         try:
             target_key, already_resolved = await self._on_ask_agent(
                 asker_topic, from_agent, target_agent, question, context
             )
         except Exception as e:
             log.exception("broker.ask_agent.post_failed", target=target_agent)
-            return f"[erro ao perguntar] {e}"
+            return f"[error asking] {e}"
 
         # D-111 restart-recovery: target ja respondeu enquanto o asker estava
         # down. Retorna direto sem registrar Future nem aguardar.

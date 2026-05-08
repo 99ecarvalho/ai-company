@@ -3860,7 +3860,9 @@ async def delete_agent_policy(agent: str, _: Principal = Depends(get_principal))
 import yaml  # noqa: E402
 
 SYSTEM_PROMPTS_DIR = Path("/workspace/company/system_prompts")
-PLATFORM_PROMPT_PATH = SYSTEM_PROMPTS_DIR / "platform.md"
+# platform.md is framework-fixed (read-only); it lives in the image, not the
+# instance volume. Mirrors claude_runner._PLATFORM_PROMPT_PATH.
+PLATFORM_PROMPT_PATH = Path("/app/system_prompts/platform.md")
 SYSTEM_PROMPTS_CONFIG_PATH = SYSTEM_PROMPTS_DIR / "config.yaml"
 # No container web, AGENTS_DIR e bind-montado em /workspace/agents (vs /app/agents
 # nos containers de agente — paths diferentes por container, propositais).
@@ -3945,6 +3947,13 @@ def _read_section(key: str) -> tuple[Path, str]:
 
 
 def _write_section(key: str, content: str) -> int:
+    if key == "platform":
+        # Framework invariant — shipped in the agent/web images, not editable
+        # per-instance. The PWA hides the editor; this guard is defense-in-depth.
+        raise HTTPException(
+            status_code=403,
+            detail="platform section is framework-fixed and not editable",
+        )
     if not isinstance(content, str):
         raise HTTPException(status_code=400, detail="content must be a string")
     if len(content.encode("utf-8")) > SYSTEM_PROMPT_SECTION_FILE:
@@ -3967,15 +3976,16 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
     (true se o conteudo eh montado dinamicamente, sem arquivo)."""
     toggles = _read_system_prompt_config()
     sections: list[dict] = []
+    # (key, title, path, toggle_key, generated, read_only)
     fixed = [
-        ("platform", "Plataforma (regras invariantes)", PLATFORM_PROMPT_PATH,
-         "include_platform_prompt", False),
-        ("context", "Contexto da empresa", COMPANY_CONTEXT_PATH,
-         "include_company_context", False),
-        ("philosophy", "Filosofia operacional", COMPANY_PHILOSOPHY_PATH,
-         "include_company_philosophy", False),
+        ("platform", "Platform (framework invariants)", PLATFORM_PROMPT_PATH,
+         "include_platform_prompt", False, True),
+        ("context", "Company context", COMPANY_CONTEXT_PATH,
+         "include_company_context", False, False),
+        ("philosophy", "Operational philosophy", COMPANY_PHILOSOPHY_PATH,
+         "include_company_philosophy", False, False),
     ]
-    for key, title, path, toggle_key, generated in fixed:
+    for key, title, path, toggle_key, generated, read_only in fixed:
         st = path.stat() if path.exists() else None
         sections.append({
             "key": key,
@@ -3986,17 +3996,18 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
             "toggle_key": toggle_key,
             "enabled": toggles.get(toggle_key, True),
             "generated": generated,
+            "read_only": read_only,
         })
-    # Blocos dinamicos contextuais (D-110+) — gerados a cada spawn.
+    # Dynamic contextual blocks (D-110+) — generated on each spawn.
     dynamic_blocks = [
         ("invocation_context",
-         "Modo de invocacao (raiz vs filha)",
+         "Invocation mode (root vs child)",
          "include_invocation_context"),
         ("task_state",
-         "Estado da task (snapshot quando topic = task-*)",
+         "Task state (snapshot when topic = task-*)",
          "include_task_state"),
         ("step_instructions",
-         "Instrucoes da fase atual (workflows.yaml.steps.<step>.instructions)",
+         "Current phase instructions (workflows.yaml.steps.<step>.instructions)",
          "include_step_instructions"),
     ]
     for key, title, toggle_key in dynamic_blocks:
@@ -4009,17 +4020,19 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
             "toggle_key": toggle_key,
             "enabled": toggles.get(toggle_key, True),
             "generated": True,
+            "read_only": True,
         })
-    # Bloco Equipe — gerado, sem arquivo.
+    # Team block — generated, no file.
     sections.append({
         "key": "team",
-        "title": "Equipe (gerado dinamicamente do banco)",
+        "title": "Team (generated dynamically from DB)",
         "source_path": None,
         "present": True,
         "size": 0,
         "toggle_key": "include_team_block",
         "enabled": toggles.get("include_team_block", True),
         "generated": True,
+        "read_only": True,
     })
     # Por-agente: 1 entry por agente bot ativo (is_active=true).
     rows = await db.fetch_all(
@@ -4093,36 +4106,38 @@ async def system_prompts_section_set(
 
 
 def _preview_invocation_block(mode: str | None, parent: str | None) -> str:
-    """Reproduz claude_runner._invocation_context_block. Em runtime o bloco
-    soh aparece em filha (raiz nao precisa de bloco — '## Equipe' ja sinaliza
-    peers chamaveis). No preview com `mode` ausente, mostramos uma dica."""
+    """Mirrors claude_runner._invocation_context_block. At runtime the block
+    only appears in child convs (root doesn't need it — '## Team' below
+    already signals callable peers). In preview with `mode` absent, we show
+    a hint."""
     if mode is None:
         return (
-            "\n\n## Modo de invocacao\n\n"
-            "_(Preview: passe `?mode=child&parent=<agente>` pra simular o bloco "
-            "que o framework injeta em conv filha. Em raiz, o bloco eh omitido; "
-            "o '## Equipe' abaixo lista os peers chamaveis.)_\n"
+            "\n\n## Invocation mode\n\n"
+            "_(Preview: pass `?mode=child&parent=<agent>` to simulate the block "
+            "the framework injects in a child conv. In root, the block is "
+            "omitted; the '## Team' below lists callable peers.)_\n"
         )
     if mode == "root":
-        # Raiz: framework nao injeta bloco. Preview mostra hint.
+        # Root: framework injects no block. Preview shows hint.
         return (
-            "\n\n_(Preview: em raiz o framework nao injeta '## Modo de "
-            "invocacao'. O bloco '## Equipe' abaixo lista os peers chamaveis.)_\n"
+            "\n\n_(Preview: in root mode the framework does not inject "
+            "'## Invocation mode'. The '## Team' block below lists callable peers.)_\n"
         )
     if mode == "child":
-        parent_label = parent or "agente desconhecido"
+        parent_label = parent or "unknown agent"
         return (
-            "\n\n## Modo de invocacao\n\n"
-            f"Esta conv eh **filha** de **`{parent_label}`** (`ask_agent` ou "
-            "handoff de fase). `ask_human`/`ask_agent`/`ask_agents_many` "
-            "estao bloqueados aqui (MCP gate 409, hierarquia raiz->filha 1 nivel).\n\n"
-            f"Pra solicitar input externo (decisao humana, especialista, "
-            f"parecer fora do escopo): **descreva o pedido no fim da resposta "
-            f"em formato pronto pra `{parent_label}` encaminhar literal** e "
-            "encerre o turno. O pai recebe o reply automatico e roteia.\n\n"
-            "Toda instrucao do tipo \"chame `ask_human` X\" / \"chame "
-            "`ask_agent <Y>` X\" deve ser lida como \"descreva no reply: "
-            "precisa de X\".\n"
+            "\n\n## Invocation mode\n\n"
+            f"This conv is a **child** of **`{parent_label}`** (`ask_agent` or "
+            "phase handoff). `ask_human`/`ask_agent`/`ask_agents_many` "
+            "are blocked here (MCP gate 409, root->child 1-level hierarchy).\n\n"
+            f"To request external input (human decision, specialist, "
+            f"opinion outside scope): **describe the request at the end of "
+            f"the response in a format ready for `{parent_label}` to forward "
+            f"verbatim** and end the turn. The parent receives the auto-reply "
+            "and routes it.\n\n"
+            "Any instruction like \"call `ask_human` X\" / \"call "
+            "`ask_agent <Y>` X\" must be read as \"describe in the reply: "
+            "needs X\".\n"
         )
     return ""
 
@@ -4130,9 +4145,9 @@ def _preview_invocation_block(mode: str | None, parent: str | None) -> str:
 async def _preview_task_state_block(slug: str | None) -> str:
     if slug is None:
         return (
-            "\n\n## Estado da task\n\n"
-            "_(Preview: passe `?task_slug=<slug>` na URL pra simular este bloco. "
-            "Em runtime, framework injeta quando `topic = task-<slug>`.)_\n"
+            "\n\n## Task state\n\n"
+            "_(Preview: pass `?task_slug=<slug>` in the URL to simulate this block. "
+            "At runtime, the framework injects it when `topic = task-<slug>`.)_\n"
         )
     task = await db.fetch_one(
         """SELECT id, slug, title, workflow, status, current_step,
@@ -4144,8 +4159,8 @@ async def _preview_task_state_block(slug: str | None) -> str:
     )
     if task is None:
         return (
-            "\n\n## Estado da task\n\n"
-            f"_(Preview: task `{slug}` nao encontrada no banco.)_\n"
+            "\n\n## Task state\n\n"
+            f"_(Preview: task `{slug}` not found in the database.)_\n"
         )
     phases = await db.fetch_all(
         """SELECT step, agent, artifact, completed_at FROM tasks.phases
@@ -4166,53 +4181,53 @@ async def _preview_task_state_block(slug: str | None) -> str:
     elif not isinstance(meta, dict):
         meta = {}
     baseline = (meta or {}).get("baseline") or {}
-    lines: list[str] = ["\n\n## Estado da task\n"]
+    lines: list[str] = ["\n\n## Task state\n"]
     lines.append(f"- **Slug:** `{task['slug']}`")
-    lines.append(f"- **Titulo:** {task['title']}")
+    lines.append(f"- **Title:** {task['title']}")
     if task["workflow"]:
         lines.append(f"- **Workflow:** `{task['workflow']}`")
     lines.append(f"- **Status:** `{task['status']}`")
     if task["current_step"]:
-        agent_str = f" (agente: `{task['current_agent']}`)" if task["current_agent"] else ""
-        lines.append(f"- **Step atual:** `{task['current_step']}`{agent_str}")
+        agent_str = f" (agent: `{task['current_agent']}`)" if task["current_agent"] else ""
+        lines.append(f"- **Current step:** `{task['current_step']}`{agent_str}")
     if task["complexity"]:
-        lines.append(f"- **Complexidade:** `{task['complexity']}`")
-    for k, label in (("impact", "Impacto"), ("difficulty", "Dificuldade")):
+        lines.append(f"- **Complexity:** `{task['complexity']}`")
+    for k, label in (("impact", "Impact"), ("difficulty", "Difficulty")):
         if task[k]:
             lines.append(f"- **{label}:** `{task[k]}`")
     if task["blocked_reason"]:
-        lines.append(f"- **Bloqueio:** {task['blocked_reason']}")
+        lines.append(f"- **Blocked:** {task['blocked_reason']}")
     if phases:
         done_str = " -> ".join(
             f"`{p['step']}`" + (f" ({p['artifact']})" if p["artifact"] else "")
             for p in phases
         )
-        lines.append(f"- **Fases concluidas:** {done_str}")
+        lines.append(f"- **Phases done:** {done_str}")
     else:
-        lines.append("- **Fases concluidas:** _(nenhuma — task acabou de comecar)_")
+        lines.append("- **Phases done:** _(none — task just started)_")
     if baseline:
         base_str = ", ".join(f"`{repo}@{sha[:8]}`" for repo, sha in sorted(baseline.items()))
-        lines.append(f"- **Baselines registradas:** {base_str}")
+        lines.append(f"- **Registered baselines:** {base_str}")
     else:
-        lines.append("- **Baselines registradas:** _(nenhuma)_")
+        lines.append("- **Registered baselines:** _(none)_")
     if worktrees:
         wt_lines = [
-            f"  - `{w['repo']}` em `{w['path']}` (branch `{w['branch']}`)"
+            f"  - `{w['repo']}` at `{w['path']}` (branch `{w['branch']}`)"
             for w in worktrees
         ]
-        lines.append("- **Worktrees ativas:**")
+        lines.append("- **Active worktrees:**")
         lines.extend(wt_lines)
     else:
-        lines.append("- **Worktrees ativas:** _(nenhuma)_")
+        lines.append("- **Active worktrees:** _(none)_")
     if task["origin_stream"] and task["origin_topic"]:
         lines.append(
-            f"- **Origem:** stream `{task['origin_stream']}`, topico "
-            f"`{task['origin_topic']}` (notificacao terminal volta pra ca)"
+            f"- **Origin:** stream `{task['origin_stream']}`, topic "
+            f"`{task['origin_topic']}` (terminal notification comes back here)"
         )
     lines.append("")
     lines.append(
-        "_Estado lido do banco no momento do spawn (snapshot). Pra dado "
-        "fresco apos transicao no meio do turn, chame `get_task_state` via MCP._"
+        "_State read from the DB at spawn time (snapshot). For fresh data "
+        "after a mid-turn transition, call `get_task_state` via MCP._"
     )
     return "\n".join(lines)
 
@@ -4238,7 +4253,7 @@ def _format_step_overrides_footer(overrides: dict | None) -> str:
             bits.append("memory={" + ", ".join(mem_bits) + "}")
     if not bits:
         return ""
-    return "\n_Overrides ativos: " + ", ".join(bits) + "._\n"
+    return "\n_Active overrides: " + ", ".join(bits) + "._\n"
 
 
 async def _preview_step_instructions_block(slug: str | None) -> str:
@@ -4263,23 +4278,23 @@ async def _preview_step_instructions_block(slug: str | None) -> str:
     instructions = step.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         return (
-            "\n\n## Instrucoes da fase atual\n\n"
-            f"_(Workflow `{wf_name}` -> step `{step_name}` nao tem campo "
-            "`instructions` declarado em `workflows.yaml`.)_\n"
+            "\n\n## Current phase instructions\n\n"
+            f"_(Workflow `{wf_name}` -> step `{step_name}` has no "
+            "`instructions` field declared in `workflows.yaml`.)_\n"
             + overrides_footer
         )
     artifact = step.get("artifact")
     next_steps = step.get("next") or []
     header_lines = [
-        "\n\n## Instrucoes da fase atual",
+        "\n\n## Current phase instructions",
         "",
         f"_Workflow `{wf_name}` -> step `{step_name}`._",
     ]
     if artifact:
-        header_lines.append(f"_Artifact esperado: `{artifact}`._")
+        header_lines.append(f"_Expected artifact: `{artifact}`._")
     if next_steps:
         nxt = " | ".join(f"`{n}`" for n in next_steps)
-        header_lines.append(f"_Transicoes validas: {nxt}._")
+        header_lines.append(f"_Valid transitions: {nxt}._")
     header_lines.append("")
     return "\n".join(header_lines) + instructions.rstrip() + "\n" + overrides_footer
 
@@ -4312,8 +4327,8 @@ async def system_prompts_preview(
             parts.append(PLATFORM_PROMPT_PATH.read_text(encoding="utf-8"))
         except FileNotFoundError:
             parts.append(
-                "_(platform.md ausente — claude_runner lancaria RuntimeError "
-                "pedindo `make reconcile`. Desligue o toggle ou crie o arquivo.)_"
+                "_(platform.md missing from image — rebuild web (and agent) so "
+                "`COPY framework/system_prompts` ships the file.)_"
             )
 
     if toggles.get("include_invocation_context", True):
@@ -4335,7 +4350,7 @@ async def system_prompts_preview(
         except FileNotFoundError:
             txt = ""
         if txt.strip():
-            parts.append("\n\n# Instrucoes do agente\n\n" + txt)
+            parts.append("\n\n# Agent instructions\n\n" + txt)
 
     if toggles["include_company_context"]:
         try:
@@ -4343,15 +4358,15 @@ async def system_prompts_preview(
         except FileNotFoundError:
             ctx = ""
         if ctx.strip():
-            parts.append("\n\n# Contexto da empresa\n\n" + ctx)
+            parts.append("\n\n# Company context\n\n" + ctx)
 
     if toggles["include_company_philosophy"]:
         try:
             phi = COMPANY_PHILOSOPHY_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             phi = ""
-        if phi.strip() and "_(opcional" not in phi:
-            parts.append("\n\n# Filosofia operacional\n\n" + phi)
+        if phi.strip() and "_(optional" not in phi and "_(opcional" not in phi:
+            parts.append("\n\n# Operational philosophy\n\n" + phi)
 
     if toggles["include_team_block"] and agent and mode != "child":
         # Reproduz _team_block do runner — mesma SQL, mesma whitelist por
@@ -4381,14 +4396,14 @@ async def system_prompts_preview(
             peers.append(f"- **{name}** ({r['display_name']})")
         if peers:
             parts.append(
-                "\n\n## Equipe (agentes que voce pode chamar via `ask_agent` ou `ask_agents_many`)\n\n"
+                "\n\n## Team (agents you can call via `ask_agent` or `ask_agents_many`)\n\n"
                 + "\n".join(peers)
             )
         else:
             parts.append(
-                "\n\n## Equipe\n\n"
-                "_Nenhum outro agente disponivel pra `ask_agent` agora. "
-                "Use `ask_human` se precisar delegar._"
+                "\n\n## Team\n\n"
+                "_No other agents available for `ask_agent` right now. "
+                "Use `ask_human` if you need to delegate._"
             )
 
     return {"agent": agent, "toggles": toggles, "content": "".join(parts)}

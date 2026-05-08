@@ -85,7 +85,7 @@ def _handoff_body(ev_payload: dict) -> str:
     # Nao referenciamos `company/tasks/<slug>/` porque o diretorio ainda nao
     # existe no FS no momento da promocao (so ha linha no DB).
     if ev_payload.get("backlog_slug"):
-        title = ev_payload.get("summary", "—").replace("promovido do backlog: ", "", 1)
+        title = ev_payload.get("summary", "—").replace("promoted from backlog: ", "", 1)
         body = (ev_payload.get("backlog_content") or "").strip()
         lines = [
             f"📋 **Promoted from backlog** — `{ev_payload.get('backlog_slug')}`",
@@ -95,27 +95,27 @@ def _handoff_body(ev_payload: dict) -> str:
             "",
             "---",
             "",
-            body if body else "_(backlog item sem conteudo)_",
+            body if body else "_(backlog item with no content)_",
             "",
             "---",
             "",
-            f"_Quando concluir, chame `complete_phase(task_slug='{slug}', "
-            f"artifact='{next_artifact or '<seu-artifact>'}', summary=..., next=...)`._",
+            f"_When done, call `complete_phase(task_slug='{slug}', "
+            f"artifact='{next_artifact or '<your-artifact>'}', summary=..., next=...)`._",
         ]
         return "\n".join(lines)
-    # Handoff normal (fase -> fase).
+    # Normal handoff (phase -> phase).
     from_step = ev_payload.get("from_step") or ev_payload.get("from_phase")
     next_step = ev_payload.get("next")
     lines = [
         f"➡️ **Handoff from `{ev_payload.get('from_agent')}`**",
         "",
-        f"**Task:** `{slug}` — você assume a fase **{next_step}**.",
+        f"**Task:** `{slug}` — you take over phase **{next_step}**.",
         f"**Previous step:** `{from_step}` (artifact: `{ev_payload.get('artifact')}`)",
         "",
         f"**Summary:** {ev_payload.get('summary', '—')}",
         "",
-        f"_Context in `company/tasks/{slug}/`. Use `get_task_state(task_slug='{slug}')` pra ler estado estruturado. "
-        f"Quando concluir, chame `complete_phase(task_slug='{slug}', artifact='{next_artifact or '<seu-artifact>'}', summary=..., next=...)`._",
+        f"_Context in `company/tasks/{slug}/`. Use `get_task_state(task_slug='{slug}')` to read structured state. "
+        f"When done, call `complete_phase(task_slug='{slug}', artifact='{next_artifact or '<your-artifact>'}', summary=..., next=...)`._",
     ]
     return "\n".join(lines)
 
@@ -129,9 +129,9 @@ def _terminal_body(ev_payload: dict) -> str:
         "human_review": "🙋",
     }.get(next_, "❓")
     label = {
-        "done": "encerrada com sucesso",
-        "halt": "pausada — humano precisa destravar",
-        "human_review": "escalada pra revisao humana",
+        "done": "closed successfully",
+        "halt": "paused — human needs to unblock",
+        "human_review": "escalated for human review",
     }.get(next_, next_ or "—")
     return (
         f"{flag} **Task `{slug}` {label}**\n\n"
@@ -335,11 +335,11 @@ async def _process_one(http: aiohttp.ClientSession, pool: asyncpg.Pool, event_id
                     and origin_topic
                     and (origin_stream, origin_topic) != (target_stream, target_topic)):
                 supervisor_body = (
-                    f"📋 **Task promovida** — `{task_slug}`\n\n"
-                    f"Orquestrador: `{origin_stream}` (você).\n"
-                    f"Fase inicial despachada pra `{target_stream}`.\n\n"
-                    f"Acompanhe daqui — terminais (`done`, `halt`, `human_review`) "
-                    f"voltam pra esta conv quando a task fechar."
+                    f"📋 **Task promoted** — `{task_slug}`\n\n"
+                    f"Orchestrator: `{origin_stream}` (you).\n"
+                    f"Initial phase dispatched to `{target_stream}`.\n\n"
+                    f"Track from here — terminals (`done`, `halt`, `human_review`) "
+                    f"come back to this conv when the task closes."
                 )
                 await post_message(
                     http, origin_stream, origin_topic, supervisor_body,

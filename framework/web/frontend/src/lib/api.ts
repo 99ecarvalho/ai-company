@@ -914,6 +914,7 @@ export interface SystemPromptSection {
   toggle_key: SystemPromptToggleKey;
   enabled: boolean;
   generated: boolean;
+  read_only?: boolean;
 }
 
 export interface SystemPromptAgentSection extends SystemPromptSection {

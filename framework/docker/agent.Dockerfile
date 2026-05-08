@@ -94,6 +94,9 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY framework/bots/agent_framework /app/agent_framework_src
 RUN pip install --no-cache-dir /app/agent_framework_src
 
+# Framework-fixed system prompt sections (read-only; not editable per-instance).
+COPY framework/system_prompts /app/system_prompts
+
 # Orquestrador (reactor + scheduler) embutido na mesma imagem.
 # Reactor e scheduler rodam `python3 /app/orchestrator/<script>.py`.
 COPY framework/orchestrator /app/orchestrator

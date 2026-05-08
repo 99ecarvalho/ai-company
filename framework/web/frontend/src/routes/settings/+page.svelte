@@ -38,6 +38,12 @@
   let activeLoading = $state(false);
   let activeSaving = $state(false);
 
+  let activeReadOnly = $derived.by(() => {
+    if (!index || !activeKey) return false;
+    const s = index.sections.find((x) => x.key === activeKey);
+    return s?.read_only === true;
+  });
+
   let previewAgent = $state<string>('');
   let previewMode = $state<'' | 'root' | 'child'>('');
   let previewParent = $state<string>('');
@@ -296,7 +302,8 @@
       <p class="mb-3 text-xs text-muted">
         Everything that goes into <code>--append-system-prompt</code> of <code>claude -p</code>.
         Edits take effect on the next invocation — no restart. Toggles disable a section without
-        deleting the file. <code>platform.md</code> is required when its toggle is ON.
+        deleting the file. <code>platform.md</code> is a framework invariant (read-only) and ships
+        with the agent/web images.
       </p>
 
       <div class="grid grid-cols-12 gap-3">
@@ -392,21 +399,29 @@
                 <ArrowLeft class="h-5 w-5" />
               </button>
               <span class="flex-1 truncate font-mono text-xs text-muted">{activeKey}</span>
-              <button
-                type="button"
-                onclick={saveSection}
-                disabled={activeSaving || activeLoading}
-                class="inline-flex min-h-tap items-center gap-1 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
-              >
-                <Save class="h-4 w-4" /> {activeSaving ? 'Saving…' : 'Save'}
-              </button>
+              {#if activeReadOnly}
+                <span class="rounded-md border border-border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                  Framework-fixed · read only
+                </span>
+              {:else}
+                <button
+                  type="button"
+                  onclick={saveSection}
+                  disabled={activeSaving || activeLoading}
+                  class="inline-flex min-h-tap items-center gap-1 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
+                >
+                  <Save class="h-4 w-4" /> {activeSaving ? 'Saving…' : 'Save'}
+                </button>
+              {/if}
             </div>
             {#if activeLoading}
               <p class="text-xs text-muted">Loading…</p>
             {:else}
               <textarea
                 bind:value={activeContent}
+                readonly={activeReadOnly}
                 class="w-full flex-1 resize-none rounded-md border border-border bg-bg p-3 font-mono text-xs leading-relaxed focus:border-accent focus:outline-none"
+                class:opacity-80={activeReadOnly}
                 spellcheck="false"
               ></textarea>
             {/if}

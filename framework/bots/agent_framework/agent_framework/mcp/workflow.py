@@ -224,8 +224,8 @@ class WorkflowManager:
         if next_ not in step.next:
             allowed = sorted(step.next)
             raise WorkflowError(
-                f"Transicao invalida no workflow '{wf.name}': de '{current_step}' "
-                f"voce so pode ir pra {allowed}. Tentou '{next_}'."
+                f"Invalid transition in workflow '{wf.name}': from '{current_step}' "
+                f"you can only go to {allowed}. Attempted '{next_}'."
             )
 
     def _resolve_next_agent(
@@ -252,13 +252,13 @@ class WorkflowManager:
                 if step.agent:
                     return step.agent, False
                 raise WorkflowError(
-                    f"Step '{next_}' no workflow '{wf.name}' nao tem agent default "
-                    "declarado. Passe next_agent explicito."
+                    f"Step '{next_}' in workflow '{wf.name}' has no default agent "
+                    "declared. Pass an explicit next_agent."
                 )
-        # Sem workflow declarado ou step nao definido — exige override.
+        # No workflow declared or step undefined — override required.
         raise WorkflowError(
-            f"Nao consegui resolver agente pro step '{next_}'. Declare-o em "
-            "company/workflows.yaml (com campo `agent`) ou passe next_agent explicito."
+            f"Could not resolve agent for step '{next_}'. Declare it in "
+            "company/workflows.yaml (with field `agent`) or pass an explicit next_agent."
         )
 
     def _expected_artifact_for(self, wf: WorkflowDef | None, step_name: str) -> str | None:
@@ -346,7 +346,7 @@ class WorkflowManager:
         """
         if not SLUG_RE.match(task_slug):
             raise WorkflowError(
-                f"task_slug invalido: {task_slug!r}. Use kebab-case sem acentos."
+                f"invalid task_slug: {task_slug!r}. Use kebab-case without accents."
             )
 
         # Artifacts continuam no filesystem — complete_phase exige que o arquivo
@@ -356,8 +356,8 @@ class WorkflowManager:
         artifact_path = task_dir / artifact
         if not artifact_path.exists():
             raise FileNotFoundError(
-                f"Artefato '{artifact}' nao existe em {task_dir}. "
-                "Crie o arquivo ANTES de chamar complete_phase."
+                f"Artifact '{artifact}' does not exist in {task_dir}. "
+                "Create the file BEFORE calling complete_phase."
             )
 
         async with self._pool.acquire() as conn:
@@ -602,27 +602,27 @@ class WorkflowManager:
         if is_terminal:
             guidance = {
                 "done": (
-                    "Task encerrada com sucesso. Humano sera notificado via "
-                    "TERMINAL_NOTIFY_STREAM e tambem na conversa de origem (se "
-                    "registrada). Se quiser postar um resumo extra na conversa "
-                    "atual, use notify_human."
+                    "Task closed successfully. The human will be notified via "
+                    "TERMINAL_NOTIFY_STREAM and also in the origin conversation "
+                    "(if registered). If you want to post an extra summary in "
+                    "the current conversation, use notify_human."
                 ),
                 "halt": (
-                    "Task pausada (status=blocked). Humano precisa destravar. "
-                    "Use notify_human ou ask_human pra sinalizar o motivo."
+                    "Task paused (status=blocked). The human needs to unblock. "
+                    "Use notify_human or ask_human to signal the reason."
                 ),
                 "human_review": (
-                    "Task escalada pra humano (status=human_review). Use "
-                    "ask_human agora se a revisao exige resposta bloqueante."
+                    "Task escalated to human (status=human_review). Use "
+                    "ask_human now if the review requires a blocking answer."
                 ),
             }[next_]
         else:
             guidance = (
-                f"Fase '{current_step}' registrada. Handoff pra '{resolved_agent}' "
-                f"(step '{next_}') disparado — reactor vai postar o pedido em "
-                f"#{resolved_agent}/{payload['next_topic']}. Voce NAO precisa postar "
-                "mensagem separada anunciando o despacho; ja foi. Se quiser notificar "
-                "o humano do status, use notify_human."
+                f"Phase '{current_step}' recorded. Handoff to '{resolved_agent}' "
+                f"(step '{next_}') dispatched — the reactor will post the request at "
+                f"#{resolved_agent}/{payload['next_topic']}. You do NOT need to post "
+                "a separate message announcing the dispatch; it's already done. "
+                "If you want to notify the human of the status, use notify_human."
             )
             # Aviso extra quando o retorno cai no topic de origem (humano esta
             # vendo essa conversa ao vivo). Sem `ask_human` / `complete_phase` a
@@ -635,10 +635,10 @@ class WorkflowManager:
                 and payload["next_topic"] == resolved_origin_topic
             ):
                 guidance += (
-                    " Este handoff volta pro topic de origem do humano "
+                    " This handoff returns to the human's origin topic "
                     f"(#{resolved_origin_stream}/{resolved_origin_topic}); "
-                    "se precisar de resposta dele antes de prosseguir, use "
-                    "`ask_human(blocking=true)` explicitamente."
+                    "if you need their answer before proceeding, use "
+                    "`ask_human(blocking=true)` explicitly."
                 )
 
         return {
@@ -684,18 +684,18 @@ class WorkflowManager:
             onde `<default>` vem de `git symbolic-ref refs/remotes/origin/HEAD`.
         """
         if not SLUG_RE.match(task_slug):
-            raise WorkflowError(f"task_slug invalido: {task_slug!r}")
+            raise WorkflowError(f"invalid task_slug: {task_slug!r}")
         if not repo:
-            raise WorkflowError("repo obrigatorio.")
+            raise WorkflowError("repo is required.")
 
         repos_root = Path(os.environ.get("WORKSPACE_REPOS", "/workspace/repos"))
         worktrees_root = Path(os.environ.get("WORKTREES_DIR", "/workspace/worktrees"))
         repo_dir = repos_root / repo
         if not (repo_dir / ".git").exists():
             raise WorkflowError(
-                f"Repo {repo!r} nao existe em {repos_root}/ (procurado: {repo_dir}/.git). "
-                "Verifique se o repo esta clonado em instance/repos/ e se o mount "
-                "chega ao container."
+                f"Repo {repo!r} does not exist in {repos_root}/ (looked for: {repo_dir}/.git). "
+                "Check that the repo is cloned in instance/repos/ and that the mount "
+                "reaches the container."
             )
 
         branch_final = branch or f"task/{task_slug}"
@@ -707,7 +707,7 @@ class WorkflowManager:
             )
             if task_id is None:
                 raise WorkflowError(
-                    f"Task {task_slug!r} nao existe. Rode complete_phase primeiro pra cria-la."
+                    f"Task {task_slug!r} does not exist. Run complete_phase first to create it."
                 )
 
         # Resolve baseline antes de mexer em disco — se falhar, nada foi alterado.
@@ -715,7 +715,7 @@ class WorkflowManager:
             baseline_sha = await self._resolve_default_baseline(repo_dir)
         elif not re.fullmatch(r"[0-9a-f]{7,40}", baseline_sha):
             raise WorkflowError(
-                f"baseline_sha {baseline_sha!r} nao parece SHA hex (7-40 chars)."
+                f"baseline_sha {baseline_sha!r} does not look like a hex SHA (7-40 chars)."
             )
 
         # Idempotencia: ja existe worktree valida nesse path apontando pro branch?
@@ -754,12 +754,12 @@ class WorkflowManager:
             baseline_sha=baseline_sha, reused=existing is not None, agent=agent_name,
         )
         guidance = (
-            f"Worktree pronta em {wt_path_str}. `cd {wt_path_str}` e trabalhe a "
-            "partir dai — nao edite /workspace/repos/<repo>/ direto. Todos os "
-            "commits devem sair da branch '" + branch_final + "'."
+            f"Worktree ready at {wt_path_str}. `cd {wt_path_str}` and work "
+            "from there — do not edit /workspace/repos/<repo>/ directly. All "
+            "commits must come from branch '" + branch_final + "'."
         )
         if existing is not None:
-            guidance = "Worktree ja existente reusada. " + guidance
+            guidance = "Existing worktree reused. " + guidance
         return {
             "task_slug": task_slug,
             "worktree": {
@@ -789,7 +789,7 @@ class WorkflowManager:
         _, stderr = await fetch.communicate()
         if fetch.returncode != 0:
             raise WorkflowError(
-                f"git fetch falhou em {repo_dir}: "
+                f"git fetch failed at {repo_dir}: "
                 + stderr.decode("utf-8", "replace").strip()
             )
 
@@ -804,8 +804,8 @@ class WorkflowManager:
             head_ref = await self._git_symbolic_ref_head(repo_dir)
         if head_ref is None:
             raise WorkflowError(
-                f"Nao consegui resolver default branch em {repo_dir} "
-                "(`origin/HEAD` ausente). Passe baseline_sha explicito."
+                f"Could not resolve default branch at {repo_dir} "
+                "(`origin/HEAD` missing). Pass an explicit baseline_sha."
             )
 
         proc = await asyncio.create_subprocess_exec(
@@ -815,12 +815,12 @@ class WorkflowManager:
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise WorkflowError(
-                f"rev-parse {head_ref} falhou: "
+                f"rev-parse {head_ref} failed: "
                 + stderr.decode("utf-8", "replace").strip()
             )
         sha = stdout.decode("utf-8", "replace").strip()
         if not re.fullmatch(r"[0-9a-f]{7,40}", sha):
-            raise WorkflowError(f"rev-parse retornou SHA invalido: {sha!r}")
+            raise WorkflowError(f"rev-parse returned invalid SHA: {sha!r}")
         return sha
 
     async def _git_symbolic_ref_head(self, repo_dir: Path) -> str | None:
@@ -888,7 +888,7 @@ class WorkflowManager:
             err = stderr.decode("utf-8", "replace").strip()
             out = stdout.decode("utf-8", "replace").strip()
             raise WorkflowError(
-                f"git worktree add falhou (rc={proc.returncode}): {err or out}"
+                f"git worktree add failed (rc={proc.returncode}): {err or out}"
             )
 
     async def cleanup_worktrees(
@@ -921,14 +921,14 @@ class WorkflowManager:
         esta logica precisa mudar junto.
         """
         if not SLUG_RE.match(task_slug):
-            raise WorkflowError(f"task_slug invalido: {task_slug!r}")
+            raise WorkflowError(f"invalid task_slug: {task_slug!r}")
 
         async with self._pool.acquire() as conn:
             task_id = await conn.fetchval(
                 "SELECT id FROM tasks.tasks WHERE slug = $1", task_slug,
             )
             if task_id is None:
-                raise WorkflowError(f"Task {task_slug!r} nao existe.")
+                raise WorkflowError(f"Task {task_slug!r} does not exist.")
             rows = await conn.fetch(
                 "SELECT repo, branch, path FROM tasks.worktrees WHERE task_id = $1",
                 task_id,
@@ -944,8 +944,8 @@ class WorkflowManager:
                 "removed": [],
                 "failed": [],
                 "guidance": (
-                    "Nenhuma worktree registrada pra esta task — nada a limpar. "
-                    "Pode prosseguir."
+                    "No worktrees registered for this task — nothing to clean up. "
+                    "You may proceed."
                 ),
             }
 
@@ -974,7 +974,7 @@ class WorkflowManager:
                         + stderr.decode("utf-8", "replace").strip()
                     )
             except FileNotFoundError:
-                errors.append("git binary ausente no container")
+                errors.append("git binary missing in the container")
             except Exception as e:  # noqa: BLE001
                 errors.append(f"worktree remove exc: {e}")
 
@@ -994,7 +994,7 @@ class WorkflowManager:
                 try:
                     shutil.rmtree(path)
                 except Exception as e:  # noqa: BLE001
-                    errors.append(f"rmtree {path} falhou: {e}")
+                    errors.append(f"rmtree {path} failed: {e}")
 
             if not os.path.exists(path):
                 async with self._pool.acquire() as conn:
@@ -1010,7 +1010,7 @@ class WorkflowManager:
             else:
                 failed.append({
                     "repo": repo, "path": path, "branch": branch,
-                    "errors": errors or ["path persiste apos remove+prune+rmtree"],
+                    "errors": errors or ["path persists after remove+prune+rmtree"],
                 })
 
         log.info(
@@ -1021,14 +1021,14 @@ class WorkflowManager:
 
         if failed:
             guidance = (
-                f"Cleanup parcial: {len(removed)} removida(s), {len(failed)} "
-                "falharam. NAO encerre a task — investigue os erros e, se nao "
-                "conseguir resolver, escale via complete_phase(next='human_review')."
+                f"Partial cleanup: {len(removed)} removed, {len(failed)} "
+                "failed. Do NOT close the task — investigate the errors, and if "
+                "you can't resolve them, escalate via complete_phase(next='human_review')."
             )
         else:
             guidance = (
-                f"Cleanup completo: {len(removed)} worktree(s) removida(s) e "
-                "apagada(s) de tasks.worktrees. Pode chamar "
+                f"Cleanup complete: {len(removed)} worktree(s) removed and "
+                "deleted from tasks.worktrees. You may call "
                 "complete_phase(next='done')."
             )
 
@@ -1041,11 +1041,11 @@ class WorkflowManager:
 
     async def get_task_state(self, task_slug: str) -> dict[str, Any]:
         if not SLUG_RE.match(task_slug):
-            raise WorkflowError(f"task_slug invalido: {task_slug!r}")
+            raise WorkflowError(f"invalid task_slug: {task_slug!r}")
         async with self._pool.acquire() as conn:
             row = await self._load_task_row(conn, task_slug)
             if row is None:
-                raise WorkflowError(f"Task {task_slug!r} nao existe.")
+                raise WorkflowError(f"Task {task_slug!r} does not exist.")
             phases = await self._load_phases(conn, row["id"])
             worktrees = await self._load_worktrees(conn, row["id"])
         extra = row.get("metadata_extra") or {}
@@ -1104,43 +1104,43 @@ class WorkflowManager:
         ferramenta disponivel, so invocada quando humano pedir explicitamente.
         """
         if not SLUG_RE.match(task_slug):
-            raise WorkflowError(f"task_slug invalido: {task_slug!r}")
+            raise WorkflowError(f"invalid task_slug: {task_slug!r}")
         if not next_step:
-            raise WorkflowError("next_step obrigatorio")
+            raise WorkflowError("next_step is required")
         if not reason or not reason.strip():
-            raise WorkflowError("reason obrigatorio — registrado no blocked_reason pra auditoria")
+            raise WorkflowError("reason is required — recorded in blocked_reason for auditing")
 
         async with self._pool.acquire() as conn:
             async with conn.transaction():
                 task_row = await self._load_task_row(conn, task_slug)
                 if task_row is None:
-                    raise WorkflowError(f"Task {task_slug!r} nao existe.")
+                    raise WorkflowError(f"Task {task_slug!r} does not exist.")
                 current_status = task_row["status"]
                 if current_status not in ("done", "blocked", "human_review"):
                     raise WorkflowError(
-                        f"Task {task_slug!r} nao esta em status terminal (atual: {current_status!r}). "
-                        f"reopen_task so faz sentido pra religar task encerrada. Pra avanco normal use complete_phase."
+                        f"Task {task_slug!r} is not in a terminal status (current: {current_status!r}). "
+                        f"reopen_task only makes sense to reopen a closed task. For normal progress use complete_phase."
                     )
 
                 wf = self._resolve_workflow(task_row.get("workflow"))
                 if wf is None:
                     raise WorkflowError(
-                        f"Task {task_slug!r} nao tem workflow declarado — nao consigo validar next_step."
+                        f"Task {task_slug!r} has no declared workflow — cannot validate next_step."
                     )
                 if next_step in TERMINALS:
                     raise WorkflowError(
-                        f"next_step nao pode ser terminal ({next_step}). reopen_task religa a task pra um step de trabalho."
+                        f"next_step cannot be terminal ({next_step}). reopen_task reopens the task to a working step."
                     )
                 step_def = wf.step(next_step)
                 if step_def is None:
                     raise WorkflowError(
-                        f"step {next_step!r} nao existe no workflow {wf.name!r}. "
-                        f"Steps validos: {sorted(wf.steps.keys())}."
+                        f"step {next_step!r} does not exist in workflow {wf.name!r}. "
+                        f"Valid steps: {sorted(wf.steps.keys())}."
                     )
                 resolved_agent = next_agent or step_def.agent
                 if not resolved_agent:
                     raise WorkflowError(
-                        f"step {next_step!r} nao tem agente default; passe next_agent explicito."
+                        f"step {next_step!r} has no default agent; pass an explicit next_agent."
                     )
 
                 now = datetime.now(tz=timezone.utc)
@@ -1247,8 +1247,8 @@ class WorkflowManager:
             "next_artifact": next_artifact_default,
             "status": "in_progress",
             "guidance": (
-                f"Task {task_slug!r} religada — status voltou pra 'in_progress' no step '{next_step}', "
-                f"reactor vai postar o pedido em #{resolved_agent}/{resolved_next_topic}. "
-                f"Motivo registrado no evento: {reason[:200]}"
+                f"Task {task_slug!r} reopened — status is back to 'in_progress' at step '{next_step}', "
+                f"the reactor will post the request at #{resolved_agent}/{resolved_next_topic}. "
+                f"Reason recorded in the event: {reason[:200]}"
             ),
         }

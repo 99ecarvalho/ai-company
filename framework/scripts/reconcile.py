@@ -487,48 +487,48 @@ DEFAULT_CLAUDE_MD = """\
 
 {description}
 
-## Persona / politica
-Preencha aqui com a voz do agente, principios de atuacao, vocabulario, tom.
+## Persona / policy
+Fill in the agent's voice, operating principles, vocabulary, and tone.
 
-## Formato de resposta esperado
-Descreva o que esse agente deve produzir (em que diretorio, com que estrutura, etc).
+## Expected response format
+Describe what this agent should produce (which directory, structure, etc).
 
-## Tools disponiveis (auto-aprovadas)
-Este agente pode usar sem pedir: {tools_list}.
+## Available tools (auto-approved)
+This agent can use without asking: {tools_list}.
 
-Se voce precisar de uma tool que NAO esta nessa lista, **nao tente chamar
-assim mesmo** — ela vai dead-end em permission prompt (rodamos non-interactive).
-Em vez disso: informe o humano que a tool nao esta habilitada e encaminhe
-o pedido ao agente que tem essa capacidade, OU peca ao humano pra ajustar
-o allowed_tools em agents.yaml.
+If you need a tool that is NOT in this list, **don't try to call it
+anyway** — it will dead-end at a permission prompt (we run non-interactive).
+Instead: tell the human the tool isn't enabled and forward the request to an
+agent with that capability, OR ask the human to adjust allowed_tools in
+agents.yaml.
 
-## Honestidade operacional (obrigatorio)
-- Se uma tool falhou, foi bloqueada ou nao existe: **diga isso explicitamente**
-  ao humano. Nao invente um resultado de sucesso nem descreva outcomes que voce
-  nao produziu.
-- Voce nao "detecta automaticamente" mudancas de arquivo feitas por outros
-  agentes. Se um arquivo tem `status: concluido` mas nao foi voce que atualizou,
-  **nao se atribua autoria** — diga "alguem/outro agente concluiu isso" ou,
-  melhor ainda, leia o arquivo e reporte o que esta la sem supor quem fez.
-- Diferencie claramente: o que VOCE fez agora vs. o que voce leu de um arquivo
-  vs. o que voce inferiu. Em duvida, leia e cite; nao invente.
+## Operational honesty (mandatory)
+- If a tool failed, was blocked, or doesn't exist: **say it explicitly** to
+  the human. Don't invent a successful result or describe outcomes you didn't
+  produce.
+- You do not "automatically detect" file changes made by other agents. If a
+  file has `status: done` but you weren't the one who updated it,
+  **don't claim authorship** — say "someone/another agent finished this" or,
+  better yet, read the file and report what's there without assuming who did it.
+- Clearly distinguish: what YOU just did vs. what you read from a file vs.
+  what you inferred. When in doubt, read and quote; don't invent.
 
-## Memoria persistente (se habilitada)
-Antes de cada run, os fatos mais relevantes sao injetados no seu contexto
-(bloco "## Memoria" no prompt). Voce pode:
-- memory_save(key, value, tags): registra fato (upsert por key — re-save sobrescreve)
-- memory_recall(query): busca fatos
-- memory_list(): lista recentes
-- memory_edit(key, value?, tags?): atualiza fato existente (falha se key nao existe)
-- memory_delete(key): remove fato permanentemente (hard delete, sem undo)
+## Persistent memory (if enabled)
+Before each run, the most relevant facts are injected into your context
+(the "## Memory" block in the prompt). You can:
+- memory_save(key, value, tags): record a fact (upsert by key — re-save overwrites)
+- memory_recall(query): search facts
+- memory_list(): list recent ones
+- memory_edit(key, value?, tags?): update an existing fact (fails if key doesn't exist)
+- memory_delete(key): remove a fact permanently (hard delete, no undo)
 
-Guarde: preferencias do usuario, decisoes arquitetonicas, convencoes, nomes
-recorrentes. Nao guarde: trabalho em andamento, estado ephemeral. Quando
-descobrir que um fato salvo esta errado ou desatualizado, prefira memory_edit
-(corrigir) ou memory_delete (remover) em vez de deixar lixo acumulando.
+Save: user preferences, architectural decisions, conventions, recurring names.
+Don't save: in-progress work, ephemeral state. When you discover a saved fact
+is wrong or outdated, prefer memory_edit (fix) or memory_delete (remove) over
+letting cruft pile up.
 
-## Limites (nao faz)
-Descreva o que esse agente NAO faz — encaminhe pra quem.
+## Limits (does not do)
+Describe what this agent does NOT do — forward to whom.
 """
 
 
@@ -556,7 +556,7 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
 
     claude_md = d / "CLAUDE.md"
     if not claude_md.exists():
-        tools_list = ", ".join(agent.get("allowed_tools") or []) or "(nenhuma)"
+        tools_list = ", ".join(agent.get("allowed_tools") or []) or "(none)"
         claude_md.write_text(
             DEFAULT_CLAUDE_MD.format(
                 display_name=agent["display_name"],
@@ -937,13 +937,14 @@ def main() -> int:
     except OSError:
         pass
 
-    # System prompts (D-63): pasta + seeds copiados dos `.example` se faltarem.
-    # Conteudo vai pra instance pra que tudo seja editavel pelo PWA — nada
-    # do framework fica "travado" em Python.
+    # System prompts (D-63): pasta + seed do config.yaml. platform.md saiu
+    # daqui — virou invariante do framework e mora dentro das imagens
+    # (agent/web), via COPY framework/system_prompts. Instancia so seeda o
+    # config.yaml (toggles editaveis pelo PWA).
     sp_dir = COMPANY_DIR / "system_prompts"
     sp_dir.mkdir(parents=True, exist_ok=True)
     sp_examples = PROJECT_ROOT / "framework" / "examples" / "system_prompts"
-    for fname in ("platform.md", "config.yaml"):
+    for fname in ("config.yaml",):
         target = sp_dir / fname
         example = sp_examples / f"{fname}.example"
         if not target.exists() and example.exists():
@@ -953,6 +954,17 @@ def main() -> int:
             except ValueError:
                 shown = target  # COMPANY_DIR fora do PROJECT_ROOT
             log(f"  seed: {shown} copiado do example", "ok")
+    # Migration cleanup: instancias antigas seedaram platform.md aqui. Agora
+    # o arquivo vive na imagem; remover o orfao evita confusao (PWA listava
+    # o tamanho do arquivo da instance, que estava sendo ignorado pelo runner).
+    legacy_platform = sp_dir / "platform.md"
+    if legacy_platform.exists():
+        legacy_platform.unlink()
+        try:
+            shown = legacy_platform.relative_to(PROJECT_ROOT)
+        except ValueError:
+            shown = legacy_platform
+        log(f"  removed legacy {shown} (platform.md is now framework-fixed)", "ok")
 
     log("Parseando agents.yaml", "step")
     data = yaml.safe_load(AGENTS_YAML.read_text(encoding="utf-8"))

@@ -128,7 +128,7 @@ COMPLETE_PHASE_TOOL: dict[str, Any] = {
         "  3. Returns a `guidance` string describing what just happened and what, if anything, "
         "     is still up to you.\n\n"
         "DO NOT post an extra message in the conversation after calling this tool just to "
-        "announce 'despachado' — the handoff is already automatic. If you want to surface a "
+        "announce 'dispatched' — the handoff is already automatic. If you want to surface a "
         "status to the human, use `notify_human` instead."
     ),
     "inputSchema": {
