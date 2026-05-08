@@ -1143,7 +1143,16 @@ class McpServer:
         if name == "task_list":
             include_archived = bool(args.get("include_archived"))
             limit = min(int(args.get("limit") or 50), 500)
-            where = "" if include_archived else "WHERE archived_at IS NULL"
+            slug_prefix = (args.get("slug_prefix") or "").strip() or None
+            conds: list[str] = []
+            params: list[Any] = []
+            if not include_archived:
+                conds.append("archived_at IS NULL")
+            if slug_prefix:
+                params.append(slug_prefix + "%")
+                conds.append(f"slug LIKE ${len(params)}")
+            where = f"WHERE {' AND '.join(conds)}" if conds else ""
+            params.append(limit)
             rows = await pool.fetch(
                 f"""SELECT slug, title, status, current_step, current_agent,
                           workflow, updated_at, archived_at,
@@ -1151,8 +1160,8 @@ class McpServer:
                              WHERE p.task_id = t.id AND p.completed_at IS NOT NULL) AS phases_count
                      FROM tasks.tasks t {where}
                     ORDER BY updated_at DESC
-                    LIMIT $1""",
-                limit,
+                    LIMIT ${len(params)}""",
+                *params,
             )
             if not rows:
                 text = "(nenhuma task ativa)" if not include_archived else "(nenhuma task)"
