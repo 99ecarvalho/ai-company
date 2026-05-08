@@ -50,6 +50,15 @@ COPY framework/orchestrator/defaults/schedule.yaml ./framework/orchestrator/defa
 # Backfill one-shot: company/tasks/*/metadata.yaml → tasks.tasks (D-53).
 # Rodar via `make tasks-migrate` apos a migration 006 — idempotente.
 COPY framework/scripts/migrate_tasks_fs_to_db.py ./migrate_tasks_fs_to_db.py
+# Reconcile in-process: hire/onboard rodam reconcile.py via subprocess
+# dentro deste container (em vez de spawning python:3.11-slim ephemeral).
+# Templates + examples ficam em /workspace/framework/... porque o reconcile
+# usa PROJECT_ROOT=/workspace e procura PROJECT_ROOT/framework/{agent-template,examples}.
+# /workspace eh ponto de mount: criamos a arvore aqui no build, e os mounts
+# (instance/agents, instance/company, etc) sao subpastas que nao colidem.
+COPY framework/scripts/ /app/scripts/
+COPY framework/agent-template/ /workspace/framework/agent-template/
+COPY framework/examples/ /workspace/framework/examples/
 ENV MIGRATIONS_DIR=/app/db/migrations
 
 EXPOSE 8090

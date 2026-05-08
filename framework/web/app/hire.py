@@ -102,19 +102,19 @@ Retorne APENAS o JSON. Nenhum texto fora, sem fences.
 
 def validate_name(name: str) -> None:
     if not NAME_RE.match(name):
-        raise ValueError(f"nome invalido '{name}': use lowercase a-z0-9- (ate 31 chars)")
+        raise ValueError(f"invalid name '{name}': use lowercase a-z0-9- (max 31 chars)")
 
 
 def validate_mounts(write_access: list[str], read_access: list[str]) -> None:
     for m in write_access or []:
         if m not in VALID_MOUNTS:
-            raise ValueError(f"write_access invalido: {m!r}. Use {VALID_MOUNTS}")
+            raise ValueError(f"invalid write_access: {m!r}. Use {VALID_MOUNTS}")
     for m in read_access or []:
         if m not in VALID_MOUNTS:
-            raise ValueError(f"read_access invalido: {m!r}. Use {VALID_MOUNTS}")
+            raise ValueError(f"invalid read_access: {m!r}. Use {VALID_MOUNTS}")
     overlap = set(write_access or []) & set(read_access or [])
     if overlap:
-        raise ValueError(f"mesmo mount em write e read: {overlap}")
+        raise ValueError(f"same mount in both write and read: {overlap}")
 
 
 def build_data_block(data: dict) -> str:
@@ -157,9 +157,9 @@ async def generate_draft(data: dict) -> dict:
         container = client.containers.get(EXEC_CONTAINER)
     except docker.errors.NotFound:
         raise RuntimeError(
-            f"container {EXEC_CONTAINER} nao encontrado — precisa de um container "
-            "de agente rodando pra gerar o draft (claude CLI + creds). "
-            "Suba a stack ou ajuste HIRE_AGENT_CONTAINER no env."
+            f"container {EXEC_CONTAINER} not found — a running agent container "
+            "is required to generate the draft (claude CLI + creds). "
+            "Start the stack or adjust HIRE_AGENT_CONTAINER in env."
         )
 
     # exec_run com stdin=False; claude -p recebe prompt via argv
@@ -186,7 +186,7 @@ async def generate_draft(data: dict) -> dict:
     stderr_s = (stderr or b"").decode("utf-8", errors="replace")
     if rc != 0:
         log.error("hire.exec_failed", rc=rc, stderr=stderr_s[:500])
-        raise RuntimeError(f"claude falhou (rc={rc}): {stderr_s[:500]}")
+        raise RuntimeError(f"claude failed (rc={rc}): {stderr_s[:500]}")
 
     # claude --output-format json retorna envelope; extrai o `result` que eh texto do modelo
     try:
@@ -205,14 +205,14 @@ async def generate_draft(data: dict) -> dict:
     except Exception:
         log.error("hire.parse_failed", preview=result_text[:400])
         raise RuntimeError(
-            "Claude retornou formato invalido — esperava JSON. "
+            "Claude returned invalid format — expected JSON. "
             "Preview: " + result_text[:300]
         )
 
     entry = parsed.get("entry")
     claude_md = parsed.get("claude_md", "").strip()
     if not isinstance(entry, dict) or not claude_md:
-        raise RuntimeError("Resposta sem entry (objeto) ou claude_md")
+        raise RuntimeError("Response missing entry (object) or claude_md")
 
     # Forca name canonica (o que o usuario digitou, nao o que Claude inventou)
     entry["name"] = name
@@ -246,13 +246,13 @@ async def apply_hire(payload: dict) -> dict:
     claude_md = (payload.get("claude_md") or "").strip()
     validate_name(name)
     if not yaml_entry or not claude_md:
-        raise ValueError("yaml_entry e claude_md obrigatorios")
+        raise ValueError("yaml_entry and claude_md are required")
 
     # Ja existe no agents.yaml?
     if AGENTS_YAML.exists():
         existing = AGENTS_YAML.read_text(encoding="utf-8")
         if re.search(rf"^\s*-\s*name:\s*{re.escape(name)}\s*$", existing, re.MULTILINE):
-            raise ValueError(f"agente '{name}' ja existe em agents.yaml")
+            raise ValueError(f"agent '{name}' already exists in agents.yaml")
 
     # Normaliza yaml_entry: parse + re-serialize com indent correto.
     # O yaml_entry chega como item de lista, indentado 2 espacos (pra ser
@@ -268,9 +268,9 @@ async def apply_hire(payload: dict) -> dict:
         elif isinstance(parsed, dict):
             entry_dict = parsed
         else:
-            raise ValueError("yaml_entry nao eh uma lista nem dict apos parse")
+            raise ValueError("yaml_entry is neither a list nor dict after parsing")
     except Exception as e:
-        raise ValueError(f"yaml_entry nao eh YAML valido: {e}")
+        raise ValueError(f"yaml_entry is not valid YAML: {e}")
 
     # Re-serializa com indent controlado
     yaml_text = yaml.safe_dump({"agents": [entry_dict]}, sort_keys=False, allow_unicode=True, default_flow_style=False)
@@ -290,47 +290,77 @@ async def apply_hire(payload: dict) -> dict:
 
     log.info("hire.files_written", name=name)
 
-    # Dispara reconcile via container efemero (mesma abordagem do scripts/reconcile.sh)
-    client = docker.from_env()
+    # Dispara reconcile via subprocess local — corre dentro deste container web,
+    # que ja tem pyyaml + requests + scripts/ + framework/ copiados no build.
+    # Substitui o antigo "spawn python:3.11-slim ephemeral + pip install" — sem
+    # rede pra pip a cada apply, stderr surface natural, paths consistentes.
     try:
-        output = client.containers.run(
-            image="python:3.11-slim",
-            command=["sh", "-c", "pip install -q pyyaml requests >/dev/null 2>&1 && python framework/scripts/reconcile.py --no-up"],
-            volumes={
-                PROJECT_ROOT_HOST: {"bind": "/work", "mode": "rw"},
-            },
-            working_dir="/work",
-            environment={
-                "PROJECT_ROOT": "/work",
-                **_dot_env(),
-            },
-            network_mode="host",
-            remove=True,
-            stdout=True,
-            stderr=True,
-        )
-        reconcile_log = output.decode("utf-8", errors="replace") if isinstance(output, bytes) else str(output)
+        reconcile_log = run_reconcile()
     except Exception as e:
         log.exception("hire.reconcile_failed", name=name)
-        raise RuntimeError(f"CLAUDE.md + yaml criados, mas reconcile falhou: {e}")
-
-    # Depois do reconcile, sobe o container novo
-    try:
-        # docker compose up -d precisa do cli (nao temos). Usa docker SDK:
-        # acha services do override e starts. Mais simples: spawn python:3.11
-        # com docker-cli? Overkill. Deixa o usuario rodar `make up` ou
-        # `docker compose up -d agent-<name>` depois.
-        pass
-    except Exception:
-        pass
+        raise RuntimeError(f"CLAUDE.md + yaml created, but reconcile failed: {e}")
 
     log.info("hire.apply_ok", name=name)
     return {
         "ok": True,
         "name": name,
         "reconcile_log": reconcile_log[-2000:] if reconcile_log else "",
-        "note": f"Agente registrado. Para subir o container: docker compose up -d agent-{name}",
+        "note": f"Agent registered. To start the container: docker compose up -d agent-{name}",
     }
+
+
+# Aliases pro main.py — routes esperam hire.apply / hire.draft.
+apply = apply_hire
+draft = generate_draft
+
+
+RECONCILE_SCRIPT = "/app/scripts/reconcile.py"
+
+
+def run_reconcile(extra_args: list[str] | None = None) -> str:
+    """Executa reconcile.py in-process (subprocess local). Retorna stdout+stderr
+    combinados. Levanta RuntimeError em rc != 0 com stderr na mensagem.
+
+    Path overrides: a .env da instancia tem AGENTS_DIR/COMPANY_DIR/REPOS_DIR
+    apontando relativos ao manager/ no host (ex: ../agents = instance root).
+    Dentro do container web, esses paths nao resolvem — sobrescreve com os
+    caminhos absolutos dos mounts existentes (/workspace/agents, etc).
+    """
+    import subprocess
+    import sys
+
+    args = list(extra_args or []) + ["--no-up"]
+    env = {
+        **os.environ,
+        **_dot_env(),
+        "PROJECT_ROOT": "/workspace",
+        # Mounts existentes no container web — bypassa as paths relativas
+        # do .env da instancia (que sao relativas ao manager/ no host).
+        "AGENTS_DIR": "/workspace/agents",
+        "COMPANY_DIR": "/workspace/company",
+        "REPOS_DIR": "/workspace/repos",
+        "SESSIONS_DIR": "/workspace/sessions",
+        # Reconcile so faz mkdir(exist_ok=True) destes — paths host-side
+        # ficam em ${BACKUPS_DIR:-...} no override.yml gerado, resolvidos
+        # pelo compose no host. /tmp eh writable e ephemeral — ok.
+        "BACKUPS_DIR": "/tmp/reconcile/backups",
+        "WORKTREES_DIR": "/tmp/reconcile/worktrees",
+        "HOOKS_DIR": "/tmp/reconcile/hooks",
+    }
+    proc = subprocess.run(
+        [sys.executable, RECONCILE_SCRIPT, *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    combined = proc.stdout + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
+    if proc.returncode != 0:
+        log.error("reconcile.failed", rc=proc.returncode, stderr=proc.stderr[:2000])
+        raise RuntimeError(
+            f"reconcile failed (rc={proc.returncode}): {(proc.stderr or proc.stdout)[-500:]}"
+        )
+    return combined
 
 
 def _dot_env() -> dict:

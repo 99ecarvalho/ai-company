@@ -9,3 +9,4 @@ pywebpush==2.0.0
 pydantic==2.13.2
 PyYAML==6.0.2
 docker==7.1.0
+requests==2.32.3

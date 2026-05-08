@@ -109,14 +109,14 @@ async def health():
 
 @app.post("/transcribe")
 async def transcribe(
-    file: UploadFile = File(..., description="Audio file (qualquer formato suportado por ffmpeg)"),
-    language: str | None = Form(default=None, description="pt|en|es|... ou vazio pra auto-detect"),
-    vad_filter: bool = Form(default=True, description="Voice activity detection (filtra silencio)"),
+    file: UploadFile = File(..., description="Audio file (any format supported by ffmpeg)"),
+    language: str | None = Form(default=None, description="pt|en|es|... or empty for auto-detect"),
+    vad_filter: bool = Form(default=True, description="Voice activity detection (filters silence)"),
     beam_size: int = Form(default=5),
 ):
     contents = await file.read()
     if not contents:
-        raise HTTPException(status_code=400, detail="Arquivo vazio.")
+        raise HTTPException(status_code=400, detail="File is empty.")
     size_kb = len(contents) / 1024.0
 
     # Escreve num temp file porque faster-whisper aceita path (melhor pra ffmpeg
@@ -128,13 +128,13 @@ async def transcribe(
             tmp_path = tmp.name
     except Exception as e:
         log.exception("transcriber.tmp_write_failed")
-        raise HTTPException(status_code=500, detail=f"Falha escrevendo temp: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to write temp: {e}")
 
     try:
         model = await get_model()
     except Exception as e:
         log.exception("transcriber.model_load_failed")
-        raise HTTPException(status_code=500, detail=f"Falha carregando modelo: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
 
     lang = language or DEFAULT_LANGUAGE
     t0 = time.monotonic()
@@ -157,7 +157,7 @@ async def transcribe(
         segs, info = await asyncio.to_thread(_run_transcription)
     except Exception as e:
         log.exception("transcriber.transcribe_failed", filename=file.filename)
-        raise HTTPException(status_code=500, detail=f"Falha na transcricao: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
     finally:
         try:
             os.unlink(tmp_path)

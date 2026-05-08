@@ -131,11 +131,11 @@ def _validate_cron(cron: str) -> None:
     if len(parts) != 5:
         raise HTTPException(
             status_code=400,
-            detail="cron deve ter 5 campos: 'min hour dom month dow' (ex: '0 8 * * MON-FRI')",
+            detail="cron must have 5 fields: 'min hour dom month dow' (e.g. '0 8 * * MON-FRI')",
         )
     for p in parts:
         if not _CRON_FIELD_RE.match(p):
-            raise HTTPException(status_code=400, detail=f"cron field invalido: {p!r}")
+            raise HTTPException(status_code=400, detail=f"invalid cron field: {p!r}")
 
 
 async def _notify_reload(scope: str, id_: str | None = None) -> None:
@@ -151,14 +151,14 @@ async def _validate_post_message_params(params: dict) -> None:
     if sender is None or sender == "":
         return
     if not isinstance(sender, str):
-        raise HTTPException(status_code=400, detail="sender deve ser string")
+        raise HTTPException(status_code=400, detail="sender must be a string")
     row = await db.fetch_one(
         "SELECT 1 FROM messaging.users WHERE username = $1", sender,
     )
     if row is None:
         raise HTTPException(
             status_code=400,
-            detail=f"sender {sender!r} nao existe em messaging.users",
+            detail=f"sender {sender!r} does not exist in messaging.users",
         )
 
 
@@ -262,13 +262,13 @@ async def create_custom_job(
     job: CustomJobIn, principal: Principal = Depends(require_admin)
 ):
     if not _SLUG_RE.match(job.slug):
-        raise HTTPException(status_code=400, detail="slug deve ser kebab-case")
+        raise HTTPException(status_code=400, detail="slug must be kebab-case")
     if job.action not in _HUMAN_ACTION_WHITELIST:
         raise HTTPException(
             status_code=400,
-            detail=f"action {job.action!r} nao permitida em custom jobs. "
-            f"Permitidas: {sorted(_HUMAN_ACTION_WHITELIST)}. Native jobs "
-            "(backup/cleanup/cost) sao configurados em /settings/routines.",
+            detail=f"action {job.action!r} not allowed for custom jobs. "
+            f"Allowed: {sorted(_HUMAN_ACTION_WHITELIST)}. Native jobs "
+            "(backup/cleanup/cost) are configured at /settings/routines.",
         )
     _validate_cron(job.cron)
     if job.action == "post_message":
@@ -277,7 +277,7 @@ async def create_custom_job(
         "SELECT slug FROM scheduler.custom_jobs WHERE slug = $1", job.slug
     )
     if existing:
-        raise HTTPException(status_code=409, detail=f"slug {job.slug!r} ja existe")
+        raise HTTPException(status_code=409, detail=f"slug {job.slug!r} already exists")
     await db.execute(
         """INSERT INTO scheduler.custom_jobs
              (slug, cron, action, params, description, enabled, created_by)
@@ -298,7 +298,7 @@ async def update_custom_job(
         slug,
     )
     if existing is None:
-        raise HTTPException(status_code=404, detail=f"slug {slug!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"slug {slug!r} does not exist")
     sets: list[str] = []
     args: list[Any] = []
     idx = 1
@@ -335,7 +335,7 @@ async def delete_custom_job(slug: str, _: Principal = Depends(require_admin)):
         "DELETE FROM scheduler.custom_jobs WHERE slug = $1 RETURNING slug", slug,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"slug {slug!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"slug {slug!r} does not exist")
     await _notify_reload("custom", slug)
     return {"ok": True, "slug": slug}
 
@@ -377,7 +377,7 @@ async def update_routine(
 ):
     defaults = _load_native_defaults()
     if job_id not in defaults:
-        raise HTTPException(status_code=404, detail=f"native job {job_id!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"native job {job_id!r} does not exist")
     if patch.cron_override is not None and patch.cron_override.strip():
         _validate_cron(patch.cron_override)
     # Upsert: se nao tem linha, cria com patches; se tem, atualiza so os
@@ -417,7 +417,7 @@ async def reset_routine(job_id: str, _: Principal = Depends(require_admin)):
     """Remove override — native volta ao default do framework."""
     defaults = _load_native_defaults()
     if job_id not in defaults:
-        raise HTTPException(status_code=404, detail=f"native job {job_id!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"native job {job_id!r} does not exist")
     await db.execute(
         "DELETE FROM scheduler.native_overrides WHERE id = $1", job_id,
     )

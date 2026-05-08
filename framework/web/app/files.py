@@ -58,13 +58,13 @@ def _resolve(rel: str) -> Path:
     if base is None:
         raise HTTPException(
             status_code=400,
-            detail="path deve comecar com company/, repos/, agents/ ou sessions/",
+            detail="path must start with company/, repos/, agents/ or sessions/",
         )
     full = (base / sub).resolve()
     try:
         full.relative_to(base.resolve())
     except ValueError:
-        raise HTTPException(status_code=403, detail="path fora da base permitida")
+        raise HTTPException(status_code=403, detail="path outside allowed base")
     return full
 
 
@@ -96,9 +96,9 @@ async def list_files(
     polui rapido)."""
     full = _resolve(path)
     if not full.exists():
-        raise HTTPException(status_code=404, detail="path nao existe")
+        raise HTTPException(status_code=404, detail="path does not exist")
     if not full.is_dir():
-        raise HTTPException(status_code=400, detail="nao eh diretorio")
+        raise HTTPException(status_code=400, detail="not a directory")
     entries = _list_dir(full, path, show_hidden=show_hidden)
     return {"path": path, "entries": entries}
 
@@ -188,9 +188,9 @@ async def read_file(path: str, raw: int = 0, _: Principal = Depends(get_principa
     """
     full = _resolve(path)
     if not full.exists() or not full.is_file():
-        raise HTTPException(status_code=404, detail="arquivo nao existe")
+        raise HTTPException(status_code=404, detail="file does not exist")
     if full.stat().st_size > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="arquivo > 50MB")
+        raise HTTPException(status_code=413, detail="file > 50MB")
     mime, _enc = mimetypes.guess_type(str(full))
     mime = mime or "application/octet-stream"
     if raw:
@@ -220,17 +220,17 @@ async def write_file(payload: dict, _: Principal = Depends(get_principal)):
     rel = (payload.get("path") or "").strip()
     content = payload.get("content")
     if not rel or content is None:
-        raise HTTPException(status_code=400, detail="path e content obrigatorios")
+        raise HTTPException(status_code=400, detail="path and content are required")
     if not isinstance(content, str):
-        raise HTTPException(status_code=400, detail="content deve ser string")
+        raise HTTPException(status_code=400, detail="content must be a string")
     if len(content.encode("utf-8")) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="content > 50MB")
     head = rel.lstrip("/").split("/", 1)[0]
     if head in ("repos", "sessions"):
-        raise HTTPException(status_code=403, detail=f"{head}/ eh read-only")
+        raise HTTPException(status_code=403, detail=f"{head}/ is read-only")
     full = _resolve(rel)
     if full.exists() and full.is_dir():
-        raise HTTPException(status_code=400, detail="path eh diretorio")
+        raise HTTPException(status_code=400, detail="path is a directory")
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding="utf-8")
     return {
@@ -244,18 +244,18 @@ async def upload_file(file: UploadFile = File(...), principal: Principal = Depen
     Returns the relative path to be referenced in messages.
     """
     if not file.filename:
-        raise HTTPException(status_code=400, detail="nome de arquivo ausente")
+        raise HTTPException(status_code=400, detail="missing file name")
 
     # Sanitize filename
     safe_name = SAFE_NAME_RE.sub("_", file.filename)
     if not safe_name or safe_name in (".", ".."):
-        raise HTTPException(status_code=400, detail="nome de arquivo invalido")
+        raise HTTPException(status_code=400, detail="invalid file name")
 
     data = await file.read()
     if not data:
-        raise HTTPException(status_code=400, detail="arquivo vazio")
+        raise HTTPException(status_code=400, detail="empty file")
     if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="arquivo > 50MB")
+        raise HTTPException(status_code=413, detail="file > 50MB")
 
     today = datetime.now(tz=timezone.utc).strftime("%Y%m%d")
     dest_dir = COMPANY_DIR / UPLOADS_SUBDIR / today

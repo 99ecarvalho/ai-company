@@ -157,7 +157,7 @@ async def _get_or_create_conversation(
     if ts_row is not None:
         raise HTTPException(
             status_code=410,
-            detail=f"topic {topic!r} foi deletado ha pouco tempo; posts bloqueados",
+            detail=f"topic {topic!r} was deleted recently; posts are blocked",
         )
     # Validacao defensiva do parent_conv_id: precisa existir, nao criar ciclo,
     # E (D-96) o pai precisa ele mesmo ser raiz. Profundidade maxima da arvore
@@ -182,11 +182,11 @@ async def _get_or_create_conversation(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    f"depth violation: conv {parent_conv_id} ja eh filha "
-                    f"(parent={parent_row['parent_conv_id']}); nao pode ter "
-                    "filha propria. Hierarquia maxima eh raiz -> filha (D-96). "
-                    "Filha que precisa de mais info deve responder ao pai, "
-                    "nao delegar."
+                    f"depth violation: conv {parent_conv_id} is already a child "
+                    f"(parent={parent_row['parent_conv_id']}); cannot have its "
+                    "own child. Max hierarchy is root -> child (D-96). "
+                    "A child needing more info should reply to its parent, "
+                    "not delegate."
                 ),
             )
         else:
@@ -205,7 +205,7 @@ async def _get_or_create_conversation(
         stream, topic, safe_parent,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"stream {stream!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"stream {stream!r} does not exist")
     return row["id"], row["stream_id"]
 
 
@@ -228,7 +228,7 @@ async def post_message(msg: MessageIn, principal: Principal = Depends(get_princi
             if row is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"as_username {msg.as_username!r} nao existe",
+                    detail=f"as_username {msg.as_username!r} does not exist",
                 )
             sender_id = row["id"]
             effective_username = row["username"]
@@ -237,7 +237,7 @@ async def post_message(msg: MessageIn, principal: Principal = Depends(get_princi
                 "SELECT id FROM messaging.users WHERE username = 'system-bot' AND kind = 'bot'",
             )
             if row is None:
-                raise HTTPException(status_code=500, detail="system-bot nao inicializado")
+                raise HTTPException(status_code=500, detail="system-bot not initialized")
             sender_id = row["id"]
             effective_username = "system-bot"
     else:
@@ -525,14 +525,14 @@ async def set_stream_active(
     409 se houver convs.
     """
     if "is_active" not in payload or not isinstance(payload["is_active"], bool):
-        raise HTTPException(status_code=400, detail="body precisa {'is_active': bool}")
+        raise HTTPException(status_code=400, detail="body requires {'is_active': bool}")
     row = await db.fetch_one(
         "UPDATE messaging.streams SET is_active = $2 WHERE name = $1 "
         "RETURNING id, name, is_active",
         name, payload["is_active"],
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"stream {name!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"stream {name!r} does not exist")
     return {"id": row["id"], "name": row["name"], "is_active": row["is_active"]}
 
 
@@ -545,7 +545,7 @@ async def delete_stream(name: str, _: Principal = Depends(require_admin)):
     """
     row = await db.fetch_one("SELECT id FROM messaging.streams WHERE name = $1", name)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"stream {name!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"stream {name!r} does not exist")
     stream_id = row["id"]
     conv_count = await db.fetch_one(
         "SELECT COUNT(*) AS n FROM messaging.conversations WHERE stream_id = $1", stream_id,
@@ -553,7 +553,7 @@ async def delete_stream(name: str, _: Principal = Depends(require_admin)):
     if conv_count["n"] > 0:
         raise HTTPException(
             status_code=409,
-            detail=f"stream {name!r} tem {conv_count['n']} conversation(s); delete manualmente via SQL se for intencional",
+            detail=f"stream {name!r} has {conv_count['n']} conversation(s); delete manually via SQL if intentional",
         )
     await db.execute("DELETE FROM messaging.streams WHERE id = $1", stream_id)
     return {"ok": True, "deleted": name}
@@ -576,7 +576,7 @@ async def create_subscription(data: SubscriptionIn, _: Principal = Depends(requi
         # pode ter falhado por stream inexistente ou ja subscrito
         exists = await db.fetch_one("SELECT 1 FROM messaging.streams WHERE name = $1", data.stream)
         if exists is None:
-            raise HTTPException(status_code=404, detail=f"stream {data.stream!r} nao existe")
+            raise HTTPException(status_code=404, detail=f"stream {data.stream!r} does not exist")
     return {"ok": True}
 
 
@@ -603,7 +603,7 @@ async def list_subscriptions(principal: Principal = Depends(get_principal)):
 @router.get("/subscriptions/cursor")
 async def get_subscription_cursor(stream: str, principal: Principal = Depends(get_principal)):
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="sem user_id")
+        raise HTTPException(status_code=401, detail="missing user_id")
     row = await db.fetch_one(
         """SELECT sub.last_read_message_id
              FROM messaging.subscriptions sub
@@ -612,7 +612,7 @@ async def get_subscription_cursor(stream: str, principal: Principal = Depends(ge
         principal.user_id, stream,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"nao inscrito em {stream!r}")
+        raise HTTPException(status_code=404, detail=f"not subscribed to {stream!r}")
     return {"stream": stream, "last_read_message_id": row["last_read_message_id"]}
 
 
@@ -622,7 +622,7 @@ async def set_subscription_cursor(data: CursorIn, principal: Principal = Depends
     o atual (evita regressao por race entre catch-up e LISTEN quase simultaneo).
     """
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="sem user_id")
+        raise HTTPException(status_code=401, detail="missing user_id")
     row = await db.fetch_one(
         """UPDATE messaging.subscriptions sub
               SET last_read_message_id = GREATEST(
@@ -636,7 +636,7 @@ async def set_subscription_cursor(data: CursorIn, principal: Principal = Depends
         principal.user_id, data.stream, data.last_read_message_id,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"nao inscrito em {data.stream!r}")
+        raise HTTPException(status_code=404, detail=f"not subscribed to {data.stream!r}")
     return {"ok": True, "last_read_message_id": row["last_read_message_id"]}
 
 
@@ -689,14 +689,14 @@ async def set_user_active(
     user de listings da UI e do '## Equipe' do system prompt dos peers.
     """
     if "is_active" not in payload or not isinstance(payload["is_active"], bool):
-        raise HTTPException(status_code=400, detail="body precisa {'is_active': bool}")
+        raise HTTPException(status_code=400, detail="body requires {'is_active': bool}")
     row = await db.fetch_one(
         "UPDATE messaging.users SET is_active = $2 WHERE username = $1 "
         "RETURNING id, username, is_active",
         username, payload["is_active"],
     )
     if row is None:
-        raise HTTPException(status_code=404, detail=f"user {username!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"user {username!r} does not exist")
     return {"id": row["id"], "username": row["username"], "is_active": row["is_active"]}
 
 
@@ -715,14 +715,14 @@ async def delete_user(username: str, _: Principal = Depends(require_admin)):
     """
     row = await db.fetch_one("SELECT id, kind FROM messaging.users WHERE username = $1", username)
     if row is None:
-        raise HTTPException(status_code=404, detail=f"user {username!r} nao existe")
+        raise HTTPException(status_code=404, detail=f"user {username!r} does not exist")
     msg_count = await db.fetch_one(
         "SELECT COUNT(*) AS n FROM messaging.messages WHERE sender_id = $1", row["id"],
     )
     if msg_count["n"] > 0:
         raise HTTPException(
             status_code=409,
-            detail=f"user {username!r} tem {msg_count['n']} mensagem(ns) no historico; nao pode ser deletado",
+            detail=f"user {username!r} has {msg_count['n']} message(s) in history; cannot be deleted",
         )
     await db.execute("DELETE FROM messaging.users WHERE id = $1", row["id"])
     return {"ok": True, "deleted": username}
@@ -743,9 +743,9 @@ async def create_ask(data: AskIn, principal: Principal = Depends(get_principal))
     `answer_message_id` — caller usa pra detectar que ask ja foi respondido.
     """
     if principal.user_id is None:
-        raise HTTPException(status_code=400, detail="pending_ask precisa user_id valido (service tokens nao podem asker)")
+        raise HTTPException(status_code=400, detail="pending_ask requires valid user_id (service tokens cannot ask)")
     if data.kind not in ("ask_human", "ask_agent"):
-        raise HTTPException(status_code=400, detail=f"kind invalido: {data.kind!r}")
+        raise HTTPException(status_code=400, detail=f"invalid kind: {data.kind!r}")
     async with db.connection() as conn:
         async with conn.transaction():
             conv_id, _ = await _get_or_create_conversation(conn, data.stream, data.topic)
@@ -848,7 +848,7 @@ async def list_unified_conversations(
     ficam como root (comportamento legado: so aparecem se tiverem pending_ask).
     """
     if filter_ not in ("active", "closed"):
-        raise HTTPException(status_code=400, detail="filter deve ser 'active' ou 'closed'")
+        raise HTTPException(status_code=400, detail="filter must be 'active' or 'closed'")
     archived_clause = "c.archived_at IS NULL" if filter_ == "active" else "c.archived_at IS NOT NULL"
     rows = await db.fetch_all(
         f"""
@@ -866,26 +866,14 @@ async def list_unified_conversations(
                          AND pa.kind = 'ask_human') AS awaiting_human,
                EXISTS(SELECT 1 FROM messaging.messages m2
                        WHERE m2.conversation_id = c.id AND m2.sender_id = $1) AS participating,
-               -- D-84: modelo unificado de estado. Lemos so o ultimo
-               -- run_start/run_end + ts pra derivar is_running/is_stuck.
-               -- O conceito antigo de "queued" (trigger sem run) foi
-               -- descontinuado — quando aparecia, era pool_size baixo,
-               -- problema operacional, nao estado merecedor de UI.
-               (SELECT le.ts FROM telemetry.live_events le
-                  WHERE le.conversation_id = c.id
-                    AND le.kind IN ('run_start', 'run_end')
-                  ORDER BY le.id DESC LIMIT 1) AS last_run_activity_at,
-               (SELECT le.kind FROM telemetry.live_events le
-                  WHERE le.conversation_id = c.id
-                    AND le.kind IN ('run_start', 'run_end')
-                  ORDER BY le.id DESC LIMIT 1) AS last_run_kind,
-               -- Subtype do ultimo run_end (se for o evento mais recente).
-               -- Convencao Claude CLI: NULL ou 'success' = ok, qualquer
-               -- outro 'error_*' = erro. Usado pra is_errored.
-               (SELECT le.data->>'subtype' FROM telemetry.live_events le
-                  WHERE le.conversation_id = c.id
-                    AND le.kind IN ('run_start', 'run_end')
-                  ORDER BY le.id DESC LIMIT 1) AS last_run_subtype,
+               -- D-84: modelo unificado de estado. Migration 030 introduziu
+               -- messaging.runs como single source of truth — 1 row por
+               -- execucao do CLI, atualizada transacionalmente pelo broker
+               -- quando ingere live_events. Substituiu 3 subqueries em
+               -- telemetry.live_events por um LATERAL com 1 lookup.
+               r.status            AS run_status,
+               r.last_heartbeat_at AS run_last_heartbeat_at,
+               r.exit_reason       AS run_exit_reason,
                -- Task metadata: primeiro tenta match pela origem (conv que
                -- criou a task via primeiro complete_phase); senao tenta match
                -- por topic = 'task-<slug>' (convs intermediárias em streams
@@ -917,6 +905,12 @@ async def list_unified_conversations(
                END AS task_not_current_agent
           FROM messaging.conversations c
           JOIN messaging.streams s ON s.id = c.stream_id
+          LEFT JOIN LATERAL (
+                SELECT status, last_heartbeat_at, exit_reason
+                  FROM messaging.runs
+                 WHERE conversation_id = c.id
+                 ORDER BY started_at DESC LIMIT 1
+          ) r ON true
           LEFT JOIN tasks.tasks t
                  ON t.origin_stream = s.name
                 AND t.origin_topic = c.topic_name
@@ -966,26 +960,30 @@ async def list_unified_conversations(
         # D-84: modelo unificado de estado — 4 sinais flat, mutuamente
         # exclusivos por construcao via precedencia:
         #   awaiting_human > is_stuck > is_running > is_errored > idle
+        # Fonte (migration 030): messaging.runs.status. Reaper transiciona
+        # running -> stale quando heartbeat fica obsoleto, entao stuck
+        # vira automatico quando elapsed > RUNNER_STUCK_SEC mesmo antes
+        # do reaper rodar (cobre janela entre heartbeat antigo e proxima
+        # passada do scheduler).
         awaiting_human = bool(r["awaiting_human"])
-        run_activity_at = r["last_run_activity_at"]
+        run_status = r["run_status"]
+        heartbeat_at = r["run_last_heartbeat_at"]
         elapsed: float | None = None
-        if run_activity_at is not None:
-            elapsed = (datetime.now(tz=timezone.utc) - run_activity_at).total_seconds()
+        if heartbeat_at is not None:
+            elapsed = (datetime.now(tz=timezone.utc) - heartbeat_at).total_seconds()
         is_stuck = bool(
-            r["last_run_kind"] == "run_start"
+            run_status == "running"
             and elapsed is not None
             and elapsed > RUNNER_STUCK_SEC
             and not awaiting_human
         )
         is_running = bool(
-            r["last_run_kind"] == "run_start"
-            and (elapsed is None or elapsed <= RUNNER_STUCK_SEC)
-            and not awaiting_human
+            run_status == "running"
             and not is_stuck
+            and not awaiting_human
         )
         is_errored = bool(
-            r["last_run_kind"] == "run_end"
-            and r["last_run_subtype"] not in (None, "success")
+            run_status == "error"
             and not awaiting_human
         )
         item = dict(
@@ -1110,7 +1108,7 @@ async def delete_conversation(conv_id: int, principal: Principal = Depends(get_p
     Sem gate admin: hoje todo usuario logado eh admin de fato. Registrado em
     QUESTIONS como melhoria futura (flag/coluna admin)."""
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     result = await db.execute(
         "DELETE FROM messaging.conversations WHERE id = $1",
         conv_id,
@@ -1120,7 +1118,7 @@ async def delete_conversation(conv_id: int, principal: Principal = Depends(get_p
 
 async def close_conversation(conv_id: int, principal: Principal = Depends(get_principal)):
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     # DO UPDATE pra renovar `closed_at` em closes repetidos. Combinado com a
     # regra de `closed_at >= last_message_at` (D-28), garante que fechar uma
     # conv previamente fechada + reaberta por msg nova volta a escondela.
@@ -1136,7 +1134,7 @@ async def close_conversation(conv_id: int, principal: Principal = Depends(get_pr
 
 async def reopen_conversation(conv_id: int, principal: Principal = Depends(get_principal)):
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     await db.execute(
         "DELETE FROM web.closed_conversations WHERE conversation_id = $1 AND user_id = $2",
         conv_id, principal.user_id,
@@ -1147,7 +1145,7 @@ async def reopen_conversation(conv_id: int, principal: Principal = Depends(get_p
 async def close_all_conversations(principal: Principal = Depends(get_principal)):
     """Marca como fechadas TODAS as conversas visiveis do usuario exceto as com ask pendente."""
     if principal.user_id is None:
-        raise HTTPException(status_code=401, detail="nao autenticado")
+        raise HTTPException(status_code=401, detail="not authenticated")
     # DO UPDATE renova `closed_at` (ver close_conversation) pra respeitar
     # regra `closed_at >= last_message_at`.
     result = await db.execute(
