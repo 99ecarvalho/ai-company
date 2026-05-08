@@ -61,6 +61,19 @@ services:
       # ${HOME}/.claude/ ao montar volumes via SDK (compose normalmente
       # resolve esse var no host; sem CLI, web faz manual via env).
       HOST_HOME: ${HOME}
+      # COMPOSE_PROJECT_NAME: usado pelo agent_bootstrap pra computar
+      # container names (`<project>-agent-<slug>-1`). Compose ja injeta
+      # COMPOSE_PROJECT_NAME automaticamente em alguns contextos, mas
+      # passar explicito garante que o web container sempre veja o nome
+      # correto, mesmo quando customizado em .env.
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-agent-framework}
+      # Hire/onboard: slug do agente que hospeda claude CLI pra geracao
+      # de drafts. Container name eh derivado dinamicamente do slug +
+      # COMPOSE_PROJECT_NAME (cobre instancias com project name custom).
+      # HIRE_AGENT_CONTAINER (override total) ainda funciona pra setups
+      # exoticos que precisam apontar pra container fora do padrao.
+      HIRE_AGENT: ${HIRE_AGENT:-executor}
+      HIRE_AGENT_CONTAINER: ${HIRE_AGENT_CONTAINER:-}
       TZ: ${TZ:-America/Sao_Paulo}
       # PWA — defaults genericos do framework, sobrescritos pelo .env da
       # instancia. Manifest renderizado dinamicamente em /manifest.webmanifest.
@@ -228,21 +241,19 @@ services:
       dockerfile: Dockerfile
     image: agent-framework/transcriber:0.1.0
     restart: unless-stopped
+    # GPU opt-in: layer docker-compose.gpu.yml por cima
+    # (`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml`) pra ativar
+    # NVIDIA reservation + flipar WHISPER_DEVICE/COMPUTE_TYPE pra cuda/float16.
+    # Defaults ficam em CPU/int8 — funciona em qualquer host (Mac, devcontainer,
+    # CI sem GPU). Modelo small-v3 tambem evita carregar 6GB num CPU.
     environment:
-      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
-      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
-      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - whisper-cache:/cache
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
       interval: 30s

@@ -19,11 +19,22 @@ log = structlog.get_logger("hire")
 import os
 
 # Reusa auth Claude rodando `claude -p` dentro de um container de agente existente
-# (que ja tem CLI Claude + creds montadas). Default = executor; override via
-# HIRE_AGENT_CONTAINER se sua instance usa outro nome.
-EXEC_CONTAINER = os.environ.get(
-    "HIRE_AGENT_CONTAINER", "agent-framework-agent-executor-1"
-)
+# (que ja tem CLI Claude + creds montadas). Slug do agente — container name
+# eh derivado dinamicamente via agent_bootstrap._container_name() pra cobrir
+# instancias com COMPOSE_PROJECT_NAME customizado. Override total ainda
+# disponivel via HIRE_AGENT_CONTAINER pra setups exoticos.
+HIRE_AGENT = os.environ.get("HIRE_AGENT", "executor")
+
+
+def _hire_container_name() -> str:
+    """Container name resolvido em runtime (nao em import-time) — _compose_project()
+    le COMPOSE_PROJECT_NAME do ambiente, que pode mudar entre testes."""
+    explicit = os.environ.get("HIRE_AGENT_CONTAINER")
+    if explicit:
+        return explicit
+    from . import agent_bootstrap as _ab
+    return _ab._container_name(HIRE_AGENT)
+
 AGENTS_YAML = Path("/workspace/agents/agents.yaml")
 AGENTS_DIR = Path("/workspace/agents")
 PROJECT_ROOT = Path("/workspace")                      # dentro do web container
@@ -152,19 +163,24 @@ async def generate_draft(data: dict) -> dict:
 
     prompt = GENERATION_PROMPT.format(data_block=build_data_block(data))
 
-    client = docker.from_env()
+    container_name = _hire_container_name()
+    # Auto-bootstrap: garante que o agente "host" do hire esteja running
+    # (cobre fresh setup + restarts). Mesmo helper usado pelo onboard.
+    from . import agent_bootstrap as _ab
     try:
-        container = client.containers.get(EXEC_CONTAINER)
-    except docker.errors.NotFound:
+        await _ab.ensure_agent_running(HIRE_AGENT, timeout=45.0)
+    except Exception as e:
         raise RuntimeError(
-            f"container {EXEC_CONTAINER} not found — a running agent container "
-            "is required to generate the draft (claude CLI + creds). "
-            "Start the stack or adjust HIRE_AGENT_CONTAINER in env."
+            f"could not start hire-host agent '{HIRE_AGENT}' "
+            f"(container '{container_name}'): {e}"
         )
+
+    client = docker.from_env()
+    container = client.containers.get(container_name)
 
     # exec_run com stdin=False; claude -p recebe prompt via argv
     cmd = ["claude", "-p", prompt, "--output-format", "json"]
-    log.info("hire.generating", container=EXEC_CONTAINER, cmd_len=len(prompt))
+    log.info("hire.generating", container=container_name, cmd_len=len(prompt))
     import asyncio
     def _run():
         # user="node" + environment com HOME correto pro claude CLI achar credentials
@@ -234,8 +250,14 @@ async def generate_draft(data: dict) -> dict:
     }
 
 
-async def apply_hire(payload: dict) -> dict:
-    """Grava CLAUDE.md + anexa entry em agents.yaml + roda reconcile."""
+async def apply_hire(payload: dict, *, skip_reconcile: bool = False) -> dict:
+    """Grava CLAUDE.md + anexa entry em agents.yaml + roda reconcile.
+
+    skip_reconcile: usado pelo onboard_apply pra batchar — evita rodar
+    reconcile N vezes em rapida sucessao (cria race-conditions transientes
+    no broker quando 5 agents sao criados em sequencia). Caller eh
+    responsavel por chamar run_reconcile() uma vez no final.
+    """
     name = payload.get("name", "").strip()
     # NAO usar .strip() no yaml_entry — remove os 2 espacos iniciais que
     # sao parte do indent de item de lista. So rstrip.
@@ -286,6 +308,15 @@ async def apply_hire(payload: dict) -> dict:
         f.write("\n" + yaml_entry_clean + "\n")
 
     log.info("hire.files_written", name=name)
+
+    if skip_reconcile:
+        log.info("hire.apply_ok", name=name, reconcile="deferred")
+        return {
+            "ok": True,
+            "name": name,
+            "reconcile_log": "",
+            "note": "files written; reconcile deferred to caller",
+        }
 
     # Dispara reconcile via subprocess local — corre dentro deste container web,
     # que ja tem pyyaml + requests + scripts/ + framework/ copiados no build.

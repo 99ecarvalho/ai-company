@@ -4415,13 +4415,14 @@ async def onboard_status(_: Principal = Depends(get_principal)):
     agents_count = int(rows[0]["c"]) if rows else 0
 
     # Pre-warm: dispara em background sem bloquear response. So pra
-    # fresh setups (sem onboarded flag) — caso ja onboardado, executor
-    # provavelmente ja esta up via compose/scheduler.
+    # fresh setups (sem onboarded flag) — caso ja onboardado, hire-host
+    # provavelmente ja esta up via compose/scheduler. Slug vem de
+    # hire.HIRE_AGENT pra cobrir COMPOSE_PROJECT_NAME customizado.
     if not ONBOARDED_FLAG.exists():
-        from . import agent_bootstrap as _ab
+        from . import agent_bootstrap as _ab, hire as _hire
         async def _prewarm():
             try:
-                await _ab.ensure_agent_running("executor", timeout=60.0)
+                await _ab.ensure_agent_running(_hire.HIRE_AGENT, timeout=60.0)
             except Exception as e:
                 log.warning("onboard.prewarm_failed", err=str(e)[:200])
         asyncio.create_task(_prewarm())
@@ -4443,9 +4444,9 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     if not company_md:
         raise HTTPException(status_code=400, detail="company_md is required")
 
-    container_name = os.environ.get(
-        "HIRE_AGENT_CONTAINER", "agent-framework-agent-executor-1"
-    )
+    from . import hire as _hire
+    agent_slug = _hire.HIRE_AGENT
+    container_name = _hire._hire_container_name()
     prompt = (
         "Voce eh um arquiteto de empresa virtual baseada em agentes Claude Code.\n\n"
         "EMPRESA (CONTEXT.md):\n"
@@ -4488,7 +4489,6 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     # tentar exec'ar claude nele. Cobre fresh setup (container nunca
     # criado) + restart cycles (parado mas existente).
     from . import agent_bootstrap as _ab
-    agent_slug = container_name.removeprefix("agent-framework-agent-").removesuffix("-1")
     try:
         await _ab.ensure_agent_running(agent_slug, timeout=45.0)
     except Exception as e:
@@ -4547,6 +4547,10 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
 
     # Cria cada agente via hire.apply com draft pronto. apply gera o yaml_entry
     # do agent.yaml.example padrao + o CLAUDE.md fornecido.
+    # Reconcile eh DEFERRED por agente (skip_reconcile=True) e rodado UMA
+    # vez no final — rodar reconcile N vezes em sequencia rapida cria
+    # race-conditions transientes no broker (criacao concorrente de
+    # users/streams), causando "0 created" mesmo com agents.yaml correto.
     created: list[str] = []
     errors: list[dict] = []
     for a in agents:
@@ -4577,11 +4581,21 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
                 "name": slug,
                 "yaml_entry": yaml_entry,
                 "claude_md": claude_md,
-            })
+            }, skip_reconcile=True)
             created.append(slug)
         except Exception as e:
             log.exception("onboard.agent_apply_failed", slug=slug)
             errors.append({"slug": slug, "error": str(e)[:300]})
+
+    # Reconcile uma unica vez ao final, depois que todos os arquivos foram
+    # escritos — broker ve um batch coerente e cria N users/streams numa
+    # passada so. Falha aqui fica em errors mas nao desfaz arquivos.
+    if created:
+        try:
+            await asyncio.to_thread(_hire.run_reconcile)
+        except Exception as e:
+            log.exception("onboard.reconcile_failed", created=created)
+            errors.append({"slug": "*reconcile*", "error": str(e)[:500]})
 
     # Marca onboarded mesmo com erros parciais (idempotent)
     try:
