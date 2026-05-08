@@ -1307,3 +1307,6 @@ export const authLogin = (email: string, password: string) =>
   );
 
 export const authLogout = () => api.post<{ ok: boolean }>('/api/auth/logout');
+
+export const setAdminPassword = (password: string) =>
+  api.post<{ ok: boolean }>('/api/auth/set-password', { password });

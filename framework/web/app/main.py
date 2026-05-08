@@ -152,8 +152,8 @@ async def _push_notifier_loop():
     (ask_human), nao pra cada bot reply/emoji de sinal.
 
     Hot-reload: dispatcher eh lido fresh a cada msg em vez de cacheado,
-    pra que generate-vapid no PWA passe a disparar pushes sem restart.
-    Se ainda nao tem dispatcher, msg eh ignorada (sem panic loop).
+    pra que clicar Generate keypair no PWA passe a disparar pushes sem
+    restart. Se ainda nao tem dispatcher, msg eh ignorada (sem panic loop).
     """
     dsn = os.environ["DATABASE_URL"]
     while True:
@@ -201,7 +201,7 @@ async def _push_notifier_loop():
                     )
                     if not has_pending:
                         continue
-                    # Hot-reload: pega dispatcher corrente. Se generate-vapid
+                    # Hot-reload: pega dispatcher corrente. Se Generate keypair
                     # rodou no PWA, novo dispatcher ja esta ativo aqui.
                     dispatcher = app.state.push_dispatcher
                     if dispatcher is None:
@@ -1196,6 +1196,29 @@ async def auth_me(principal: Principal = Depends(get_principal)):
         "kind": principal.kind,
         "is_admin": principal.is_admin,
     }
+
+
+@app.post("/api/auth/set-password")
+async def auth_set_password(
+    payload: dict,
+    principal: Principal = Depends(auth_mod.require_admin),
+):
+    """Define ou atualiza a senha do admin atual. Quando senha eh setada,
+    desabilita dev_bypass automaticamente — sem isso a senha nao tem
+    efeito (bypass concede admin sem login)."""
+    pwd = (payload.get("password") or "").strip()
+    if len(pwd) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 chars")
+    import bcrypt as _bc
+    hashed = _bc.hashpw(pwd.encode("utf-8"), _bc.gensalt(rounds=12)).decode("ascii")
+    await db.execute(
+        "UPDATE messaging.users SET password_hash = $1 WHERE id = $2",
+        hashed, principal.user_id,
+    )
+    from . import app_settings as _s
+    await _s.set("auth_dev_bypass", {"enabled": False}, user_id=principal.user_id)
+    log.info("auth.password_set", user_id=principal.user_id)
+    return {"ok": True}
 
 
 # ---------- Tasks (unified view across conversations) ----------

@@ -2,9 +2,9 @@
 -- via PWA Settings em vez de .env. Substitui (com fallback) os env vars
 -- WEB_DEFAULT_STREAM, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_CONTACT_EMAIL.
 --
--- Motivacao: instancias fresh que pulam `make install`/`generate-vapid.py`
--- ficavam com push desabilitado e default_stream apontando pra agente
--- inexistente, sem visibilidade no PWA. Mover pra DB resolve dois pontos:
+-- Motivacao: instancias fresh ficavam com push desabilitado e
+-- default_stream apontando pra agente inexistente, sem visibilidade no
+-- PWA. Mover pra DB resolve dois pontos:
 --   1. Editavel em runtime sem mexer em arquivo + restart
 --   2. Onboarding pode auto-detectar gaps + oferecer "Generate VAPID" button
 --

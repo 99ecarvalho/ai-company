@@ -39,8 +39,21 @@ def init_service_tokens() -> None:
     ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com")
 
 
-def _dev_bypass() -> bool:
+def _dev_bypass_env() -> bool:
     return os.environ.get("WEB_AUTH_DEV_BYPASS", "").strip() in ("1", "true", "yes")
+
+
+async def _dev_bypass() -> bool:
+    """Hot-readable: DB tem precedencia sobre env. Quando user define
+    senha via /onboard ou /api/auth/set-password, gravamos
+    {"enabled": false} em web.app_settings -> proxima request ja
+    exige login, sem restart. Env var ainda funciona como bootstrap
+    inicial (compose .env: WEB_AUTH_DEV_BYPASS=1)."""
+    from . import app_settings as _s
+    row = await _s.get("auth_dev_bypass")
+    if row is not None:
+        return bool(row.get("enabled"))
+    return _dev_bypass_env()
 
 
 def cookie_secure() -> bool:
@@ -144,7 +157,7 @@ async def get_principal(request: Request) -> Principal:
         # Cookie invalido/expirado: cai pro fallback (que pode ser 401).
 
     # Dev mode local: sem credenciais -> admin implicito.
-    if _dev_bypass():
+    if await _dev_bypass():
         row = await db.fetch_one(
             "SELECT id, username, kind, is_admin FROM messaging.users WHERE email = $1 AND kind = 'human'",
             ADMIN_EMAIL,

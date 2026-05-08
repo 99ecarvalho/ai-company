@@ -17,8 +17,9 @@ e roda `make reconcile`.
 - **Docker Engine 25+** com `docker compose` v2
 - **Claude Code CLI logado** no host (`claude` uma vez → cria `~/.claude/`)
 - **Linux ou WSL2** (macOS deve funcionar)
-- **Opcional — GPU NVIDIA** pra transcrição rápida. Sem GPU, o installer
-  escolhe modelo menor automaticamente.
+- **GPU NVIDIA** é opt-in automático — `install.sh` detecta `nvidia-smi`
+  e ativa o overlay `docker-compose.gpu.yml`. Sem GPU, transcriber roda
+  em CPU.
 
 ---
 
@@ -30,27 +31,56 @@ cd agent-framework
 make install
 ```
 
-O wizard interativo pergunta nome da empresa, porta, credenciais admin,
-device do Whisper, e (se aplicável) registry privado. Gera `.env`,
-builda imagens, aplica migrations, sobe a stack, espera `/health`. Abra
-`http://localhost:<porta>` e siga o onboarding.
+Sem prompts. O script gera `.env` com secrets random, detecta GPU,
+builda imagens, sobe a stack, espera `/health` e imprime a URL. Abra
+no browser — o wizard `/onboard` cuida do resto (push notifications,
+admin password, contexto da empresa, geração de agentes). Tudo que
+era prompt no terminal antes vive agora no PWA: **Settings → System**
+(VAPID, default stream, password) e **/onboard** (company + agents).
 
 ### Multi-empresa no mesmo host
 
-Copie o repo pra outra pasta e rode `make install` lá — o installer
-sugere `COMPOSE_PROJECT_NAME` e `WEB_PORT` distintos. Postgres, volumes
-e rede ficam namespaced automaticamente via Docker; cada pasta tem seu
-próprio `instance/`. `~/.claude/` é compartilhado por máquina (plano
-MAX é 1 por host). Paths customizáveis (`AGENTS_DIR`, `COMPANY_DIR`,
-`REPOS_DIR`, etc.) permitem mover qualquer parte do estado pra fora
-do framework — ver tabela abaixo.
+Edite `.env` antes de rodar `make install` (ou copie de
+`framework/examples/.env.example`) com:
+
+```
+COMPOSE_PROJECT_NAME=company-agents-<empresa>
+WEB_PORT=9091
+```
+
+Cada pasta tem seu próprio `instance/`; postgres/volumes/rede ficam
+namespaced via Docker. `~/.claude/` é compartilhado pelo host (plano
+MAX é 1 por máquina).
+
+### BYOI / registry privado
+
+Se algum agente em `agents.yaml` usa `image:` de registry privado,
+faça antes do `make install`:
+
+```bash
+mkdir -p ./.docker && chmod 700 ./.docker
+DOCKER_CONFIG=./.docker docker login <registry-url>
+echo 'DOCKER_CONFIG=./.docker' >> .env
+```
+
+Credenciais ficam isoladas desta empresa (sem colidir com outras
+contas no mesmo registry).
+
+### Paths customizados
+
+Defaults mantêm tudo em `./instance/*`. Pra versionar config separada,
+mover backups pra outro disco, ou rodar repos fora do framework, edite
+`AGENTS_DIR` / `COMPANY_DIR` / `REPOS_DIR` / `BACKUPS_DIR` /
+`SESSIONS_DIR` / `WORKTREES_DIR` / `HOOKS_DIR` em `.env` antes do
+install — ver tabela abaixo.
 
 ---
 
 ## O que vem no fresh install
 
-`make install` (= `bootstrap-env.sh` + reconcile + build + up) deixa
-sua instância com o seguinte estado **runnable end-to-end**:
+`make install` (= sanity checks + `bootstrap-env.sh` + GPU detect +
+build + reconcile + up) deixa sua instância **runnable end-to-end**
+sem prompt nenhum:
 
 ### Em `instance/agents/`
 
@@ -96,16 +126,19 @@ Vazias. Você popula `instance/repos/<nome>/` clonando os repos que seus agentes
 
 ### `.env`
 
-Gerado pelo wizard interativo do `install.sh` com secrets random + perguntas (porta, admin password, device do Whisper, etc). Ver tabela completa em [Configuração (`.env`)](#configuração-env).
+Gerado por `bootstrap-env.sh` com secrets random — sem prompts. Ver
+tabela completa em [Configuração (`.env`)](#configuração-env). Tudo
+que aparece no PWA Settings → System (VAPID, default stream, admin
+password) **não** vive aqui — vive em `web.app_settings` (DB).
 
 ---
 
 ## Configuração (`.env`)
 
-`make install` gera o `.env` interativamente; pra inspecionar/editar
-manualmente, ver [framework/examples/.env.example](framework/examples/.env.example).
-Tudo que tem default funciona out-of-the-box; só os campos sem default
-precisam ser preenchidos pra usar o feature correspondente.
+`bootstrap-env.sh` gera com defaults sensatos. Edição manual é
+opcional — só pra cenários advanced (multi-instância, paths
+customizados, BYOI, credenciais de DB de produção, GitLab/GitHub).
+Ver [framework/examples/.env.example](framework/examples/.env.example).
 
 ### Postgres / storage
 
@@ -121,11 +154,10 @@ precisam ser preenchidos pra usar o feature correspondente.
 |---|---|---|
 | `WEB_PORT` | `9090` | Porta exposta no host. Único por instância no mesmo host. |
 | `ADMIN_EMAIL` | `admin@example.com` | E-mail do humano principal (login). |
-| `ADMIN_PASSWORD` | _(vazio)_ | Plaintext; web bcrypta no startup. Setar pra forçar login. |
-| `WEB_AUTH_DEV_BYPASS` | `1` | DEV: admin implícito sem cookie/token. **Setar vazio em prod.** |
+| `WEB_AUTH_DEV_BYPASS` | `1` | DEV: admin implícito sem cookie/token. Setado automaticamente como `false` em `web.app_settings` quando você define password via `/onboard` ou Settings → System. |
 | `WEB_COOKIE_SECURE` | _(vazio)_ | `1` quando servir com HTTPS (cookies marcados Secure). |
 
-> **Default stream + push (VAPID)**: configurados pelo PWA em `Settings → System`. Persistem em `web.app_settings` (DB).
+> **Admin password / default stream / push (VAPID)**: configurados pelo PWA em `Settings → System` ou no wizard `/onboard`. Persistem em `web.app_settings` (DB).
 
 ### Service tokens (broker interno)
 

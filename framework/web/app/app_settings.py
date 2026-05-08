@@ -78,8 +78,8 @@ def _b64url(raw: bytes) -> str:
 
 
 def generate_vapid_keypair() -> dict[str, str]:
-    """EC P-256 keypair em base64url sem padding. Mesma logica de
-    framework/web/scripts/generate-vapid.py."""
+    """EC P-256 keypair em base64url sem padding (formato esperado pelo
+    PushManager.subscribe applicationServerKey)."""
     priv = ec.generate_private_key(ec.SECP256R1())
     priv_bytes = priv.private_numbers().private_value.to_bytes(32, "big")
     pub_bytes = priv.public_key().public_bytes(
