@@ -664,6 +664,7 @@ class McpServer:
                     next_step=next_step,
                     next_agent=next_agent,
                     reason=reason,
+                    standalone=bool(arguments.get("standalone", False)),
                 )
             except ValueError as e:
                 return _err(req_id, JSONRPC_INVALID_PARAMS, str(e))

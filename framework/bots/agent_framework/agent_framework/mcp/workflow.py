@@ -275,23 +275,34 @@ class WorkflowManager:
         task_slug: str,
         origin_stream: str | None,
         origin_topic: str | None,
+        standalone: bool = False,
     ) -> str:
         """Escolhe o topic onde o handoff vai ser postado.
 
         Prioridade:
           1. `explicit_topic` (override passado pelo chamador).
-          2. Se o handoff volta pro agente de origem (o que abriu a task),
+          2. `standalone=True` -> sempre `task-<slug>`. Fan-out pede
+             isolamento por design; rule (3) abaixo nao se aplica porque
+             o humano *quer* uma conv nova.
+          3. Se o handoff volta pro agente de origem (o que abriu a task),
              usa o topic onde o humano pediu — mantém humano e agente na
              mesma thread ao longo do ciclo de vida da task.
-          3. Fallback `task-<slug>`.
+          4. Fallback `task-<slug>`.
 
-        Regra (2) evita o modo de falha em que o retorno pro origin-agent
+        Regra (3) evita o modo de falha em que o retorno pro origin-agent
         cai num topic novo `task-<slug>` que o humano nem sabe que existe;
         se o agente esquecer de chamar `ask_human`, a mensagem fica
         silenciada. Posta direto na conversa que ja esta aberta.
+
+        Mas no caso ops (mega-agente, agent==origin_stream sempre)
+        a rule (3) dispararia em todo handoff, inclusive fan-out, e
+        colapsaria as N tasks paralelas na conv original. `standalone`
+        sinaliza esse contexto e desativa o fold-back.
         """
         if explicit_topic:
             return explicit_topic
+        if standalone:
+            return f"task-{task_slug}"
         if (
             next_agent
             and origin_stream
@@ -504,12 +515,16 @@ class WorkflowManager:
                     )
                     last_idx = in_flight["idx"]
                 else:
-                    # Primeira fase: append idx=0.
+                    # Append apos o ultimo idx existente (-1 quando vazio,
+                    # via COALESCE; +1 da 0 na primeira fase).
+                    # NOTA: nao use `int(x or -1)` aqui — `0 or -1 == -1` em
+                    # Python (0 eh falsy), o que reinserta idx=0 em tasks
+                    # com exatamente uma fase e quebra o unique constraint.
                     last_idx_row = await conn.fetchval(
                         "SELECT COALESCE(MAX(idx), -1) FROM tasks.phases WHERE task_id = $1",
                         task_id,
                     )
-                    last_idx = int(last_idx_row or -1) + 1
+                    last_idx = int(last_idx_row) + 1
                     await conn.execute(
                         """INSERT INTO tasks.phases
                             (task_id, idx, step, agent, started_at, completed_at, artifact, summary)
@@ -539,6 +554,7 @@ class WorkflowManager:
                     task_slug=task_slug,
                     origin_stream=resolved_origin_stream,
                     origin_topic=resolved_origin_topic,
+                    standalone=bool(standalone),
                 )
                 # fresh_session do step destino: reactor usa pra zerar
                 # claude_session_id da conv (stream, topic) antes de postar
@@ -1067,6 +1083,7 @@ class WorkflowManager:
         next_step: str,
         next_agent: str | None = None,
         reason: str,
+        standalone: bool = False,
     ) -> dict[str, Any]:
         """D-57 fase 2.5: reabre task em status terminal pra rodar mais um step.
 
@@ -1150,7 +1167,10 @@ class WorkflowManager:
                     "SELECT COALESCE(MAX(idx), -1) FROM tasks.phases WHERE task_id = $1",
                     task_id,
                 )
-                next_idx = int(last_idx_row or -1) + 1
+                # COALESCE retorna -1 pra task vazia; +1 da 0. Nao usar
+                # `int(x or -1)` — `0 or -1 == -1` em Python falsifica o caso
+                # MAX(idx)=0 (task com exatamente uma fase) e gera duplicate.
+                next_idx = int(last_idx_row) + 1
                 await conn.execute(
                     """INSERT INTO tasks.phases
                         (task_id, idx, step, agent, started_at)
@@ -1178,6 +1198,7 @@ class WorkflowManager:
                     task_slug=task_slug,
                     origin_stream=resolved_origin_stream,
                     origin_topic=resolved_origin_topic,
+                    standalone=bool(standalone),
                 )
                 next_step_def = wf.step(next_step) if wf else None
                 payload = {
@@ -1198,6 +1219,7 @@ class WorkflowManager:
                     "workflow": task_row.get("workflow"),
                     "reopen": True,
                     "prev_status": current_status,
+                    "standalone": bool(standalone),
                 }
                 event_id = await conn.fetchval(
                     """INSERT INTO orchestrator.events (emitted_by, event_type, task_slug, payload)

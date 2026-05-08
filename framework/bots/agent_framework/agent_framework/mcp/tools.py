@@ -777,6 +777,15 @@ REOPEN_TASK_TOOL: dict[str, Any] = {
                     "in the event payload for traceability."
                 ),
             },
+            "standalone": {
+                "type": "boolean",
+                "description": (
+                    "If true, the redispatched conversation becomes a sidebar root "
+                    "(not a child chip under the origin conv) — same semantics as "
+                    "complete_phase's standalone flag. Use for fan-out reopen where "
+                    "the human wants to interact with the task directly. Default false."
+                ),
+            },
         },
         "required": ["task_slug", "next_step", "reason"],
     },
