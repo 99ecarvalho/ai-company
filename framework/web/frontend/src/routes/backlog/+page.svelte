@@ -25,7 +25,7 @@
 
   let items: BacklogItem[] = $state([]);
   let streams: StreamInfo[] = $state([]);
-  let statusFilter = $state<'aberto' | 'rascunho' | 'em_execucao' | 'promovido' | 'concluido' | 'descartado' | 'all'>('aberto');
+  let statusFilter = $state<'open' | 'draft' | 'in_progress' | 'promoted' | 'done' | 'discarded' | 'all'>('open');
   let groupBy = $state<GroupBy>('priority');
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -160,7 +160,7 @@
   async function onDiscard(slug: string) {
     if (!confirm(`Mark ${slug} as discarded?`)) return;
     try {
-      await patchBacklog(slug, { status: 'descartado' });
+      await patchBacklog(slug, { status: 'discarded' });
       await load();
     } catch (e) {
       error = String(e);
@@ -179,13 +179,13 @@
 
   async function onRevert(it: BacklogItem) {
     if (!confirm(
-      `Revert ${it.slug} back to "aberto"? This deletes the task conversation ` +
+      `Revert ${it.slug} back to "open"? This deletes the task conversation ` +
       `and the task row — useful when you dispatched to the wrong agent and ` +
       `want to re-promote. Refuses if humans have engaged or phases completed.`
     )) return;
     try {
       await revertBacklog(it.slug);
-      logEvent(`Backlog: ${it.slug} reverted to aberto`, 'ok');
+      logEvent(`Backlog: ${it.slug} reverted to open`, 'ok');
       await load();
     } catch (e) {
       error = String(e);
@@ -201,7 +201,7 @@
       `  • phases, worktrees, orchestrator events\n` +
       `  • artifacts in company/tasks/${taskRef}/\n` +
       `  • the task row itself\n\n` +
-      `Backlog item returns to "aberto" so you can re-promote.\n` +
+      `Backlog item returns to "open" so you can re-promote.\n` +
       `This skips all safety checks (phases done, humans engaged).\n\n` +
       `Cannot be undone.`
     )) return;
@@ -222,7 +222,7 @@
   async function onReopen(it: BacklogItem) {
     try {
       await reopenBacklog(it.slug);
-      logEvent(`Backlog: ${it.slug} reopened (aberto)`, 'ok');
+      logEvent(`Backlog: ${it.slug} reopened (open)`, 'ok');
       await load();
     } catch (e) {
       error = String(e);
@@ -231,7 +231,7 @@
 
   async function onSpecify(it: BacklogItem) {
     try {
-      await patchBacklog(it.slug, { status: 'aberto' });
+      await patchBacklog(it.slug, { status: 'open' });
       logEvent(`Backlog: ${it.slug} specified (draft → open)`, 'ok');
       await load();
     } catch (e) {
@@ -275,12 +275,12 @@
         class="min-h-tap rounded border border-border bg-panel2 px-2 py-1.5 text-sm"
         aria-label="Status filter"
       >
-        <option value="aberto">Open</option>
-        <option value="rascunho">Draft</option>
-        <option value="em_execucao">In progress</option>
-        <option value="promovido">Promoted</option>
-        <option value="concluido">Done</option>
-        <option value="descartado">Discarded</option>
+        <option value="open">Open</option>
+        <option value="draft">Draft</option>
+        <option value="in_progress">In progress</option>
+        <option value="promoted">Promoted</option>
+        <option value="done">Done</option>
+        <option value="discarded">Discarded</option>
         <option value="all">All</option>
       </select>
       <button
@@ -321,7 +321,7 @@
       <div class="text-xs text-muted">Loading…</div>
     {:else if items.length === 0}
       <div class="py-8 text-center text-xs text-muted">
-        {statusFilter === 'aberto'
+        {statusFilter === 'open'
           ? 'Backlog is empty. Use "New" to add an item.'
           : `No items with status=${statusFilter}.`}
       </div>
@@ -353,11 +353,11 @@
                           {#if it.effort}<span>e:{it.effort}</span>{/if}
                           <span
                             class="rounded px-1 py-0.5 uppercase"
-                            class:bg-panel={it.status !== 'concluido' && it.status !== 'promovido'}
-                            class:bg-ok={it.status === 'concluido'}
-                            class:text-on-accent={it.status === 'concluido' || it.status === 'promovido'}
-                            class:bg-accent={it.status === 'promovido'}
-                          >{it.status === 'concluido' ? 'done' : it.status}</span>
+                            class:bg-panel={it.status !== 'done' && it.status !== 'promoted'}
+                            class:bg-ok={it.status === 'done'}
+                            class:text-on-accent={it.status === 'done' || it.status === 'promoted'}
+                            class:bg-accent={it.status === 'promoted'}
+                          >{it.status === 'done' ? 'done' : it.status}</span>
                         </div>
                         <div class="mt-1 text-[10px] text-muted/80">
                           {fmtDate(it.updated_at)}
@@ -398,7 +398,7 @@
                         >
                           <Pencil class="h-3.5 w-3.5" />
                         </button>
-                        {#if it.status === 'aberto' || it.status === 'rascunho'}
+                        {#if it.status === 'open' || it.status === 'draft'}
                           <button
                             type="button"
                             class="inline-flex h-7 w-7 items-center justify-center rounded text-muted hover:bg-panel hover:text-fg"
@@ -420,7 +420,7 @@
                           </button>
                         {/if}
                       </div>
-                      {#if it.status === 'aberto'}
+                      {#if it.status === 'open'}
                         <button
                           type="button"
                           class="inline-flex h-7 items-center gap-1 rounded bg-accent px-2 text-[11px] font-medium text-on-accent hover:bg-accent/90"
@@ -429,23 +429,23 @@
                         >
                           <Play class="h-3 w-3" /> Run
                         </button>
-                      {:else if it.status === 'rascunho'}
+                      {:else if it.status === 'draft'}
                         <button
                           type="button"
                           class="inline-flex h-7 items-center gap-1 rounded border border-border px-2 text-[11px] font-medium text-muted hover:bg-panel hover:text-fg"
                           onclick={() => onSpecify(it)}
-                          title="Mark as specified — moves draft to 'aberto' (ready for prioritization or Run)"
+                          title="Mark as specified — moves draft to 'open' (ready for prioritization or Run)"
                         >
                           Specify
                         </button>
-                      {:else if it.status === 'promovido' || it.status === 'concluido'}
+                      {:else if it.status === 'promoted' || it.status === 'done'}
                         <div class="flex gap-1">
-                          {#if it.status === 'promovido'}
+                          {#if it.status === 'promoted'}
                             <button
                               type="button"
                               class="inline-flex h-7 items-center gap-1 rounded border border-border px-2 text-[11px] font-medium text-muted hover:bg-panel hover:text-fg"
                               onclick={() => onRevert(it)}
-                              title="Revert to 'aberto' — deletes the task conv and row so you can re-promote (refuses if humans engaged)"
+                              title="Revert to 'open' — deletes the task conv and row so you can re-promote (refuses if humans engaged)"
                             >
                               <Undo2 class="h-3 w-3" /> Revert
                             </button>
@@ -454,17 +454,17 @@
                             type="button"
                             class="inline-flex h-7 items-center gap-1 rounded border border-accent2/50 px-2 text-[11px] font-medium text-accent2 hover:bg-accent2/10"
                             onclick={() => onForceReset(it)}
-                            title="Force reset — wipes the task entirely (artifacts, conv, phases, events) and returns the backlog item to 'aberto'. No safety checks."
+                            title="Force reset — wipes the task entirely (artifacts, conv, phases, events) and returns the backlog item to 'open'. No safety checks."
                           >
                             <Bomb class="h-3 w-3" /> Force reset
                           </button>
                         </div>
-                      {:else if it.status === 'descartado'}
+                      {:else if it.status === 'discarded'}
                         <button
                           type="button"
                           class="inline-flex h-7 items-center gap-1 rounded border border-border px-2 text-[11px] font-medium text-muted hover:bg-panel hover:text-fg"
                           onclick={() => onReopen(it)}
-                          title="Reopen — move back to 'aberto'"
+                          title="Reopen — move back to 'open'"
                         >
                           <RotateCcw class="h-3 w-3" /> Reopen
                         </button>

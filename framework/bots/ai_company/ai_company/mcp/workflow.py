@@ -491,16 +491,16 @@ class WorkflowManager:
                     )
 
                 # D-102: terminal `done` -> the linked backlog item moves to
-                # 'concluido'. The user asked for a separate kanban column to
+                # 'done'. The user asked for a separate kanban column to
                 # tell what was already delivered from what is still running
-                # (before, both stayed in 'promovido'). NOOP if the task did not
+                # (before, both stayed in 'promoted'). NOOP if the task did not
                 # come from the backlog (promoted_task_slug NULL or row missing).
                 if is_terminal and next_ == "done":
                     await conn.execute(
                         """UPDATE tasks.backlog
-                              SET status = 'concluido', updated_at = now()
+                              SET status = 'done', updated_at = now()
                             WHERE promoted_task_slug = $1
-                              AND status = 'promovido'""",
+                              AND status = 'promoted'""",
                         task_slug,
                     )
 

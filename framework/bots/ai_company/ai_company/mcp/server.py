@@ -29,6 +29,12 @@ from typing import Any, Awaitable, Callable
 from aiohttp import web
 
 from ..log import get_logger
+
+# Backlog status values before migration 033 renamed them to English.
+LEGACY_BACKLOG_STATUS = {
+    "aberto": "open", "rascunho": "draft", "em_execucao": "in_progress",
+    "promovido": "promoted", "concluido": "done", "descartado": "discarded",
+}
 from ..memory_store import MemoryStore
 from .broker import McpBroker
 from .tools import ALL_TOOLS
@@ -939,6 +945,9 @@ class McpServer:
         SLUG_RE = _re.compile(r"^[a-z0-9][a-z0-9-]*$")
         pool = self.workflow._pool
         agent_name = self.agent_name
+        if isinstance(args.get("status"), str):
+            # Accept the pre-rename Portuguese values (migration 033).
+            args = {**args, "status": LEGACY_BACKLOG_STATUS.get(args["status"].strip(), args["status"])}
 
         if name == "backlog_add":
             slug = (args.get("slug") or "").strip()
@@ -951,11 +960,11 @@ class McpServer:
             content = args.get("content") or ""
             impact = args.get("impact")
             effort = args.get("effort")
-            status = (args.get("status") or "aberto").strip()
-            if status not in ("aberto", "rascunho", "em_execucao", "promovido", "descartado"):
+            status = (args.get("status") or "open").strip()
+            if status not in ("open", "draft", "in_progress", "promoted", "discarded"):
                 raise ValueError(
                     f"invalid status: {status!r}. "
-                    "Use aberto | rascunho | em_execucao | promovido | descartado."
+                    "Use open | draft | in_progress | promoted | discarded."
                 )
             row = await pool.fetchrow(
                 """INSERT INTO tasks.backlog
@@ -971,12 +980,12 @@ class McpServer:
                    RETURNING id, slug, status, priority""",
                 slug, title, content, priority, impact, effort, status, agent_name,
             )
-            if row["status"] == "rascunho":
+            if row["status"] == "draft":
                 text = (
                     f"OK. Draft '{row['slug']}' captured "
-                    f"(priority={row['priority']}, status=rascunho).\n"
+                    f"(priority={row['priority']}, status=draft).\n"
                     "Does not show up in the default backlog; surfaces in daily curation "
-                    "or via the 'Draft'/status='rascunho' filter. Use backlog_update "
+                    "or via the 'Draft'/status='draft' filter. Use backlog_update "
                     "to specify it later."
                 )
             else:
@@ -988,7 +997,7 @@ class McpServer:
             return {"content": [{"type": "text", "text": text}], "isError": False}
 
         if name == "backlog_list":
-            status = (args.get("status") or "aberto").strip()
+            status = (args.get("status") or "open").strip()
             limit = min(int(args.get("limit") or 50), 500)
             if status == "all":
                 rows = await pool.fetch(
@@ -1031,11 +1040,11 @@ class McpServer:
             if not SLUG_RE.match(slug):
                 raise ValueError(f"invalid slug: {slug!r}")
             if args.get("status") and args["status"] not in (
-                "aberto", "rascunho", "em_execucao", "promovido", "descartado",
+                "open", "draft", "in_progress", "promoted", "discarded",
             ):
                 raise ValueError(
                     f"invalid status: {args['status']!r}. "
-                    "Use aberto | rascunho | em_execucao | promovido | descartado."
+                    "Use open | draft | in_progress | promoted | discarded."
                 )
             fields = []
             params: list = []
@@ -1128,7 +1137,7 @@ class McpServer:
                     # Mark the item as promoted.
                     await conn.execute(
                         """UPDATE tasks.backlog
-                              SET status = 'promovido', promoted_task_slug = $2
+                              SET status = 'promoted', promoted_task_slug = $2
                             WHERE slug = $1""",
                         backlog_slug, task_slug,
                     )

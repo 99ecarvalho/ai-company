@@ -1206,7 +1206,7 @@ export interface BacklogItem {
   priority: number;
   impact: string | null;
   effort: string | null;
-  status: string;                   // aberto | rascunho | em_execucao | promovido | descartado
+  status: string;                   // open | draft | in_progress | promoted | discarded
   promoted_task_slug: string | null;
   created_by: string | null;
   created_at: string | null;

@@ -64,9 +64,10 @@ export async function getMessages(
  */
 function isAckOrQueueMsg(content: string): boolean {
   return (
+    // The dispatcher's "⏳ Waiting for a slot — X/Y in use…" notice.
+    content.startsWith('⏳') ||
     content.startsWith(':hourglass') ||
-    content.includes('entrou na fila') ||
-    content.includes('Ocupado;')
+    content.includes('Waiting for a slot')
   );
 }
 

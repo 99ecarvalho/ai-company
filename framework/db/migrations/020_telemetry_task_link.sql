@@ -1,4 +1,4 @@
--- 019: conversation_id + task_slug on telemetry.events.
+-- 020: conversation_id + task_slug on telemetry.events.
 --
 -- Problem: telemetry.events currently has no FK to messaging.conversations —
 -- attribution comes only from `topic_slug` (TEXT). When the conv is deleted,

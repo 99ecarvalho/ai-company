@@ -1,4 +1,4 @@
--- 022: corrected backfill of conversation_id in telemetry.events.
+-- 023: corrected backfill of conversation_id in telemetry.events.
 --
 -- Migration 020 tried to match `c.topic_name = e.topic_slug`, but topic_slug
 -- is '<stream>__<topic>' (TopicKey.slug()) while c.topic_name is just the topic.

@@ -598,13 +598,13 @@ BACKLOG_ADD_TOOL: dict[str, Any] = {
         "eventually triage — NOT for immediate tasks (those go through the "
         "workflow via complete_phase).\n\n"
         "Priority convention: -2 (low) ... 0 (normal) ... +2 (critical). "
-        "Items default to status=aberto (triaged, awaiting prioritization). "
-        "Pass status='rascunho' for raw brain-dump capture when the human "
+        "Items default to status=open (triaged, awaiting prioritization). "
+        "Pass status='draft' for raw brain-dump capture when the human "
         "wants the idea recorded without an interview — skip classification "
         "(leave impact/effort unset, priority=0), set content to the verbatim "
         "request, and confirm in one line. Drafts stay hidden from the default "
         "backlog list; they surface via the daily curation query "
-        "(status='rascunho' AND age>7d) or explicit filter.\n\n"
+        "(status='draft' AND age>7d) or explicit filter.\n\n"
         "The human or another agent can later promote an item to a task via "
         "`backlog_promote` (creates a task; item stays as linked history)."
     ),
@@ -637,12 +637,12 @@ BACKLOG_ADD_TOOL: dict[str, Any] = {
             "status": {
                 "type": "string",
                 "description": (
-                    "Initial status. Default 'aberto' (triaged). Pass "
-                    "'rascunho' for raw capture awaiting specification. "
-                    "Other values ('em_execucao', 'promovido', 'concluido', "
-                    "'descartado') are valid but unusual at creation time."
+                    "Initial status. Default 'open' (triaged). Pass "
+                    "'draft' for raw capture awaiting specification. "
+                    "Other values ('in_progress', 'promoted', 'done', "
+                    "'discarded') are valid but unusual at creation time."
                 ),
-                "default": "aberto",
+                "default": "open",
             },
         },
         "required": ["slug", "title"],
@@ -654,9 +654,9 @@ BACKLOG_LIST_TOOL: dict[str, Any] = {
     "name": "backlog_list",
     "description": (
         "List backlog items ordered by priority desc (critical first), then "
-        "updated_at desc. Default filters status='aberto' — drafts "
-        "(status='rascunho') are NOT included in the default list; pass "
-        "status='rascunho' to surface raw captures pending specification, "
+        "updated_at desc. Default filters status='open' — drafts "
+        "(status='draft') are NOT included in the default list; pass "
+        "status='draft' to surface raw captures pending specification, "
         "or status='all' for everything. Use to surface items that still "
         "need triage. Returns: slug, title, priority, impact, effort, "
         "status, promoted_task_slug, created_by, updated_at."
@@ -667,7 +667,7 @@ BACKLOG_LIST_TOOL: dict[str, Any] = {
             "status": {
                 "type": "string",
                 "description": "Filter by status. Pass 'all' to list everything.",
-                "default": "aberto",
+                "default": "open",
             },
             "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
         },
@@ -681,7 +681,7 @@ BACKLOG_UPDATE_TOOL: dict[str, Any] = {
         "Update fields of an existing backlog item. Omitted fields stay "
         "unchanged. Use to re-prioritize, refine the description, or change "
         "impact/effort. To close without promoting to a task, set "
-        "status='descartado'."
+        "status='discarded'."
     ),
     "inputSchema": {
         "type": "object",
@@ -695,10 +695,10 @@ BACKLOG_UPDATE_TOOL: dict[str, Any] = {
             "status": {
                 "type": "string",
                 "description": (
-                    "aberto | rascunho | em_execucao | promovido | concluido "
-                    "| descartado. Common transitions: 'rascunho' → 'aberto' "
-                    "when a draft gets specified; any → 'descartado' to "
-                    "archive without promoting. 'concluido' is set "
+                    "open | draft | in_progress | promoted | done "
+                    "| discarded. Common transitions: 'draft' → 'open' "
+                    "when a draft gets specified; any → 'discarded' to "
+                    "archive without promoting. 'done' is set "
                     "automatically when the linked task hits terminal done."
                 ),
             },
@@ -713,7 +713,7 @@ BACKLOG_PROMOTE_TOOL: dict[str, Any] = {
     "description": (
         "Promote a backlog item to an active task. Creates a new task with "
         "the given slug (defaults to the backlog slug if not provided), "
-        "copies title/content, and marks the backlog item as status=promovido "
+        "copies title/content, and marks the backlog item as status=promoted "
         "linked via promoted_task_slug.\n\n"
         "The task is created in 'in_progress' status with no phases yet — "
         "use `complete_phase` on the new task to advance it through the "

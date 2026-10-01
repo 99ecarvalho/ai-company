@@ -1817,7 +1817,7 @@ async def backlog_list(
     include_all: int = 0,
     _: Principal = Depends(get_principal),
 ):
-    """Lists backlog items. Default: only status='aberto'. Pass status=X
+    """Lists backlog items. Default: only status='open'. Pass status=X
     to filter or include_all=1 to return everything. Ordered by priority
     desc, updated_at desc.
     """
@@ -1829,7 +1829,7 @@ async def backlog_list(
                 ORDER BY priority DESC, updated_at DESC""",
         )
     else:
-        status = status or "aberto"
+        status = _backlog_status(status) or "open"
         rows = await db.fetch_all(
             """SELECT slug, title, content, priority, impact, effort, status,
                       promoted_task_slug, created_by, created_at, updated_at
@@ -1854,7 +1854,16 @@ async def backlog_list(
     }
 
 
-_BACKLOG_STATUSES = ("aberto", "rascunho", "em_execucao", "promovido", "concluido", "descartado")
+_BACKLOG_STATUSES = ("open", "draft", "in_progress", "promoted", "done", "discarded")
+# Values before migration 033 renamed them to English; still accepted as input.
+_LEGACY_BACKLOG_STATUS = {
+    "aberto": "open", "rascunho": "draft", "em_execucao": "in_progress",
+    "promovido": "promoted", "concluido": "done", "descartado": "discarded",
+}
+
+
+def _backlog_status(value):
+    return _LEGACY_BACKLOG_STATUS.get(value, value) if isinstance(value, str) else value
 
 
 @app.post("/api/backlog")
@@ -1866,7 +1875,7 @@ async def backlog_create(payload: dict, principal: Principal = Depends(get_princ
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
     priority = int(payload.get("priority") or 0)
-    status = (payload.get("status") or "aberto").strip()
+    status = _backlog_status((payload.get("status") or "open").strip())
     if status not in _BACKLOG_STATUSES:
         raise HTTPException(status_code=400, detail=f"invalid status: {status!r}")
     await db.execute(
@@ -1890,6 +1899,8 @@ async def backlog_create(payload: dict, principal: Principal = Depends(get_princ
 async def backlog_patch(slug: str, payload: dict, _: Principal = Depends(get_principal)):
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
+    if "status" in payload:
+        payload = {**payload, "status": _backlog_status(payload["status"])}
     if payload.get("status") and payload["status"] not in _BACKLOG_STATUSES:
         raise HTTPException(status_code=400, detail=f"invalid status: {payload['status']!r}")
     fields = []
@@ -1999,7 +2010,7 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
                 )
             await conn.execute(
                 """UPDATE tasks.backlog
-                      SET status = 'promovido', promoted_task_slug = $2
+                      SET status = 'promoted', promoted_task_slug = $2
                     WHERE slug = $1""",
                 slug, task_slug,
             )
@@ -2041,7 +2052,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
     a human already posted in the conv (human engaged = not a dispatch
     mistake, it is work in progress). Auto-cancels pending_asks, deletes
     the task's conv (cascade msgs), deletes the task row and sets the
-    backlog back to status='aberto'. Worktrees are only deleted from the
+    backlog back to status='open'. Worktrees are only deleted from the
     database — files on the filesystem are the agent's responsibility
     (register_worktree does not create them automatically).
     """
@@ -2056,7 +2067,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
             )
             if bl is None:
                 raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
-            if bl["status"] != "promovido" or not bl["promoted_task_slug"]:
+            if bl["status"] != "promoted" or not bl["promoted_task_slug"]:
                 raise HTTPException(
                     status_code=409,
                     detail="item is not in 'promoted' state — nothing to undo",
@@ -2133,7 +2144,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
 
             await conn.execute(
                 """UPDATE tasks.backlog
-                      SET status = 'aberto', promoted_task_slug = NULL, updated_at = now()
+                      SET status = 'open', promoted_task_slug = NULL, updated_at = now()
                     WHERE slug = $1""",
                 slug,
             )
@@ -2144,7 +2155,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
 @app.post("/api/backlog/{slug}/force-reset")
 async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends(get_principal)):
     """D-101: Wipes out a task in any state and returns the backlog item
-    to 'aberto', ready to be re-promoted. Unlike /revert, it ignores the
+    to 'open', ready to be re-promoted. Unlike /revert, it ignores the
     safety gates (completed phases, human message) — explicit use when
     the human wants to start over after finding a design flaw or
     switching to another approach.
@@ -2156,7 +2167,7 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
          explicit for resilience).
       3. Purge orchestrator.events matching task_slug.
       4. Delete company/tasks/<task_slug>/ on the filesystem.
-      5. Revert the backlog row to status='aberto', promoted_task_slug=NULL.
+      5. Revert the backlog row to status='open', promoted_task_slug=NULL.
 
     The frontend must confirm via a modal — the endpoint has no soft mode."""
     import shutil as _shutil
@@ -2174,11 +2185,11 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
             task_slug = bl["promoted_task_slug"]
             if not task_slug:
                 # Item was not promoted (or was already reset). Return it to
-                # 'aberto' as an idempotent no-op — the operator may be cleaning
+                # 'open' as an idempotent no-op — the operator may be cleaning
                 # up leftovers from a previous attempt that failed midway.
                 await conn.execute(
                     """UPDATE tasks.backlog
-                          SET status = 'aberto', promoted_task_slug = NULL, updated_at = now()
+                          SET status = 'open', promoted_task_slug = NULL, updated_at = now()
                         WHERE slug = $1""",
                     slug,
                 )
@@ -2224,7 +2235,7 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
             )
             await conn.execute(
                 """UPDATE tasks.backlog
-                      SET status = 'aberto', promoted_task_slug = NULL, updated_at = now()
+                      SET status = 'open', promoted_task_slug = NULL, updated_at = now()
                     WHERE slug = $1""",
                 slug,
             )
@@ -2252,12 +2263,12 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
 
 @app.post("/api/backlog/{slug}/reopen")
 async def backlog_reopen_endpoint(slug: str, principal: Principal = Depends(get_principal)):
-    """Moves an item from `descartado` back to `aberto`. Unlike /revert,
+    """Moves an item from `discarded` back to `open`. Unlike /revert,
     there is no task/conv/phases to clean up — discarding creates nothing.
     Used when the human changed their mind after discarding a backlog
     idea.
 
-    Only accepts status='descartado'. Use /revert for promovido→aberto.
+    Only accepts status='discarded'. Use /revert for promoted→open.
     """
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
@@ -2267,17 +2278,17 @@ async def backlog_reopen_endpoint(slug: str, principal: Principal = Depends(get_
     )
     if row is None:
         raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
-    if row["status"] != "descartado":
+    if row["status"] != "discarded":
         raise HTTPException(
             status_code=409,
             detail=f"item is in '{row['status']}', not 'discarded' — use /revert for promoted",
         )
     await db.execute(
-        "UPDATE tasks.backlog SET status = 'aberto', updated_at = now() WHERE slug = $1",
+        "UPDATE tasks.backlog SET status = 'open', updated_at = now() WHERE slug = $1",
         slug,
     )
     log.info("backlog_reopened", slug=slug, by=principal.username or "user")
-    return {"ok": True, "slug": slug, "status": "aberto"}
+    return {"ok": True, "slug": slug, "status": "open"}
 
 
 async def _resolve_task_conversation_ids(task_row: dict, phases: list[dict]) -> list[int]:
