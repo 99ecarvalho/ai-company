@@ -1,10 +1,10 @@
-"""Wrapper do claude CLI.
+"""Wrapper around the claude CLI.
 
-Spawn de subprocess `claude -p <prompt> --output-format stream-json --verbose`,
-roda com cwd = diretorio do topic, persiste session_id pra --resume futuro,
-e passa `--mcp-config` apontando pro servidor MCP in-process (Fase 1c).
-Resposta volta pro broker como mensagem nova (broker nao suporta edicao do
-ack "thinking..."); o ack fica como historico.
+Spawns the subprocess `claude -p <prompt> --output-format stream-json --verbose`,
+runs it with cwd = the topic directory, persists session_id for a future --resume,
+and passes `--mcp-config` pointing to the in-process MCP server (Phase 1c).
+The answer goes back to the broker as a new message (the broker does not support
+editing the "thinking..." ack); the ack stays as history.
 """
 from __future__ import annotations
 
@@ -29,51 +29,51 @@ from .internal_client import TopicKey, InternalClient as BrokerClient
 
 log = get_logger(__name__)
 
-# Regex pra remover @-mencoes do proprio bot no texto do usuario
+# Regex to strip @-mentions of the bot itself from the user's text
 MENTION_RE = re.compile(r"@\*\*[^*]+\*\*\s*")
 
-# Nome do servidor MCP no --mcp-config (claude usa isso como namespace de tools)
+# MCP server name in --mcp-config (claude uses it as the tool namespace)
 MCP_SERVER_NAME = "ai_company"
 
-# rc que indica kill externo (SIGKILL=137, SIGTERM=143). Retriable.
+# rc that indicates an external kill (SIGKILL=137, SIGTERM=143). Retriable.
 RETRIABLE_RC = {137, 143}
-MAX_ATTEMPTS = 2      # 1 tentativa original + 1 retry
+MAX_ATTEMPTS = 2      # 1 original attempt + 1 retry
 RETRY_BACKOFF_SEC = 5.0
 
-# Pattern emitido pelo Claude CLI quando `--resume X` aponta pra um session_id
-# que nao existe em disco. Nosso runner armazena o session_id novo assim que o
-# CLI emite `system/init`, mas se a run morre rapido o CLI pode nao ter tempo
-# de persistir o .jsonl do fork — ficamos com um id fantasma no DB que explode
-# na proxima tentativa. Detectar → limpar session_id + retry sem `--resume`
+# Pattern emitted by the Claude CLI when `--resume X` points to a session_id
+# that does not exist on disk. Our runner stores the new session_id as soon as the
+# CLI emits `system/init`, but if the run dies quickly the CLI may not have time
+# to persist the fork's .jsonl — we end up with a ghost id in the DB that blows up
+# on the next attempt. Detect → clear session_id + retry without `--resume`
 # (D-70).
 GHOST_SESSION_RE = re.compile(r"No conversation found with session ID:\s*([a-f0-9-]+)")
 
-# Handoff body postado pelo reactor (orchestrator/reactor.py:_handoff_body).
-# Captura task_slug + step assumido. Usado em handle() pra detectar handoffs
-# stale (task ja em status terminal ou fase ja concluida) — quando o reactor
-# posta um handoff durante uma run que ja absorveu a fase via --resume
-# continuity, a mensagem fica na fila do dispatcher e seria processada num
-# spawn extra, gerando resposta "atrasado, ja feito" (puro desperdicio).
-# Sintoma observado: ops/2026-05-05 fix-task-16 (2 cascade runs pos-`done`).
+# Handoff body posted by the reactor (orchestrator/reactor.py:_handoff_body).
+# Captures task_slug + the step taken over. Used in handle() to detect stale
+# handoffs (task already in a terminal status or phase already completed) — when the
+# reactor posts a handoff during a run that already absorbed the phase via --resume
+# continuity, the message sits in the dispatcher queue and would be processed in an
+# extra spawn, producing a "late, already done" answer (pure waste).
+# Observed symptom: 2026-05-05 fix-task-16 (2 cascade runs after `done`).
 HANDOFF_BODY_RE = re.compile(
-    r"^➡️ \*\*Handoff from.*?\*\*Task:\*\* `([a-z0-9][a-z0-9-]*)` — você assume a fase \*\*([a-z0-9_-]+)\*\*",
+    r"^➡️ \*\*Handoff from.*?\*\*Task:\*\* `([a-z0-9][a-z0-9-]*)` — you take over phase \*\*([a-z0-9_-]+)\*\*",
     re.S,
 )
 
-# Diretorio onde o Claude CLI persiste o jsonl de cada session. Layout:
+# Directory where the Claude CLI persists each session's jsonl. Layout:
 #   ~/.claude/projects/<cwd-encoded>/<session_id>.jsonl
-# O subdir por cwd e derivado do CLI, entao vasculhamos todos.
+# The per-cwd subdir is derived by the CLI, so we scan all of them.
 _CLAUDE_PROJECTS_ROOT = Path.home() / ".claude" / "projects"
 
-# Buffer por linha do stream-json do Claude CLI. Default do asyncio e 64 KiB,
-# estourado toda vez que um tool_use_result grande (Read de arquivo de
-# ~40-50 KB com line-numbers + JSON-escape, Bash com output longo, etc.) cai
-# numa unica linha. Subimos pra 16 MiB; linhas maiores sao tratadas como
-# oversized e o turn retenta com prompt de recovery orientando leitura parcial.
+# Per-line buffer for the Claude CLI's stream-json. The asyncio default is 64 KiB,
+# exceeded every time a large tool_use_result (Read of a ~40-50 KB file
+# with line numbers + JSON escaping, Bash with long output, etc.) lands
+# on a single line. We raise it to 16 MiB; larger lines are treated as
+# oversized and the turn is retried with a recovery prompt asking for partial reads.
 STREAM_STDOUT_LIMIT_BYTES = 16 * 1024 * 1024
 
-# Prompt usado na retentativa apos uma linha oversized. Vai como novo turn via
-# `--resume`, pedindo pro Claude refazer o passo em fatias.
+# Prompt used on the retry after an oversized line. Sent as a new turn via
+# `--resume`, asking Claude to redo the step in slices.
 OVERSIZED_RECOVERY_PROMPT = (
     "The previous turn was interrupted by the framework: a single line of "
     "Claude's stream-json (typically the result of a tool_use like "
@@ -88,19 +88,19 @@ OVERSIZED_RECOVERY_PROMPT = (
     "Continue from where you stopped and deliver the same final answer."
 )
 
-# D-63: secoes de instancia (CONTEXT, philosophy, agent CLAUDE.md, bloco Equipe)
-# editaveis via PWA. platform.md e invariante do framework — vive em
-# /app/system_prompts/platform.md (COPY no Dockerfile do agent), nao e
-# editavel pela instancia. claude_runner re-le tudo a cada invocacao —
-# edicoes valem na proxima task, sem restart.
+# D-63: instance sections (CONTEXT, philosophy, agent CLAUDE.md, Team block)
+# are editable via the PWA. platform.md is a framework invariant — it lives in
+# /app/system_prompts/platform.md (COPY in the agent Dockerfile) and is not
+# editable by the instance. claude_runner re-reads everything on every invocation —
+# edits apply to the next task, without a restart.
 _SYSTEM_PROMPTS_DIR = Path("/workspace/company/system_prompts")
 _PLATFORM_PROMPT_PATH = Path("/app/system_prompts/platform.md")
 _SYSTEM_PROMPTS_CONFIG_PATH = _SYSTEM_PROMPTS_DIR / "config.yaml"
 _WORKFLOWS_YAML_PATH = Path("/workspace/company/workflows.yaml")
 
-# Defaults aplicados se config.yaml ausente ou chave faltando — todas as secoes
-# ON. Reconcile copia config.yaml.example no primeiro setup, entao em prod
-# o arquivo sempre existe; defaults sao ultimo fallback.
+# Defaults applied if config.yaml is missing or a key is absent — all sections
+# ON. Reconcile copies config.yaml.example on first setup, so in prod
+# the file always exists; defaults are the last fallback.
 _SYSTEM_PROMPT_TOGGLE_DEFAULTS: dict[str, bool] = {
     "include_platform_prompt": True,
     "include_company_context": True,
@@ -114,11 +114,11 @@ _SYSTEM_PROMPT_TOGGLE_DEFAULTS: dict[str, bool] = {
 
 
 def _load_system_prompt_toggles() -> dict[str, bool]:
-    """Le config.yaml dos system prompts e devolve dict de toggles.
+    """Read the system prompts' config.yaml and return a dict of toggles.
 
-    Falhas de IO/parse caem no default (todas ON) com warning — preferimos
-    nao quebrar runs por config corrompida. O usuario edita pelo PWA ou
-    direto no arquivo; falha na leitura = comportamento como pre-D-63.
+    IO/parse failures fall back to the default (all ON) with a warning — we prefer
+    not to break runs because of a corrupt config. The user edits it via the PWA or
+    directly in the file; a read failure = pre-D-63 behavior.
     """
     toggles = dict(_SYSTEM_PROMPT_TOGGLE_DEFAULTS)
     try:
@@ -156,26 +156,26 @@ class RunOutcome:
     num_turns: int | None = None
     usage: dict | None = None
     tool_uses: list[str] = field(default_factory=list)
-    # Quantas linhas do stream-json foram descartadas por exceder
-    # STREAM_STDOUT_LIMIT_BYTES. >0 sinaliza que o parser pulou conteudo;
-    # se o `result` final nao chegou, o turn e retriable com recovery prompt.
+    # How many stream-json lines were dropped for exceeding
+    # STREAM_STDOUT_LIMIT_BYTES. >0 signals that the parser skipped content;
+    # if the final `result` did not arrive, the turn is retriable with the recovery prompt.
     oversized_lines_skipped: int = 0
-    # Claude CLI reclamou que o `--resume <sid>` aponta pra session inexistente
-    # (ghost session id fruto de fork que nao foi gravado em disco). Loop de
-    # tentativas usa isso pra limpar o DB e retentar sem `--resume` sem gastar
-    # um attempt normal (D-70).
+    # The Claude CLI complained that `--resume <sid>` points to a nonexistent session
+    # (ghost session id from a fork that was never written to disk). The attempt
+    # loop uses this to clear the DB and retry without `--resume` without spending
+    # a normal attempt (D-70).
     ghost_session: bool = False
 
     @property
     def retriable(self) -> bool:
-        # Kill externo: container foi restartado ou OOM
+        # External kill: container was restarted or OOM
         if self.rc in RETRIABLE_RC:
             return True
-        # Falha sem nenhuma resposta parcial — provavelmente interrupcao
+        # Failure without any partial answer — probably an interruption
         if (self.rc or 0) != 0 and not self.result_text:
             return True
-        # Parser pulou linha(s) gigantes e nao conseguiu montar resposta final:
-        # retentar com recovery prompt orientando leitura parcial.
+        # The parser skipped huge line(s) and could not build a final answer:
+        # retry with the recovery prompt asking for partial reads.
         if self.oversized_lines_skipped and not self.result_text:
             return True
         return False
@@ -183,11 +183,11 @@ class RunOutcome:
 
 _COMPANY_CONTEXT_PATH = Path("/workspace/company/CONTEXT.md")
 _COMPANY_PHILOSOPHY_PATH = Path("/workspace/company/philosophy.md")
-_COMPANY_FILE_CAP_BYTES = 8 * 1024  # cap injetado no system prompt
+_COMPANY_FILE_CAP_BYTES = 8 * 1024  # cap for what is injected into the system prompt
 
 
 def _read_capped(path: Path, cap: int = _COMPANY_FILE_CAP_BYTES) -> str:
-    """Le arquivo + corta se passar do cap. Vazio se nao existe."""
+    """Read a file + truncate it if it exceeds the cap. Empty if it does not exist."""
     try:
         text = path.read_text(encoding="utf-8")
     except Exception:
@@ -199,21 +199,21 @@ def _read_capped(path: Path, cap: int = _COMPANY_FILE_CAP_BYTES) -> str:
 
 
 def _auth_headers() -> dict[str, str]:
-    """Bearer com BROKER_TOKEN pros endpoints autenticados do web (telemetry/
-    live-event). Pos-D-95 o web nao tem mais dev bypass, entao posts sem
-    header retornam 401 e os tool_uses/thinkings somem do PWA."""
+    """Bearer with BROKER_TOKEN for the web's authenticated endpoints (telemetry/
+    live-event). Post-D-95 the web no longer has a dev bypass, so posts without
+    the header return 401 and the tool_uses/thinkings disappear from the PWA."""
     tok = os.environ.get("BROKER_TOKEN")
     return {"Authorization": f"Bearer {tok}"} if tok else {}
 
 
 def _session_jsonl_exists(session_id: str) -> bool:
-    """True se o Claude CLI ja persistiu `<session_id>.jsonl` em disco.
+    """True if the Claude CLI has already persisted `<session_id>.jsonl` to disk.
 
-    O CLI emite o session_id novo no primeiro evento `system/init`, mas so
-    grava o jsonl conforme o turn avanca. Se a run morre cedo (ex: erro de
-    init, SIGKILL rapido, resume apontando pra ghost), o id existe no stream
-    mas nunca toca o filesystem. Usar isso pra decidir se vale persistir no
-    DB evita ghost loops onde o proximo `--resume` explode com `No conversation
+    The CLI emits the new session_id in the first `system/init` event, but only
+    writes the jsonl as the turn progresses. If the run dies early (e.g. init
+    error, quick SIGKILL, resume pointing to a ghost), the id exists in the stream
+    but never touches the filesystem. Using this to decide whether to persist it in the
+    DB avoids ghost loops where the next `--resume` blows up with `No conversation
     found with session ID`.
     """
     if not session_id:
@@ -221,8 +221,8 @@ def _session_jsonl_exists(session_id: str) -> bool:
     root = _CLAUDE_PROJECTS_ROOT
     if not root.is_dir():
         return False
-    # Projeto por cwd — percorremos todos. Diretorio e enxuto (1 por topic),
-    # stat e barato; nao vale cache.
+    # One project per cwd — we walk all of them. The directory is small (1 per topic),
+    # stat is cheap; not worth caching.
     target = f"{session_id}.jsonl"
     for proj_dir in root.iterdir():
         if not proj_dir.is_dir():
@@ -246,13 +246,13 @@ class ClaudeRunner:
         memory_auto_inject_limit: int = 0,
         model: str | None = None,
         effort: str | None = None,
-        db_pool: Any = None,  # asyncpg.Pool | None — usado pra montar bloco "## Equipe"
+        db_pool: Any = None,  # asyncpg.Pool | None — used to build the "## Team" block
     ):
         self.session_mgr = session_mgr
         self.broker_client = broker_client
         self.broker = broker
         self.mcp_url_for = mcp_url_for
-        # Permite todas as tools do MCP do framework por padrao
+        # Allow all of the framework's MCP tools by default
         self.allowed_tools = allowed_tools or [f"mcp__{MCP_SERVER_NAME}__ask_human"]
         self.telemetry_url = telemetry_url
         self.agent_name = agent_name
@@ -261,33 +261,33 @@ class ClaudeRunner:
         self.model = model
         self.effort = effort
         self.db_pool = db_pool
-        # D-71: dispatcher e injetado via setter apos construcao (ordem em
-        # main.py: runner antes de dispatcher). Usado em `_run_claude_once`
-        # pra registrar proc ativo e permitir cancel por SIGTERM. Opcional
-        # — None mantem comportamento pre-D-71.
+        # D-71: the dispatcher is injected via a setter after construction (order in
+        # main.py: runner before dispatcher). Used in `_run_claude_once`
+        # to register the active proc and allow cancel via SIGTERM. Optional
+        # — None keeps the pre-D-71 behavior.
         self._dispatcher: Any = None
-        # Contador monotônico por (stream, topic) pra seq_num de live_events
-        # (migration 018). claude_runner emite thinking/tool_use via
-        # asyncio.create_task (fire-and-forget); sem seq gerado aqui, a
-        # ordem de INSERT no banco nao respeita a ordem do stream do SDK
-        # e o frontend desempata errado. Sem lock: asyncio e single-thread,
-        # o incremento e atomico contanto que aconteca antes do primeiro
-        # await dentro de _emit_live.
+        # Monotonic counter per (stream, topic) for the live_events seq_num
+        # (migration 018). claude_runner emits thinking/tool_use via
+        # asyncio.create_task (fire-and-forget); without a seq generated here, the
+        # INSERT order in the DB does not follow the SDK stream order
+        # and the frontend breaks ties wrongly. No lock: asyncio is single-threaded,
+        # the increment is atomic as long as it happens before the first
+        # await inside _emit_live.
         self._live_seq_by_topic: dict[str, int] = {}
 
     def bind_dispatcher(self, dispatcher: Any) -> None:
-        """Injeta referencia do Dispatcher pos-construcao. D-71.
+        """Inject the Dispatcher reference after construction. D-71.
 
-        Usado pelo runner pra chamar `handler_register_proc` /
-        `handler_unregister_proc` em volta do `create_subprocess_exec`.
+        Used by the runner to call `handler_register_proc` /
+        `handler_unregister_proc` around `create_subprocess_exec`.
         """
         self._dispatcher = dispatcher
 
     async def _team_block(self, ctx: dict[str, Any] | None = None) -> str:
-        """Monta bloco '## Equipe' filtrado: lista os outros agentes que
-        este agente PODE chamar via ask_agent. Vazio se db_pool ausente,
-        agente nao tem colegas elegiveis, ou esta em conv filha (filha nao
-        pode chamar ninguem — listar peers seria desinformacao)."""
+        """Build the filtered '## Team' block: lists the other agents that
+        this agent CAN call via ask_agent. Empty if db_pool is missing,
+        the agent has no eligible peers, or it is in a child conv (a child
+        cannot call anyone — listing peers would be misinformation)."""
         if ctx and ctx.get("is_child"):
             return ""
         if self.db_pool is None or not self.agent_name:
@@ -332,14 +332,14 @@ class ClaudeRunner:
     async def _resolve_invocation_context(
         self, conv_id: int | None
     ) -> dict[str, Any]:
-        """Detecta se a conv corrente e filha de outra (e de quem). Fonte de
-        verdade: `messaging.conversations.parent_conv_id` — mesma usada pelo
-        MCP gate (server.py) que rejeita ask_human/ask_agent em filha com 409.
+        """Detect whether the current conv is a child of another one (and whose). Source of
+        truth: `messaging.conversations.parent_conv_id` — the same one used by the
+        MCP gate (server.py) that rejects ask_human/ask_agent in a child with 409.
 
-        Retorna `{"is_child": bool, "parent_label": str | None}`. Em ausencia
-        de db_pool / conv_id / linha — retorna `is_child=False` (default raiz),
-        que eh o comportamento mais permissivo e bate com runs sem broker
-        (testes / mock).
+        Returns `{"is_child": bool, "parent_label": str | None}`. Without
+        db_pool / conv_id / row — returns `is_child=False` (default root),
+        which is the most permissive behavior and matches runs without a broker
+        (tests / mock).
         """
         default: dict[str, Any] = {"is_child": False, "parent_label": None}
         if self.db_pool is None or conv_id is None:
@@ -370,12 +370,12 @@ class ClaudeRunner:
 
     @staticmethod
     def _invocation_context_block(ctx: dict[str, Any]) -> str:
-        """Bloco '## Modo de invocacao' — injetado **so em filha**. Em raiz,
-        o bloco "## Equipe" abaixo ja sinaliza implicitamente que o agente
-        pode chamar peers; nao precisa de bloco "voce e raiz" redundante.
+        """The '## Invocation mode' block — injected **only in a child**. In a root,
+        the "## Team" block below already implicitly signals that the agent
+        can call peers; no redundant "you are root" block is needed.
 
-        Em filha, bloco curto: nome do pai + regra de reply-as-gateway.
-        Reply auto sempre funciona; tool de mensageria em filha falha 409.
+        In a child, a short block: parent name + the reply-as-gateway rule.
+        The auto reply always works; messaging tools in a child fail with 409.
         """
         if not ctx.get("is_child"):
             return ""
@@ -396,12 +396,12 @@ class ClaudeRunner:
         )
 
     async def _task_state_block(self, topic_key: TopicKey) -> str:
-        """Bloco '## Estado da task' — quando o topic e `task-<slug>`, lista
-        estado canonico (workflow, current_step, complexity, baseline,
-        worktrees, phases_done) ja resolvido pelo framework. Evita o ritual
-        de `get_task_state` no inicio de cada fase.
+        """The '## Task state' block — when the topic is `task-<slug>`, lists the
+        canonical state (workflow, current_step, complexity, baseline,
+        worktrees, phases_done) already resolved by the framework. Avoids the
+        `get_task_state` ritual at the start of each phase.
 
-        Nao injeta se topic nao e task-* (modo analise / chat livre).
+        Not injected if the topic is not task-* (analysis mode / free chat).
         """
         if self.db_pool is None:
             return ""
@@ -503,16 +503,16 @@ class ClaudeRunner:
     async def _load_current_step_doc(
         self, topic_key: TopicKey
     ) -> tuple[str, str, dict] | None:
-        """Resolve `(workflow_name, step_name, step_dict)` pra task em
-        andamento no topic.
+        """Resolve `(workflow_name, step_name, step_dict)` for the task in
+        progress in the topic.
 
-        Retorna None quando: db_pool ausente, topic nao-task, slug vazio,
-        task arquivada/inexistente, workflow sem step corrente, workflows.yaml
-        ausente/parseavel, ou step nao declarado no yaml.
+        Returns None when: db_pool is missing, the topic is not a task, the slug is empty,
+        the task is archived/nonexistent, the workflow has no current step, workflows.yaml
+        is missing/unparseable, or the step is not declared in the yaml.
 
-        Compartilhado entre `_step_instructions_block` (bloco no system prompt)
-        e `_step_overrides` (config runtime). Cada chamada le yaml do disco —
-        edicao via PWA aplica no proximo spawn sem rebuild.
+        Shared between `_step_instructions_block` (block in the system prompt)
+        and `_step_overrides` (runtime config). Each call reads the yaml from disk —
+        edits via the PWA apply on the next spawn without a rebuild.
         """
         if self.db_pool is None:
             return None
@@ -554,11 +554,11 @@ class ClaudeRunner:
         return wf_name, step_name, step
 
     async def _step_instructions_block(self, topic_key: TopicKey) -> str:
-        """Bloco '## Instrucoes da fase atual' — le `workflows.yaml` e injeta
-        as `instructions` (markdown) declaradas pelo step corrente da task.
+        """The '## Current phase instructions' block — reads `workflows.yaml` and injects
+        the `instructions` (markdown) declared by the task's current step.
 
-        Sem task em andamento, sem step ou sem `instructions` declarado,
-        retorna "" (silencio — agentes sem step ativo sao analise/chat livre).
+        With no task in progress, no step, or no declared `instructions`,
+        returns "" (silence — agents without an active step are analysis/free chat).
         """
         doc = await self._load_current_step_doc(topic_key)
         if doc is None:
@@ -583,12 +583,12 @@ class ClaudeRunner:
         return "\n".join(header_lines) + instructions.rstrip() + "\n"
 
     async def _step_overrides(self, topic_key: TopicKey) -> dict:
-        """Retorna o sub-dict `overrides` declarado no step corrente da task
-        em `workflows.yaml`. Vazio se nao ha task / step / overrides.
+        """Return the `overrides` sub-dict declared on the task's current step
+        in `workflows.yaml`. Empty if there is no task / step / overrides.
 
-        Filtra apenas chaves whitelisted (`model`, `effort`, `memory`) e
-        valida tipos basicos. Valores invalidos no YAML (edicao manual fora
-        da PWA) sao ignorados com log warn — nunca crasha o spawn.
+        Keeps only whitelisted keys (`model`, `effort`, `memory`) and
+        validates basic types. Invalid values in the YAML (manual edits outside
+        the PWA) are ignored with a warn log — never crashes the spawn.
         """
         doc = await self._load_current_step_doc(topic_key)
         if doc is None:
@@ -648,32 +648,32 @@ class ClaudeRunner:
         conv_id: int | None = None,
         topic_key: TopicKey | None = None,
     ) -> str:
-        """Concatena as secoes habilitadas em system_prompts/config.yaml.
+        """Concatenate the sections enabled in system_prompts/config.yaml.
 
-        Secoes estaticas (toggleable):
-          - platform.md (regras invariantes do framework)
-          - CLAUDE.md do agente (identidade do papel)
-          - company/CONTEXT.md (catalogo da instancia)
-          - company/philosophy.md (opcional)
+        Static sections (toggleable):
+          - platform.md (framework invariant rules)
+          - the agent's CLAUDE.md (role identity)
+          - company/CONTEXT.md (instance catalog)
+          - company/philosophy.md (optional)
 
-        Secoes dinamicas (toggleable, geradas a cada spawn a partir do DB / FS):
-          - "## Invocation mode" — raiz vs filha + nome do pai (se filha)
-          - "## Task state" — quando topic = task-*, snapshot do estado
-          - "## Current phase instructions" — quando step da task tem `instructions`
-            declaradas em workflows.yaml
-          - "## Team" — peers que o agente pode chamar via ask_agent
+        Dynamic sections (toggleable, generated on every spawn from the DB / FS):
+          - "## Invocation mode" — root vs child + parent name (if child)
+          - "## Task state" — when topic = task-*, a snapshot of the state
+          - "## Current phase instructions" — when the task's step has `instructions`
+            declared in workflows.yaml
+          - "## Team" — peers the agent can call via ask_agent
 
-        D-63: nada hardcoded — tudo le do FS / DB a cada invocacao. Edicao
-        pelo PWA (ou direto nos arquivos) vale na proxima task, sem restart.
-        D-61: CLAUDE.md do agente entra aqui (nao mais via cwd-walker), tornando
-        a identidade cwd-independente.
+        D-63: nothing hardcoded — everything is read from the FS / DB on every invocation. Edits
+        via the PWA (or directly in the files) apply to the next task, without a restart.
+        D-61: the agent's CLAUDE.md goes in here (no longer via the cwd walker), making
+        identity cwd-independent.
         """
         toggles = _load_system_prompt_toggles()
         parts: list[str] = []
 
-        # Resolve raiz vs filha uma vez — usado tanto pelo bloco de invocacao
-        # quanto pelo team_block (que omite peers em filha pra nao dar
-        # desinformacao: filha nao pode chamar ninguem).
+        # Resolve root vs child once — used both by the invocation block
+        # and by team_block (which omits peers in a child to avoid
+        # misinformation: a child cannot call anyone).
         invocation_ctx = await self._resolve_invocation_context(conv_id)
 
         if toggles["include_platform_prompt"]:
@@ -681,11 +681,11 @@ class ClaudeRunner:
                 platform_text = _PLATFORM_PROMPT_PATH.read_text(encoding="utf-8")
             except FileNotFoundError:
                 raise RuntimeError(
-                    f"system_prompt: {_PLATFORM_PROMPT_PATH} ausente na "
-                    "imagem do agent. Sintoma de build incompleto — rebuilde "
-                    "a imagem `agent` (a COPY de framework/system_prompts "
-                    "deveria ter trazido o arquivo). Toggle off em "
-                    "system_prompts/config.yaml so como ultimo recurso."
+                    f"system_prompt: {_PLATFORM_PROMPT_PATH} missing from the "
+                    "agent image. Symptom of an incomplete build — rebuild "
+                    "the `agent` image (the COPY of framework/system_prompts "
+                    "should have brought the file in). Toggle it off in "
+                    "system_prompts/config.yaml only as a last resort."
                 )
             parts.append(platform_text)
 
@@ -730,33 +730,33 @@ class ClaudeRunner:
         return "".join(parts)
 
     async def _resolve_spawn_cwd(self, default_cwd: Path, topic_key: TopicKey) -> Path:
-        """Retorna o cwd pra subir o `claude -p`.
+        """Return the cwd to launch `claude -p` in.
 
-        Worktree e usada SOMENTE quando este run esta executando uma fase de
-        workflow da task `<slug>`, identificado por `topic_key.topic` no formato
-        `task-<slug>`. Topics ad-hoc (chat livre, `__ask-from-*`, `__child-*`,
-        rotulos com data) ficam no session_dir mesmo se o agente tiver outras
-        tasks in_progress em paralelo (D-97).
+        The worktree is used ONLY when this run is executing a workflow phase of
+        task `<slug>`, identified by `topic_key.topic` in the format
+        `task-<slug>`. Ad-hoc topics (free chat, `__ask-from-*`, `__child-*`,
+        date labels) stay in the session_dir even if the agent has other
+        tasks in_progress in parallel (D-97).
 
-        Regra: se `topic = task-<slug>` E existe worktree registrada pra essa
-        `<slug>` cujo `current_agent` eh este agente E `status='in_progress'`
-        E tem path em disco, usa o path. Caso contrario, default_cwd.
+        Rule: if `topic = task-<slug>` AND there is a registered worktree for that
+        `<slug>` whose `current_agent` is this agent AND `status='in_progress'`
+        AND it has a path on disk, use that path. Otherwise, default_cwd.
 
-        Antes (D-61), o lookup era so por `current_agent`+`in_progress`, sem
-        join no slug do topic. Agente com 1 task in_progress numa conv X via
-        cwd da task vazar pra outra conv Y simultanea — `--resume` falhava
-        em ghost porque o sid de Y vivia no project dir do cwd antigo. Restringir
-        ao topic da propria task elimina o cross-talk.
+        Before (D-61), the lookup was only by `current_agent`+`in_progress`, without
+        a join on the topic slug. An agent with 1 task in_progress in conv X saw the
+        task cwd leak into another concurrent conv Y — `--resume` failed
+        with a ghost because Y's sid lived in the old cwd's project dir. Restricting
+        it to the task's own topic eliminates the cross-talk.
 
-        Motivo de usar worktree: claude_code carrega `.claude/{agents,commands}/`
-        + `CLAUDE.md` do repo nativamente quando cwd=worktree. Identidade do
-        agente vai por canais cwd-independentes (system prompt, `--add-dir`).
+        Why use the worktree: claude_code natively loads `.claude/{agents,commands}/`
+        + the repo's `CLAUDE.md` when cwd=worktree. The agent's identity
+        goes through cwd-independent channels (system prompt, `--add-dir`).
         """
         if not self.agent_name or self.db_pool is None:
             return default_cwd
-        # Topic neutro: so reconhecemos o prefixo `task-` (gerado pelo reactor
-        # em `target_topic = task-<slug>`). Sem isso, nao da pra mapear topic
-        # → task slug sem heuristicas.
+        # Neutral topic: we only recognize the `task-` prefix (generated by the reactor
+        # in `target_topic = task-<slug>`). Without it, there is no way to map topic
+        # → task slug without heuristics.
         topic = topic_key.topic
         if not topic.startswith("task-"):
             return default_cwd
@@ -784,9 +784,9 @@ class ClaudeRunner:
             )
             return default_cwd
         if len(rows) != 1:
-            # 0: task sem worktree (ex: pre-execucao) ou agente nao eh
-            #    o current_agent dessa task. >1: ambiguo (multi-repo) — agente
-            #    navega via paths absolutos com --add-dir.
+            # 0: task without a worktree (e.g. before execution) or the agent is not
+            #    that task's current_agent. >1: ambiguous (multi-repo) — the agent
+            #    navigates via absolute paths with --add-dir.
             return default_cwd
         path = Path(rows[0]["path"])
         if not path.is_dir():
@@ -800,13 +800,13 @@ class ClaudeRunner:
         return path
 
     async def _inject_memory(self, prompt: str, overrides: dict | None = None) -> str:
-        """Prepend os N fatos mais relevantes da memoria no prompt.
-        Sem-op se memory desligada (no agente ou via override do step) ou limit<=0.
+        """Prepend the N most relevant memory facts to the prompt.
+        No-op if memory is off (on the agent or via the step override) or limit<=0.
 
-        Overrides aceitos (vindo de `workflows.yaml.steps.<step>.overrides.memory`):
-          - `enabled=False` → desliga inject neste spawn (mesmo com agente
-            tendo MemoryStore configurado).
-          - `auto_inject_limit=N` → usa N em vez do default do agente.
+        Accepted overrides (from `workflows.yaml.steps.<step>.overrides.memory`):
+          - `enabled=False` → disables the inject for this spawn (even if the agent
+            has a MemoryStore configured).
+          - `auto_inject_limit=N` → uses N instead of the agent's default.
         """
         mem_ov = (overrides or {}).get("memory") or {}
         if mem_ov.get("enabled") is False:
@@ -848,7 +848,7 @@ class ClaudeRunner:
         return "\n".join(lines)
 
     async def _emit_telemetry(self, payload: dict) -> None:
-        """Fire-and-forget pro web (com timeout curto). Falha silenciosa."""
+        """Fire-and-forget to the web (with a short timeout). Fails silently."""
         if not self.telemetry_url or not self.agent_name:
             return
         payload = {**payload, "agent": self.agent_name}
@@ -862,13 +862,13 @@ class ClaudeRunner:
             log.debug("runner.telemetry_failed", error=str(e))
 
     async def _emit_live(self, topic_key: TopicKey, kind: str, summary: str = "", data: dict | None = None) -> None:
-        """Fire-and-forget pro endpoint live trace (mesma URL base do telemetry,
-        substitui '/event' -> '/live-event'). Skip silente em falha.
+        """Fire-and-forget to the live trace endpoint (same base URL as telemetry,
+        replacing '/event' -> '/live-event'). Silently skipped on failure.
 
-        `seq_num` (migration 018) e gerado aqui, antes do fire-and-forget,
-        pra garantir ordem determinista mesmo quando os POSTs chegam ao
-        banco fora de ordem. Contador por-conversa (stream+topic), incrementa
-        sob lock pra cobrir emits concorrentes.
+        `seq_num` (migration 018) is generated here, before the fire-and-forget,
+        to guarantee a deterministic order even when the POSTs reach the
+        DB out of order. Per-conversation counter (stream+topic), incremented
+        under a lock to cover concurrent emits.
         """
         if not self.telemetry_url or not self.agent_name:
             return
@@ -876,8 +876,8 @@ class ClaudeRunner:
         slug = topic_key.slug()
         seq = self._live_seq_by_topic.get(slug, 0) + 1
         self._live_seq_by_topic[slug] = seq
-        # Cap alto (8KB) pra comportar thinking multi-paragrafo; UI renderiza
-        # cheio. Se estourar, o backend ainda tem um segundo cap seguro.
+        # High cap (8KB) to fit multi-paragraph thinking; the UI renders it
+        # in full. If exceeded, the backend still has a second safe cap.
         payload = {
             "stream": topic_key.stream,
             "topic": topic_key.topic,
@@ -908,38 +908,38 @@ class ClaudeRunner:
         conv_id: int | None = None,
         overrides: dict | None = None,
     ) -> RunOutcome:
-        """Uma invocacao de claude -p. Retorna outcome (sem postar nada).
+        """One invocation of claude -p. Returns the outcome (posts nothing).
 
-        `resume_sid_cwd` e o cwd onde `resume_sid` foi gravado (D-97). Se difere
-        do `spawn_cwd` resolvido agora, pulamos `--resume` proativamente — o CLI
-        guarda o `<sid>.jsonl` em `~/.claude/projects/<encoded-cwd>/`, retomar
-        de outro cwd produz ghost. None significa "id legacy sem cwd registrado"
-        (back-compat com sids gravados antes da migration 024) — aceita.
+        `resume_sid_cwd` is the cwd where `resume_sid` was stored (D-97). If it differs
+        from the `spawn_cwd` resolved now, we proactively skip `--resume` — the CLI
+        stores `<sid>.jsonl` in `~/.claude/projects/<encoded-cwd>/`, and resuming
+        from another cwd produces a ghost. None means "legacy id without a registered cwd"
+        (back-compat with sids stored before migration 024) — accepted.
         """
         import os
-        # Monta o system prompt UMA vez antes do branch mock/real — assim a
-        # telemetria de assembly aparece em ambos os caminhos. Edits no prompt
-        # (platform.md, workflows.yaml, CLAUDE.md) sao lidos do FS aqui.
+        # Build the system prompt ONCE before the mock/real branch — so the
+        # assembly telemetry shows up on both paths. Prompt edits
+        # (platform.md, workflows.yaml, CLAUDE.md) are read from the FS here.
         sys_prompt = await self._build_system_prompt(conv_id=conv_id, topic_key=topic_key)
         log.info(
             "runner.sys_prompt_assembled",
             agent=self.agent_name,
             topic=topic_key.slug(),
             chars=len(sys_prompt),
-            has_invocation_block="\n## Modo de invocacao\n" in sys_prompt,
-            has_task_state_block="\n## Estado da task\n" in sys_prompt,
-            has_step_instructions_block="\n## Instrucoes da fase atual\n" in sys_prompt,
-            has_team_block="\n## Equipe" in sys_prompt,
+            has_invocation_block="\n## Invocation mode\n" in sys_prompt,
+            has_task_state_block="\n## Task state\n" in sys_prompt,
+            has_step_instructions_block="\n## Current phase instructions\n" in sys_prompt,
+            has_team_block="\n## Team" in sys_prompt,
         )
-        # Mock mode pra testes e2e: nao invoca Claude, devolve resposta scriptada.
-        # Aceita "0"/"false"/"no"/"off"/vazio como desligado (sem isso, `CLAUDE_MOCK=0`
-        # ativaria mock porque `"0"` eh truthy em Python).
+        # Mock mode for e2e tests: does not invoke Claude, returns a scripted answer.
+        # Accepts "0"/"false"/"no"/"off"/empty as off (otherwise `CLAUDE_MOCK=0`
+        # would enable mock because `"0"` is truthy in Python).
         _mock_flag = os.environ.get("CLAUDE_MOCK", "").strip().lower()
         if _mock_flag not in ("", "0", "false", "no", "off"):
             mock_reply = os.environ.get("CLAUDE_MOCK_REPLY",
-                f"[mock reply] agente {self.agent_name} recebeu prompt ({len(prompt)} chars)")
+                f"[mock reply] agent {self.agent_name} received prompt ({len(prompt)} chars)")
             log.info("runner.mock_reply", topic=topic_key.slug(), agent=self.agent_name)
-            # Emite live events sinteticos pro PWA ver atividade tambem em mock.
+            # Emit synthetic live events so the PWA shows activity in mock mode too.
             await self._emit_live(
                 topic_key, "run_start",
                 summary=f"mock resume={bool(resume_sid)}",
@@ -955,13 +955,13 @@ class ClaudeRunner:
                 usage={"input_tokens": len(prompt), "output_tokens": len(mock_reply)},
                 tool_uses=[],
             )
-        # D-90: refresh sincrono das credenciais OAuth do host antes de cada
-        # spawn. /tmp/host-claude/ e dir bind do ~/.claude/ do host (inode-safe
-        # via path resolution); copiamos pro volume do agente pra ele continuar
-        # gravando refresh tokens em rw localmente. Custo: 1 cp de ~500 bytes.
-        # Sem isso, container fica preso no token capturado no entrypoint, e
-        # quando o host rotaciona (write-then-rename = novo inode) o file bind
-        # antigo apontava pro inode morto -> 401 silencioso (D-55).
+        # D-90: synchronous refresh of the host's OAuth credentials before each
+        # spawn. /tmp/host-claude/ is a dir bind of the host's ~/.claude/ (inode-safe
+        # via path resolution); we copy it into the agent's volume so it can keep
+        # writing refresh tokens rw locally. Cost: 1 cp of ~500 bytes.
+        # Without this, the container is stuck with the token captured in the entrypoint, and
+        # when the host rotates it (write-then-rename = new inode) the old file bind
+        # pointed to the dead inode -> silent 401 (D-55).
         try:
             host_creds = Path("/tmp/host-claude/.credentials.json")
             if host_creds.is_file():
@@ -970,8 +970,8 @@ class ClaudeRunner:
             log.debug("runner.creds_sync_failed", error=str(e))
 
         cmd = ["claude", "-p", prompt, "--output-format", "stream-json", "--verbose"]
-        # sys_prompt foi montado e logado no inicio da funcao (antes do branch
-        # mock/real) — propaga via --append-system-prompt.
+        # sys_prompt was built and logged at the start of the function (before the
+        # mock/real branch) — passed on via --append-system-prompt.
         cmd.extend(["--append-system-prompt", sys_prompt])
         ov = overrides or {}
         final_model = ov.get("model") or self.model
@@ -996,11 +996,11 @@ class ClaudeRunner:
             cmd.extend(["--mcp-config", str(mcp_config_path), "--strict-mcp-config"])
             if self.allowed_tools:
                 cmd.extend(["--allowed-tools", " ".join(self.allowed_tools)])
-        # Permite leitura fora do cwd (sandbox bloqueia sem --add-dir).
-        # Knowledge do agente incluso pra ficar acessivel mesmo com cwd=worktree.
-        # Subdirs de /workspace/company (tasks, ideas, notes, decisions) incluidos
-        # explicitamente: Claude Code permite Write em subdirs de --add-dir, mas
-        # o Bash tool restringe mkdir a raizes de --add-dir apenas (D-TODO).
+        # Allow reads outside the cwd (the sandbox blocks them without --add-dir).
+        # The agent's knowledge is included so it stays reachable even with cwd=worktree.
+        # Subdirs of /workspace/company (tasks, ideas, notes, decisions) are included
+        # explicitly: Claude Code allows Write in subdirs of --add-dir, but
+        # the Bash tool restricts mkdir to --add-dir roots only (D-TODO).
         extra_dirs = [
             "/workspace/company",
             "/workspace/company/tasks",
@@ -1015,18 +1015,18 @@ class ClaudeRunner:
             if Path(extra).exists():
                 cmd.extend(["--add-dir", extra])
 
-        # spawn_cwd = worktree da task se topic eh `task-<slug>` E essa task tem
-        # worktree linkada com este agente in_progress; senao workdir (D-97).
-        # Permite que Claude Code carregue `.claude/{agents,commands}/`, `CLAUDE.md`
-        # do repo nativamente. Identidade do agente vai no `--append-system-prompt`.
+        # spawn_cwd = the task's worktree if the topic is `task-<slug>` AND that task has a
+        # linked worktree with this agent in_progress; otherwise workdir (D-97).
+        # Lets Claude Code natively load the repo's `.claude/{agents,commands}/` and `CLAUDE.md`.
+        # The agent's identity goes in `--append-system-prompt`.
         spawn_cwd = await self._resolve_spawn_cwd(workdir, topic_key)
 
-        # `--resume` so funciona se o spawn_cwd casa com o cwd em que o
-        # `<resume_sid>.jsonl` foi gravado (Claude CLI guarda projects per-cwd).
-        # Quando o cwd resolvido difere do registrado, pulamos `--resume` em vez
-        # de mandar pro ghost — o sid permanece no DB pra eventual run futura
-        # que volte ao mesmo cwd. Sem `--resume`, esta run perde o buffer da
-        # conv CLI mas o restante do contexto vem do system prompt + prompt.
+        # `--resume` only works if the spawn_cwd matches the cwd where the
+        # `<resume_sid>.jsonl` was written (the Claude CLI stores projects per-cwd).
+        # When the resolved cwd differs from the registered one, we skip `--resume` instead
+        # of sending it to a ghost — the sid stays in the DB for a possible future run
+        # that returns to the same cwd. Without `--resume`, this run loses the CLI conv
+        # buffer, but the rest of the context comes from the system prompt + prompt.
         cwd_str = str(spawn_cwd)
         resume_skipped_reason: str | None = None
         if resume_sid and resume_sid_cwd is not None and resume_sid_cwd != cwd_str:
@@ -1038,7 +1038,7 @@ class ClaudeRunner:
                 saved_cwd=resume_sid_cwd,
                 spawn_cwd=cwd_str,
                 reason=resume_skipped_reason,
-                hint="sid registrado em outro cwd; spawn fresh, sid preservado no DB",
+                hint="sid registered in another cwd; fresh spawn, sid kept in the DB",
             )
             resume_sid = None
         if resume_sid:
@@ -1055,19 +1055,19 @@ class ClaudeRunner:
             mcp=mcp_config_path.exists(),
         )
 
-        # Claude Code CLI cria auto-memory em ~/.claude/projects/<slug>/memory/
-        # por session. Desativamos — usamos memory_save/recall (Postgres) via MCP.
+        # The Claude Code CLI creates auto-memory in ~/.claude/projects/<slug>/memory/
+        # per session. We disable it — we use memory_save/recall (Postgres) via MCP.
         #
-        # Env vars MCP do Claude CLI (dois timeouts distintos — confundi antes):
-        #   MCP_TIMEOUT        — startup do server MCP (default 30s). Deixamos o
-        #                        default; nossos MCP servers sobem em ms.
-        #   MCP_TOOL_TIMEOUT   — per-tool-call timeout. Default ~60s, quebrava
-        #                        ask_human (bloqueia aguardando humano, pode
-        #                        levar horas) e ask_agent (target pensando ou
-        #                        ele proprio bloqueado em ask_human). Subimos
-        #                        pra 24h pra cobrir ciclo humano completo
-        #                        (dormir/reuniao/viagem). Override via
-        #                        MCP_TOOL_TIMEOUT_MS no env.
+        # Claude CLI MCP env vars (two distinct timeouts — easy to mix up):
+        #   MCP_TIMEOUT        — MCP server startup (default 30s). We keep the
+        #                        default; our MCP servers start in ms.
+        #   MCP_TOOL_TIMEOUT   — per-tool-call timeout. The ~60s default broke
+        #                        ask_human (blocks waiting for the human, can
+        #                        take hours) and ask_agent (target thinking or
+        #                        itself blocked on ask_human). We raise it
+        #                        to 24h to cover a full human cycle
+        #                        (sleep/meeting/travel). Override via
+        #                        MCP_TOOL_TIMEOUT_MS in the env.
         spawn_env = {
             **os.environ,
             "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
@@ -1081,8 +1081,8 @@ class ClaudeRunner:
             env=spawn_env,
             limit=STREAM_STDOUT_LIMIT_BYTES,
         )
-        # D-71: registra proc no dispatcher pra permitir cancel via SIGTERM.
-        # Unregister vai no finally do bloco de stream-consume mais abaixo.
+        # D-71: register the proc with the dispatcher to allow cancel via SIGTERM.
+        # Unregister happens after the stream-consume block below.
         if self._dispatcher is not None:
             try:
                 self._dispatcher.handler_register_proc(topic_key, proc)
@@ -1097,12 +1097,12 @@ class ClaudeRunner:
         num_turns: int | None = None
         usage: dict[str, Any] | None = None
         tool_uses: list[str] = []
-        # Buffer do ultimo text block do assistant que ainda nao foi emitido
-        # como "thinking". A intuicao: texto sem tool_use na sequencia eh a
-        # resposta final; emitir como thinking duplicaria o bubble de resposta.
-        # Regra: ao ver um tool_use OU um novo text block, flush do buffer
-        # anterior como thinking. Se o stream acabar em `result` sem mais
-        # tool_use, o buffer pendente eh descartado (nao duplica).
+        # Buffer for the assistant's last text block not yet emitted
+        # as "thinking". The intuition: text not followed by a tool_use is the
+        # final answer; emitting it as thinking would duplicate the answer bubble.
+        # Rule: on a tool_use OR a new text block, flush the previous
+        # buffer as thinking. If the stream ends in `result` with no further
+        # tool_use, the pending buffer is dropped (no duplicate).
         pending_text_block: str | None = None
 
         def _flush_pending_thinking():
@@ -1117,11 +1117,11 @@ class ClaudeRunner:
         assert proc.stdout is not None
         oversized_lines_skipped = 0
         while True:
-            # Loop manual (em vez de `async for`) pra capturar
-            # LimitOverrunError/ValueError de uma linha gigante e continuar
-            # lendo as proximas. readline() ja drena o buffer interno ate o
-            # separator quando estoura, entao a proxima iteracao retoma na
-            # linha seguinte. Turn so falha se o `result` final nao chegar.
+            # Manual loop (instead of `async for`) to catch
+            # LimitOverrunError/ValueError from a huge line and keep
+            # reading the next ones. readline() already drains the internal buffer up to the
+            # separator when it overflows, so the next iteration resumes at the
+            # following line. The turn only fails if the final `result` does not arrive.
             try:
                 line_bytes = await proc.stdout.readline()
             except (asyncio.LimitOverrunError, ValueError) as e:
@@ -1136,9 +1136,9 @@ class ClaudeRunner:
                 asyncio.create_task(self._emit_live(
                     topic_key, "tool_result",
                     summary=(
-                        f"(output truncado: linha do stream-json > "
+                        f"(output truncated: a stream-json line > "
                         f"{STREAM_STDOUT_LIMIT_BYTES // (1024*1024)} MiB "
-                        "foi descartada pelo framework)"
+                        "was dropped by the framework)"
                     ),
                     data={"is_error": True, "oversized": True},
                 ))
@@ -1167,7 +1167,7 @@ class ClaudeRunner:
                     if not isinstance(block, dict):
                         continue
                     if block.get("type") == "tool_use":
-                        # Texto anterior pendente eh "thinking de verdade" — flush.
+                        # The previous pending text is "real thinking" — flush.
                         _flush_pending_thinking()
                         name = str(block.get("name", "?"))
                         tool_uses.append(name)
@@ -1179,9 +1179,9 @@ class ClaudeRunner:
                             if len(v) > 80:
                                 v = v[:77] + "..."
                             snippet = f" {first_kv[0]}={v}"
-                        # input completo em `data.input` — frontend usa pra
-                        # click-to-expand no LiveEventLine. Cap defensivo pra
-                        # nao estourar payload do SSE.
+                        # full input in `data.input` — the frontend uses it for
+                        # click-to-expand in LiveEventLine. Defensive cap so the
+                        # SSE payload doesn't blow up.
                         try:
                             input_json = json.dumps(inp, ensure_ascii=False, default=str)
                         except Exception:
@@ -1196,23 +1196,23 @@ class ClaudeRunner:
                     elif block.get("type") == "text":
                         text = (block.get("text") or "").strip()
                         if text:
-                            # Se tinha texto pendente anterior, esse eh thinking
-                            # confirmado (ha um text depois no fluxo). Flush.
+                            # If there was previous pending text, it is confirmed
+                            # thinking (another text follows in the flow). Flush.
                             _flush_pending_thinking()
-                            # Esse novo text fica em buffer — so vira "thinking"
-                            # se um tool_use aparecer depois. Se `result` vier
-                            # antes, eh a resposta final e nao emitimos (dedup
-                            # contra o bubble da mensagem do bot).
+                            # This new text is buffered — it only becomes "thinking"
+                            # if a tool_use comes after it. If `result` comes
+                            # first, it is the final answer and we don't emit it (dedup
+                            # against the bot message bubble).
                             pending_text_block = text
             elif t == "user":
-                # tool_result blocks vem como user msg apos o claude rodar a tool
+                # tool_result blocks come as a user msg after claude runs the tool
                 msg = obj.get("message") or {}
                 for block in msg.get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
                         is_err = block.get("is_error", False)
-                        # Extrai texto sempre (sucesso + erro) pra frontend
-                        # exibir output no OUT expandido. content pode ser
-                        # string ou list[{type:text, text:...}].
+                        # Always extract the text (success + error) so the frontend
+                        # can show the output in the expanded OUT. content can be a
+                        # string or list[{type:text, text:...}].
                         content = block.get("content")
                         out_text = ""
                         if isinstance(content, str):
@@ -1230,14 +1230,14 @@ class ClaudeRunner:
                             summary = out_text or "error"
                         else:
                             summary = "ok"
-                        # Cap inline em ~5KB pra caber no pg_notify (limite 8KB
-                        # inclui wrapper JSON + id/agent/ts/kind/summary).
-                        # Versao full fica em `output_full` (so usado se
-                        # truncado); trigger strip-a esse campo antes de
-                        # emitir o NOTIFY pra nao estourar. Frontend busca
-                        # full via GET /api/live_events/{id}/full.
+                        # Inline cap at ~5KB to fit in pg_notify (the 8KB limit
+                        # includes the JSON wrapper + id/agent/ts/kind/summary).
+                        # The full version goes in `output_full` (only used if
+                        # truncated); a trigger strips that field before
+                        # emitting the NOTIFY so it doesn't overflow. The frontend fetches
+                        # the full one via GET /api/live_events/{id}/full.
                         OUTPUT_INLINE_CAP = 5000
-                        OUTPUT_FULL_CAP = 200_000  # protege banco/transporte
+                        OUTPUT_FULL_CAP = 200_000  # protects the DB/transport
                         full_text = out_text[:OUTPUT_FULL_CAP]
                         is_truncated = len(out_text) > OUTPUT_INLINE_CAP
                         data_payload: dict = {
@@ -1247,7 +1247,7 @@ class ClaudeRunner:
                         if is_truncated:
                             data_payload["output_truncated"] = True
                             data_payload["output_full_len"] = len(out_text)
-                            # Arquiva completo no banco (trigger strip-a antes do NOTIFY).
+                            # Archive the full text in the DB (the trigger strips it before the NOTIFY).
                             data_payload["output_full"] = full_text
                         asyncio.create_task(self._emit_live(
                             topic_key, "tool_result",
@@ -1255,10 +1255,10 @@ class ClaudeRunner:
                             data=data_payload,
                         ))
             elif t == "result":
-                # NAO flush do pending_text_block aqui — se ele nao foi
-                # interrompido por tool_use, ele e a resposta final e vai
-                # chegar como result_text abaixo. Emitir como thinking
-                # duplicaria o bubble da resposta (F3 dedup).
+                # Do NOT flush pending_text_block here — if it was not
+                # interrupted by a tool_use, it is the final answer and will
+                # arrive as result_text below. Emitting it as thinking
+                # would duplicate the answer bubble (F3 dedup).
                 pending_text_block = None
                 result_text = obj.get("result", "") or ""
                 session_id = obj.get("session_id") or session_id
@@ -1272,7 +1272,7 @@ class ClaudeRunner:
                 asyncio.create_task(self._emit_live(
                     topic_key, "run_end",
                     summary=f"turns={num_turns or '?'} cost={cost_str} dur={total_duration_ms or '?'}ms",
-                    # Campos estruturados pra UI somar no header do topic.
+                    # Structured fields for the UI to sum in the topic header.
                     data={
                         "tool_uses": tool_uses,
                         "subtype": obj.get("subtype"),
@@ -1286,22 +1286,22 @@ class ClaudeRunner:
         stderr_bytes = await proc.stderr.read() if proc.stderr else b""
         stderr_text = stderr_bytes.decode("utf-8", errors="replace")
 
-        # D-71: proc encerrou — libera a ref pro dispatcher nao tentar SIGTERM
-        # num proc ja morto. Idempotente; ProcessLookupError ja e tolerado no
-        # caminho de cancel tambem.
+        # D-71: the proc exited — release the ref so the dispatcher doesn't try to SIGTERM
+        # a dead proc. Idempotent; ProcessLookupError is already tolerated on the
+        # cancel path too.
         if self._dispatcher is not None:
             try:
                 self._dispatcher.handler_unregister_proc(topic_key)
             except Exception:
                 log.debug("runner.unregister_proc_failed", topic=topic_key.slug())
 
-        # D-71: garantir que o badge do PWA transiciona pra fora de "running".
-        # O `run_end` live_event normal e emitido quando o CLI emite
-        # `type=result` no stream-json. Em kill hard (SIGKILL) ou crash, o
-        # CLI sai sem emitir result — o frontend continuava vendo
-        # `runner_state=running` indefinidamente. Detectamos via
-        # `total_duration_ms is None` (setado so no path do result) e
-        # emitimos run_end sintetico com subtype=error.
+        # D-71: make sure the PWA badge transitions out of "running".
+        # The normal `run_end` live_event is emitted when the CLI emits
+        # `type=result` in the stream-json. On a hard kill (SIGKILL) or crash, the
+        # CLI exits without emitting result — the frontend kept seeing
+        # `runner_state=running` indefinitely. We detect it via
+        # `total_duration_ms is None` (only set on the result path) and
+        # emit a synthetic run_end with subtype=error.
         if total_duration_ms is None and rc != 0:
             synthetic_subtype = "killed" if rc in (-15, 143, -9, 137) else "error"
             stderr_preview = stderr_text.strip().splitlines()[-1] if stderr_text.strip() else ""
@@ -1317,12 +1317,12 @@ class ClaudeRunner:
                 },
             ))
 
-        # Spurious exit code: o stream-json devolveu `result subtype=success`
-        # (i.e. trabalho completo + duration_ms preenchido + sem error_subtype),
-        # mas o processo morreu rc != 0. Bug do CLI no shutdown (cleanup de MCP /
-        # fd / async task). Reportar "❌ erro no claude" nesse caso confunde o
-        # humano e descarta um turn que de fato deu certo. Tratamos como ok e
-        # apenas logamos pra ter sinal sem mascarar caso vire epidemia.
+        # Spurious exit code: the stream-json returned `result subtype=success`
+        # (i.e. work complete + duration_ms set + no error_subtype),
+        # but the process died with rc != 0. CLI bug on shutdown (cleanup of MCP /
+        # fd / async task). Reporting "❌ claude error" in this case confuses the
+        # human and discards a turn that actually succeeded. We treat it as ok and
+        # only log it, to keep a signal without masking it in case it becomes widespread.
         spurious_exit = (
             rc != 0 and total_duration_ms is not None and not error_subtype
         )
@@ -1333,17 +1333,17 @@ class ClaudeRunner:
                 rc=rc,
                 num_turns=num_turns,
                 duration_ms=total_duration_ms,
-                hint="result success no stream mas processo saiu rc!=0",
+                hint="result success in the stream but the process exited rc!=0",
             )
 
         ghost_session = bool(GHOST_SESSION_RE.search(stderr_text))
 
-        # Persistencia defensiva do session_id (D-70): o CLI emite um novo id
-        # no `system/init` de toda invocacao (fork ao resumir), mas so grava o
-        # .jsonl correspondente quando a run avanca. Se a run morre logo apos
-        # o init, o id existe no runtime mas nunca toca o disco — salva-lo no
-        # DB cria um ghost que quebra a proxima tentativa. Pulamos o save nesse
-        # caso e mantemos o id anterior (que sabidamente existe).
+        # Defensive session_id persistence (D-70): the CLI emits a new id
+        # in the `system/init` of every invocation (fork on resume), but only writes the
+        # matching .jsonl as the run progresses. If the run dies right after
+        # init, the id exists at runtime but never touches disk — saving it in the
+        # DB creates a ghost that breaks the next attempt. We skip the save in that
+        # case and keep the previous id (which is known to exist).
         if session_id and session_id != resume_sid and not _session_jsonl_exists(session_id):
             log.warning(
                 "runner.session_id_ghost",
@@ -1353,8 +1353,8 @@ class ClaudeRunner:
                 rc=rc,
             )
         elif session_id:
-            # D-97: persiste cwd junto pra runs futuras detectarem mismatch
-            # antes de tentar `--resume`.
+            # D-97: persist the cwd too so future runs can detect a mismatch
+            # before trying `--resume`.
             await self.session_mgr.save_session_id(topic_key, session_id, cwd=cwd_str)
 
         return RunOutcome(
@@ -1384,18 +1384,18 @@ class ClaudeRunner:
             log.info("runner.empty_prompt", topic=topic_key.slug())
             return
 
-        # Stale handoff filter: handoffs postados pelo reactor durante uma run
-        # que ja absorveu a fase via --resume continuity ficam na fila do
-        # dispatcher (LISTEN dispara mid-run, dispatcher enfileira). Quando a
-        # run principal acaba, dispatcher consome essa fila — cada handoff
-        # vira um spawn novo cuja unica saida eh "atrasado, ja feito".
-        # Sintoma: ops/2026-05-05 fix-task-16 (2 runs cascade pos-`done`).
-        # Drop quando: (1) task em status terminal, ou (2) a fase mais
-        # recente desta step ja foi concluida (`completed_at IS NOT NULL`).
-        # Olhamos a `phases` mais recente por idx — preserva reopen_task,
-        # que insere phase nova in-flight pra mesma step ja antes concluida
-        # (filter precisa nao dropar nesse caso). Cursor avanca normalmente
-        # via mark_processed pos-handle.
+        # Stale handoff filter: handoffs posted by the reactor during a run
+        # that already absorbed the phase via --resume continuity sit in the
+        # dispatcher queue (LISTEN fires mid-run, the dispatcher enqueues). When the
+        # main run ends, the dispatcher consumes that queue — each handoff
+        # becomes a new spawn whose only output is "late, already done".
+        # Symptom: 2026-05-05 fix-task-16 (2 cascade runs after `done`).
+        # Drop when: (1) the task is in a terminal status, or (2) the most
+        # recent phase of this step is already completed (`completed_at IS NOT NULL`).
+        # We look at the most recent `phases` row by idx — preserves reopen_task,
+        # which inserts a new in-flight phase for a step that was completed before
+        # (the filter must not drop in that case). The cursor advances normally
+        # via mark_processed after handle.
         if self.db_pool is not None:
             ho = HANDOFF_BODY_RE.search(prompt)
             if ho:
@@ -1435,16 +1435,16 @@ class ClaudeRunner:
                         return
 
         started_at = int(time.time())
-        # Resolve step overrides 1x por handle. Lido do `workflows.yaml`
-        # via `_step_overrides`. Vazio se topic nao-task / step sem overrides.
-        # Propagado pra `_inject_memory` e `_run_claude_once` em todos os
-        # attempts deste handle (config nao muda mid-handle).
+        # Resolve step overrides once per handle. Read from `workflows.yaml`
+        # via `_step_overrides`. Empty if the topic is not a task / the step has no overrides.
+        # Passed to `_inject_memory` and `_run_claude_once` on all
+        # attempts of this handle (config does not change mid-handle).
         step_overrides = await self._step_overrides(topic_key)
-        # Auto-inject de memoria relevante (se configurado, com overrides).
+        # Auto-inject relevant memory (if configured, with overrides).
         prompt = await self._inject_memory(prompt, overrides=step_overrides)
 
-        # Conv id do evento — usado pelo broker (D-87) e pelos blocos
-        # contextuais do system prompt (modo de invocacao, estado da task).
+        # The event's conv id — used by the broker (D-87) and by the
+        # contextual system prompt blocks (invocation mode, task state).
         conv_id_raw = event.get("conversation_id") if isinstance(event, dict) else None
         try:
             conv_id_for_run = int(conv_id_raw) if conv_id_raw is not None else None
@@ -1452,17 +1452,17 @@ class ClaudeRunner:
             conv_id_for_run = None
 
         if self.broker is not None:
-            # D-87: propaga conv_id pro broker interno. Usado depois pelo MCP
-            # handler de `__ask_agent` pra passar parent_conv_id na criacao
-            # da conv filha `__ask-from-*` — hierarquia persistida via schema,
-            # sem heuristica.
+            # D-87: pass conv_id to the internal broker. Used later by the MCP
+            # `__ask_agent` handler to pass parent_conv_id when creating
+            # the `__ask-from-*` child conv — hierarchy persisted via the schema,
+            # no heuristics.
             self.broker.register_topic(topic_key, conv_id=conv_id_for_run)
 
-        # (Antes havia ack "thinking..." aqui — removido. PWA hoje mostra
-        # tool_use/thinking ao vivo via live_events, tornando o ack ruido.)
+        # (There used to be a "thinking..." ack here — removed. The PWA now shows
+        # tool_use/thinking live via live_events, which made the ack noise.)
 
-        # MCP config: servidor in-process + merge de instance/agents/<name>/mcp.extra.json
-        # (capabilities laterais como playwright-mcp) se existir.
+        # MCP config: in-process server + merge of instance/agents/<name>/mcp.extra.json
+        # (side capabilities such as playwright-mcp) if it exists.
         mcp_config_path = workdir / ".mcp-config.json"
         if self.broker is not None and self.mcp_url_for is not None:
             url = self.mcp_url_for(topic_key.slug())
@@ -1490,15 +1490,15 @@ class ClaudeRunner:
                 extra_servers=sorted(s for s in servers if s != MCP_SERVER_NAME),
             )
 
-        # Loop de tentativas — re-resolve resume_sid entre tentativas
-        # (primeira run pode salvar session_id antes de ser killed).
+        # Attempt loop — re-resolves resume_sid between attempts
+        # (the first run may save session_id before being killed).
         outcome: RunOutcome | None = None
         attempts_done = 0
-        # Ghost session recovery (D-70): se o CLI reclama "No conversation
-        # found with session ID" (resume apontando pra id inexistente em
-        # disco), limpamos o DB e refazemos a MESMA tentativa sem `--resume`,
-        # sem consumir um attempt normal. Uma unica recovery por handle —
-        # se falhar de novo, cai no retry normal.
+        # Ghost session recovery (D-70): if the CLI complains "No conversation
+        # found with session ID" (resume pointing to an id that does not exist on
+        # disk), we clear the DB and redo the SAME attempt without `--resume`,
+        # without consuming a normal attempt. A single recovery per handle —
+        # if it fails again, it falls through to the normal retry.
         ghost_recovered = False
         attempt = 0
         while attempt < MAX_ATTEMPTS:
@@ -1507,10 +1507,10 @@ class ClaudeRunner:
             session_ref = await self.session_mgr.session_ref_for(topic_key)
             resume_sid = session_ref[0] if session_ref else None
             resume_sid_cwd = session_ref[1] if session_ref else None
-            # Retry pos-oversized: troca o prompt pelo recovery (pede leitura
-            # parcial) e so faz sentido com --resume (pra Claude ter o contexto
-            # do que estava fazendo). Se nao tem session_id ainda, caimos no
-            # prompt original — melhor do que mandar recovery sem contexto.
+            # Retry after oversized: swap the prompt for the recovery one (asks for partial
+            # reads), which only makes sense with --resume (so Claude has the context
+            # of what it was doing). If there is no session_id yet, we fall back to the
+            # original prompt — better than sending the recovery prompt without context.
             current_prompt = prompt
             if (
                 attempt > 1
@@ -1531,9 +1531,9 @@ class ClaudeRunner:
             )
             if outcome.ok:
                 break
-            # Ghost session: CLI apontou pra sid inexistente. Limpa o DB pra
-            # proxima leitura pegar None (→ spawn sem `--resume`, fresh start)
-            # e repete este attempt sem consumi-lo. So uma vez pra evitar loop.
+            # Ghost session: the CLI pointed to a nonexistent sid. Clear the DB so the
+            # next read gets None (→ spawn without `--resume`, fresh start)
+            # and repeat this attempt without consuming it. Only once, to avoid a loop.
             if outcome.ghost_session and not ghost_recovered and resume_sid:
                 ghost_recovered = True
                 await self.session_mgr.clear_session_id(topic_key)
@@ -1541,14 +1541,14 @@ class ClaudeRunner:
                     "runner.ghost_session_recover",
                     topic=topic_key.slug(),
                     missing_sid=resume_sid,
-                    hint="retry sem --resume; contexto da conversa perdido, artefatos em disco preservam estado",
+                    hint="retry without --resume; conversation context lost, artifacts on disk preserve state",
                 )
-                attempt -= 1  # nao conta este attempt — sera refeito fresh
+                attempt -= 1  # don't count this attempt — it will be redone fresh
                 continue
-            # D-72: se o rc=143 veio de cancel_topic do humano (SIGTERM via
-            # /api/cancel ou cascade delete), NAO retenta. O dispatcher
-            # marcou o topic via `_user_cancelled` no SIGTERM — consumimos
-            # aqui pra pular retry e deixar o turn morrer.
+            # D-72: if rc=143 came from the human's cancel_topic (SIGTERM via
+            # /api/cancel or cascade delete), do NOT retry. The dispatcher
+            # marked the topic via `_user_cancelled` on SIGTERM — we consume it
+            # here to skip the retry and let the turn die.
             if (
                 self._dispatcher is not None
                 and outcome.retriable
@@ -1559,7 +1559,7 @@ class ClaudeRunner:
                     topic=topic_key.slug(),
                     attempt=attempt,
                     rc=outcome.rc,
-                    hint="SIGTERM veio de cancel do humano; skip retry",
+                    hint="SIGTERM came from a human cancel; skip retry",
                 )
                 break
             if not outcome.retriable or attempt == MAX_ATTEMPTS:
@@ -1577,17 +1577,17 @@ class ClaudeRunner:
 
         assert outcome is not None
         usage = outcome.usage or {}
-        # Chaves alinhadas com backend /api/telemetry/event (main.py):
+        # Keys aligned with the backend's /api/telemetry/event (main.py):
         #   payload.get("topic_slug"), payload.get("cost_usd"), etc.
-        # Metadados extras (num_turns, tool_uses, ...) caem no JSON metadata.
-        # Os 3 contadores de input do Claude CLI sao disjuntos (mesma semantica
-        # da API da Anthropic) — armazenamos cada um na sua coluna. Migration 010
-        # reverteu a soma que 004 introduzia em `input_tokens`.
+        # Extra metadata (num_turns, tool_uses, ...) goes into the JSON metadata.
+        # The Claude CLI's 3 input counters are disjoint (same semantics
+        # as the Anthropic API) — we store each in its own column. Migration 010
+        # reverted the sum that 004 introduced in `input_tokens`.
         base_input = usage.get("input_tokens") or 0
         cache_creation = usage.get("cache_creation_input_tokens") or 0
         cache_read = usage.get("cache_read_input_tokens") or 0
-        # task_slug: se topic comeca com 'task-', extrai o slug da task. Backend
-        # resolve conversation_id via (stream, topic) — mesma pratica do live-event.
+        # task_slug: if the topic starts with 'task-', extract the task slug. The backend
+        # resolves conversation_id via (stream, topic) — same practice as live-event.
         task_slug = topic_key.topic[5:] if topic_key.topic.startswith("task-") else None
         telemetry = {
             "topic_slug": topic_key.slug(),
@@ -1623,16 +1623,16 @@ class ClaudeRunner:
                 stderr=outcome.stderr[:500],
             )
             await self._emit_telemetry(telemetry)
-            retried_note = f" (apos {attempts_done} tentativas)" if attempts_done > 1 else ""
+            retried_note = f" (after {attempts_done} attempts)" if attempts_done > 1 else ""
             err_msg = (
-                f"❌ erro no claude{retried_note} "
+                f"❌ claude error{retried_note} "
                 f"(exit={outcome.rc}, subtype={outcome.error_subtype})\n"
-                f"```\n{outcome.stderr[:800] or '(sem stderr)'}\n```"
+                f"```\n{outcome.stderr[:800] or '(no stderr)'}\n```"
             )
             await self._reply(topic_key, err_msg)
             return
 
-        final = outcome.result_text or "_(resposta vazia)_"
+        final = outcome.result_text or "_(empty response)_"
         log.info(
             "runner.done",
             topic=topic_key.slug(),
@@ -1658,10 +1658,10 @@ class ClaudeRunner:
         content: str,
         tool_uses: list[str] | None = None,
     ) -> None:
-        # Idempotency key por turn: protege contra reentrancia/retry do
-        # `_reply` que poderia inserir 2x a mesma msg na conv (race ou
-        # exception parcial). Schema tem UNIQUE(conversation_id, client_id)
-        # — broker devolve a msg existente em conflito. Defesa barata.
+        # Per-turn idempotency key: protects against reentrancy/retry of
+        # `_reply` that could insert the same msg twice in the conv (race or
+        # partial exception). The schema has UNIQUE(conversation_id, client_id)
+        # — the broker returns the existing msg on conflict. Cheap defense.
         import uuid as _uuid
         reply_uid = _uuid.uuid4().hex[:16]
         try:
@@ -1672,26 +1672,25 @@ class ClaudeRunner:
         except Exception:
             log.exception("runner.reply_failed")
             return
-        # D-100: se este turn rodou em conv filha (parent_conv_id IS NOT NULL)
-        # criada por handoff via complete_phase, ecoa o reply final na conv
-        # pai. Antes, o pai (PO) so via a resposta se tivesse delegado via
-        # ask_agent — e nesse caminho o asker faz subscribe_to_conversation
-        # na conv `__child-*` criada pelo broker. Pra handoff de fase
-        # (`task-<slug>` no stream do filho), nao havia subscricao
-        # equivalente — o reply ficava orfao no banco. Skip topics `__*`
-        # porque ask_agent ja tem auto-route via subscribe_to_conversation
-        # e gerar duplicata.
+        # D-100: if this turn ran in a child conv (parent_conv_id IS NOT NULL)
+        # created by a handoff via complete_phase, echo the final reply into the parent
+        # conv. Before, the parent only saw the answer if it had delegated via
+        # ask_agent — and on that path the asker does subscribe_to_conversation
+        # on the `__child-*` conv created by the broker. For a phase handoff
+        # (`task-<slug>` in the child's stream), there was no equivalent
+        # subscription — the reply was orphaned in the DB. Skip `__*` topics
+        # because ask_agent already auto-routes via subscribe_to_conversation
+        # and would produce a duplicate.
         if key.topic.startswith("__"):
             return
-        # Skip echo se este turn chamou `complete_phase`. O reactor ja vai
-        # postar um handoff (ou terminal) na conv pai com o summary do
-        # complete_phase — ecoar o reply do filho duplica a entrega ao pai
-        # e faz ele acordar 2x pra mesmo entregavel. Sintoma observado em
-        # 2026-04-28 na task fix-login-redirect (PO recebeu
-        # "Handoff from executor-go" em seguida de "Reply from executor-go"
-        # com mesmo conteudo, processou 2 turns e respondeu "esse reply e
-        # uma confirmacao redundante"). Replies sem complete_phase
-        # (ex: filho devolveu duvida em vez de despachar) continuam ecoando.
+        # Skip the echo if this turn called `complete_phase`. The reactor will already
+        # post a handoff (or terminal) in the parent conv with the complete_phase
+        # summary — echoing the child's reply duplicates the delivery to the parent
+        # and makes it wake up twice for the same deliverable. Symptom observed on
+        # 2026-04-28 (the parent received a "Handoff from <child>" followed by a
+        # "Reply from <child>" with the same content, processed 2 turns and answered
+        # "this reply is a redundant confirmation"). Replies without complete_phase
+        # (e.g. the child returned a question instead of dispatching) are still echoed.
         completed_phase = (
             tool_uses is not None
             and f"mcp__{MCP_SERVER_NAME}__complete_phase" in tool_uses

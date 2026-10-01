@@ -1,11 +1,11 @@
 # agents.yaml.example — MINIMAL annotated TEMPLATE for your company.
 #
-# Copy this to agents.yaml, edit, and run:
-#   ./scripts/reconcile.sh
+# Copy this to agents.yaml (bootstrap does it for you), edit, and run:
+#   make reconcile        # or: ./run.sh reconcile
 #
-# The current agents.yaml (without .example) ships 5 example agents — feel
-# free to use them as reference, but they're not mandatory. Start from
-# scratch here if you want.
+# It ships 5 example agents covering the example workflows — feel free to
+# use them as reference, but they're not mandatory. Start from scratch here
+# if you want.
 
 schema_version: 1
 

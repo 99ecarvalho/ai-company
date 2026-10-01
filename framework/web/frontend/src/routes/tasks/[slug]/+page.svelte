@@ -55,7 +55,7 @@
       timeline = tl;
       stats = st;
       telem = tm;
-      // So .md files na section Artifacts; resto do browse via link abaixo.
+      // Only .md files in the Artifacts section; the rest is browsable via the link below.
       artifactFiles = files.entries
         .filter((e) => !e.is_dir && e.name.endsWith('.md'))
         .sort((a, b) => a.name.localeCompare(b.name));
@@ -67,7 +67,7 @@
     }
   }
 
-  // Reage a mudanca de slug (navegacao entre tasks sem remount).
+  // React to slug changes (navigation between tasks without remount).
   $effect(() => {
     if (slug) load();
   });
@@ -124,15 +124,15 @@
     }
   }
 
-  // Derivados pro render (estaveis).
+  // Derived values for rendering (stable).
   let meta = $derived(timeline?.meta);
   let conversations = $derived(timeline?.conversations ?? []);
   let phases = $derived(meta?.phases ?? []);
-  // `archived` nao vem no timeline.meta; pega via summary da lista de tasks
-  // (polling global no +layout mantem isso fresh).
+  // `archived` isn't in timeline.meta; take it from the task list summary
+  // (global polling in +layout keeps it fresh).
   let isArchived = $derived($tasks.find((t) => t.slug === slug)?.archived ?? false);
 
-  // Status class helper (igual a TaskCard).
+  // Status class helper (same as TaskCard).
   const statusClass = $derived.by(() => {
     const s = meta?.status ?? 'in_progress';
     if (s === 'done') return 'bg-ok text-on-accent';

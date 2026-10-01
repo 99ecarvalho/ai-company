@@ -76,8 +76,8 @@
     expanded = !expanded;
   }
 
-  // Auto-collapse quando a lista fica toda done — evita ruído persistente
-  // na tela depois do agente finalizar. Usuario pode re-expandir se quiser.
+  // Auto-collapse when the whole list is done — avoids persistent noise
+  // on screen after the agent finishes. The user can re-expand if they want.
   $effect(() => {
     if (latest && counts.done === counts.total && counts.total > 0) {
       expanded = false;

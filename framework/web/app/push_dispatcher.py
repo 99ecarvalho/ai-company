@@ -1,4 +1,4 @@
-"""Disparo de web push via pywebpush, usando Postgres como backing store."""
+"""Web push delivery via pywebpush, using Postgres as the backing store."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +16,7 @@ log = structlog.get_logger("push_dispatcher")
 class PushDispatcher:
     def __init__(self, *, vapid_private_key: str, vapid_claims_sub: str):
         self._vapid_private_key = vapid_private_key
-        # vapid_claims_sub pode vir com ou sem mailto:
+        # vapid_claims_sub may come with or without mailto:
         sub = vapid_claims_sub if vapid_claims_sub.startswith("mailto:") else f"mailto:{vapid_claims_sub}"
         self._vapid_claims = {"sub": sub}
 
@@ -68,7 +68,7 @@ class PushDispatcher:
         ])
         sent = sum(1 for _, ok, _ in results if ok)
         failed = sum(1 for _, ok, _ in results if not ok)
-        # prune subscriptions invalidas
+        # prune invalid subscriptions
         for ep, ok, msg in results:
             if not ok and msg.startswith("pruned"):
                 await db.execute("DELETE FROM web.push_subscriptions WHERE endpoint = $1", ep)

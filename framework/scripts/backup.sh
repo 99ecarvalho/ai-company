@@ -1,24 +1,24 @@
 #!/bin/bash
-# Backup de estado da instancia: agents/ + company/ + docker-compose.override.yml.
-# Gera tar.gz em BACKUPS_DIR/<timestamp>.tar.gz e mantem os ultimos N
-# (default 30; via BACKUP_RETAIN env).
+# Backup of instance state: agents/ + company/ + docker-compose.override.yml.
+# Writes a tar.gz to BACKUPS_DIR/<timestamp>.tar.gz and keeps the last N
+# (default 30; via the BACKUP_RETAIN env).
 #
-# Uso:
-#   ./framework/scripts/backup.sh              # roda 1x
-#   ./framework/scripts/backup.sh --list       # lista backups existentes
+# Usage:
+#   ./framework/scripts/backup.sh              # run once
+#   ./framework/scripts/backup.sh --list       # list existing backups
 #   BACKUP_RETAIN=60 ./framework/scripts/backup.sh
 #
-# Pra rodar automatico, use o native job `backup_company` no PWA
-# /settings/routines (cron + enable; suportado pelo scheduler.py).
+# To run it automatically, use the native `backup_company` job in the PWA
+# /settings/routines (cron + enable; supported by scheduler.py).
 #
-# Respeita AGENTS_DIR/COMPANY_DIR/BACKUPS_DIR do .env (fallback instance/).
+# Honors AGENTS_DIR/COMPANY_DIR/BACKUPS_DIR from .env (fallback instance/).
 set -euo pipefail
 
 PROJECT_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
-# Carrega .env pra pegar AGENTS_DIR/COMPANY_DIR/BACKUPS_DIR caso user os
-# tenha customizado (multi-empresa, config privada versionada).
+# Load .env to pick up AGENTS_DIR/COMPANY_DIR/BACKUPS_DIR in case the user
+# customized them (multiple companies, versioned private config).
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091
@@ -33,7 +33,7 @@ BACKUP_DIR="${BACKUP_DIR:-$BACKUPS_DIR}"
 BACKUP_RETAIN="${BACKUP_RETAIN:-30}"
 
 if [ "${1:-}" = "--list" ]; then
-  ls -lh "$BACKUP_DIR" 2>/dev/null | tail -n +2 || echo "(vazio)"
+  ls -lh "$BACKUP_DIR" 2>/dev/null | tail -n +2 || echo "(empty)"
   exit 0
 fi
 
@@ -41,7 +41,7 @@ mkdir -p "$BACKUP_DIR"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 OUT="$BACKUP_DIR/backup-$TS.tar.gz"
 
-# Paths a incluir. Se algum faltar, tar ignora silenciosamente.
+# Paths to include. Missing ones are skipped.
 INCLUDE=(
   "$COMPANY_DIR"
   "$AGENTS_DIR"
@@ -58,11 +58,11 @@ tar -czf "$OUT" "${EXISTING[@]}" 2>/dev/null
 SIZE=$(du -h "$OUT" | cut -f1)
 echo "✓ backup: $OUT ($SIZE)"
 
-# Retention: mantem os BACKUP_RETAIN mais recentes, apaga resto
+# Retention: keep the BACKUP_RETAIN most recent, delete the rest
 cd "$BACKUP_DIR"
 ls -1t backup-*.tar.gz 2>/dev/null | tail -n "+$((BACKUP_RETAIN + 1))" | while read -r old; do
   rm -f "$old"
-  echo "  removido (retention): $old"
+  echo "  removed (retention): $old"
 done
 
 # Print summary

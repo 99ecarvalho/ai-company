@@ -1,4 +1,4 @@
-"""Pool de conexoes Postgres compartilhado pro web + utilitarios."""
+"""Shared Postgres connection pool for web + helpers."""
 from __future__ import annotations
 
 import os
@@ -11,7 +11,7 @@ _pool: asyncpg.Pool | None = None
 
 
 async def init_pool(dsn: str | None = None, min_size: int = 2, max_size: int = 10) -> asyncpg.Pool:
-    """Cria o pool global. Chamado no lifespan do FastAPI."""
+    """Creates the global pool. Called from the FastAPI lifespan."""
     global _pool
     if _pool is not None:
         return _pool
@@ -28,15 +28,15 @@ async def close_pool() -> None:
 
 
 def pool() -> asyncpg.Pool:
-    """Recupera o pool inicializado. Levanta se chamado antes de init_pool."""
+    """Returns the initialized pool. Raises if called before init_pool."""
     if _pool is None:
-        raise RuntimeError("db pool nao inicializado (init_pool ainda nao rodou)")
+        raise RuntimeError("db pool not initialized (init_pool has not run yet)")
     return _pool
 
 
 @asynccontextmanager
 async def connection():
-    """Acquire connection do pool. Use em `async with connection() as conn: ...`."""
+    """Acquire a connection from the pool. Use as `async with connection() as conn: ...`."""
     async with pool().acquire() as conn:
         yield conn
 

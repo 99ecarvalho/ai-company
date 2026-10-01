@@ -91,7 +91,7 @@
     {
       title: 'Workspace',
       items: [
-        // Mobile-only: Files, Settings, Scheduler ja aparecem no rail desktop.
+        // Mobile-only: Files, Settings, Scheduler already appear in the desktop rail.
         { kind: 'route', path: '/memory', icon: Brain, label: 'Memory', mobileOnly: true },
         { kind: 'route', path: '/files', icon: Folder, label: 'Files', mobileOnly: true },
         { kind: 'route', path: '/scheduler', icon: Clock, label: 'Scheduler', description: 'Cron jobs + manual trigger', mobileOnly: true },

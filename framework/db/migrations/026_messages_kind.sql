@@ -1,36 +1,36 @@
 -- 026_messages_kind.sql
--- Distingue mensagens "regular" de mensagens "echo" (D-100 forwarded reply).
+-- Distinguishes "regular" messages from "echo" messages (D-100 forwarded reply).
 --
--- Problema: o D-100 echo posta a copia do reply do filho na conv pai pra
--- humanidade visual — humano vendo a conv pai (task-conv do PO) consegue
--- ler o que o filho respondeu sem precisar abrir a conv-filha. Mas a copia
--- vai como messaging.messages comum, dispara `pg_notify('msg_stream_<sid>')`
--- e acorda o runner do agente pai pra um turno extra. Em conv usada como
--- destino de ask_agent (asker subscribe + sync wait via MCP), o agente pai
--- ja recebeu a resposta sincronicamente e nao precisa "ver de novo" — o
--- echo entao gera um turn duplicado redundante.
+-- Problem: the D-100 echo posts a copy of the child's reply into the parent conv for
+-- human visibility — a human viewing the parent conv (the PO's task-conv) can
+-- read what the child answered without opening the child conv. But the copy
+-- goes out as a regular messaging.messages row, fires `pg_notify('msg_stream_<sid>')`
+-- and wakes the parent agent's runner for an extra turn. In a conv used as
+-- an ask_agent destination (asker subscribe + sync wait via MCP), the parent agent
+-- already got the answer synchronously and does not need to "see it again" — the
+-- echo then produces a redundant duplicate turn.
 --
--- Fix arquitetural: echo eh sinal pro humano, nao pro agente. Coluna `kind`
--- nas messages distingue 'regular' (gera turn) de 'echo' (puramente
--- visual). Trigger inclui kind no payload do NOTIFY; ai_company filtra
--- e ignora dispatch quando kind != 'regular'. PWA SSE continua recebendo
--- todas (mesmo `msg_all` channel) — humano enxerga normal.
+-- Architectural fix: echo is a signal for the human, not for the agent. A `kind` column
+-- on messages distinguishes 'regular' (produces a turn) from 'echo' (purely
+-- visual). The trigger includes kind in the NOTIFY payload; ai_company filters
+-- and skips dispatch when kind != 'regular'. PWA SSE keeps receiving
+-- all of them (same `msg_all` channel) — the human sees them as usual.
 --
--- Conjunto: regular | echo. Default 'regular' preserva comportamento
--- legado pra todo INSERT existente (incluindo handoff do reactor, ask_human
--- reply, etc). Apenas claude_runner._reply na branch D-100 marca 'echo'.
+-- Set: regular | echo. Default 'regular' preserves legacy behavior
+-- for every existing INSERT (including reactor handoff, ask_human
+-- reply, etc). Only claude_runner._reply in the D-100 branch marks 'echo'.
 
 ALTER TABLE messaging.messages
     ADD COLUMN kind TEXT NOT NULL DEFAULT 'regular'
         CHECK (kind IN ('regular', 'echo'));
 
 COMMENT ON COLUMN messaging.messages.kind IS
-    'regular = mensagem que dispara turn no listener do agente; '
-    'echo = D-100 forward visual do reply de conv-filha pra parent (pula '
-    'dispatch no listener mas continua visivel pro humano).';
+    'regular = message that triggers a turn in the agent listener; '
+    'echo = D-100 visual forward of a child conversation reply to the parent (skips '
+    'dispatch in the listener but stays visible to the human).';
 
--- Trigger atualizado: inclui `kind` no payload do pg_notify pra que o
--- listener filtre sem precisar fazer SELECT extra. Mantem mesmos channels
+-- Updated trigger: includes `kind` in the pg_notify payload so the
+-- listener can filter without an extra SELECT. Keeps the same channels
 -- (msg_all / msg_stream_<sid> / msg_conv_<id>).
 CREATE OR REPLACE FUNCTION messaging.notify_message() RETURNS TRIGGER AS $$
 DECLARE

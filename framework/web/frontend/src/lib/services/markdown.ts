@@ -113,10 +113,10 @@ export function sanitizeHtml(html: string): string {
   });
 }
 
-// Aceita os 4 prefixos servidos pelo backend (company/repos/agents/sessions)
-// com ou sem prefixo de container ("/app/" ou "/workspace/"). normalizePath
-// strip o prefixo do container pra produzir "<base>/..." que o
-// /api/files/read entende.
+// Accepts the 4 prefixes served by the backend (company/repos/agents/sessions)
+// with or without a container prefix ("/app/" or "/workspace/"). normalizePath
+// strips the container prefix to produce "<base>/..." which
+// /api/files/read understands.
 const PATH_BODY = '(?:company|repos|agents|sessions)\\/[a-zA-Z0-9._\\-/]+';
 const PATH_PREFIX = '(?:\\/(?:app|workspace)\\/)?';
 const MD_LINK_PATH_RE = new RegExp(
@@ -129,13 +129,13 @@ export function normalizeFilePath(raw: string): string {
   return raw.replace(/^\/(?:app|workspace)\//, '');
 }
 
-// Cada agente vê o próprio session dir como `/workspace/sessions/<topic>/`
-// (sem o nome do agente no path), mas no host o layout é
-// `sessions/<agent>/<topic>/`. Quando uma mensagem de bot referencia
-// `sessions/<topic>` sem prefixo de agente, injetamos o slug do autor pra
-// que o backend consiga resolver o arquivo. Bots no broker têm username
-// `<agent>-bot`; a pasta de sessions usa o slug do agente sem sufixo, então
-// strip aqui antes de prefixar.
+// Each agent sees its own session dir as `/workspace/sessions/<topic>/`
+// (without the agent name in the path), but on the host the layout is
+// `sessions/<agent>/<topic>/`. When a bot message references
+// `sessions/<topic>` without an agent prefix, we inject the author's slug so
+// the backend can resolve the file. Bots in the broker have username
+// `<agent>-bot`; the sessions folder uses the agent slug without the suffix, so
+// strip it here before prefixing.
 export function ensureSessionsAuthorPrefix(
   path: string,
   botAuthor: string | null | undefined
@@ -151,10 +151,10 @@ export function ensureSessionsAuthorPrefix(
   return `sessions/${agentSlug}/${rest}`;
 }
 
-// A IA às vezes encosta pontuação de frase no fim de paths ("veja o file.md.",
-// "em file.md, depois..."). O regex de path aceita `.` interno pra cobrir
-// extensões, então o terminador de frase entra junto. Aparamos só do fim —
-// interno fica intacto pra não quebrar foo.tar.gz.
+// The AI sometimes puts sentence punctuation right at the end of paths ("see file.md.",
+// "in file.md, then..."). The path regex accepts inner `.` to cover
+// extensions, so the sentence terminator gets included. We trim only the end —
+// inner dots stay intact so foo.tar.gz doesn't break.
 const TRAILING_PUNCT_RE = /[.,;:!?)\]}>'"]+$/;
 function splitTrailingPunct(path: string): { path: string; trail: string } {
   const m = path.match(TRAILING_PUNCT_RE);
@@ -163,12 +163,12 @@ function splitTrailingPunct(path: string): { path: string; trail: string } {
 }
 
 /**
- * Two-pass linkify of `company/...`, `repos/...`, `agents/...` e
+ * Two-pass linkify of `company/...`, `repos/...`, `agents/...` and
  * `sessions/...` paths into clickable fileLinks consumed by FileViewer.
  * First pass replaces markdown links; second pass walks text nodes only
- * (skips existing anchors) to avoid double-wrapping. `botAuthor` é o slug
- * do agente autor da mensagem (quando aplicável), usado pra reescrever
- * paths `sessions/<topic>` no namespace global `sessions/<agent>/<topic>`.
+ * (skips existing anchors) to avoid double-wrapping. `botAuthor` is the slug
+ * of the agent that authored the message (when applicable), used to rewrite
+ * `sessions/<topic>` paths into the global namespace `sessions/<agent>/<topic>`.
  */
 export function linkifyFilePaths(html: string, botAuthor?: string | null): string {
   const resolvePath = (raw: string) =>
@@ -184,8 +184,8 @@ export function linkifyFilePaths(html: string, botAuthor?: string | null): strin
   const tpl = document.createElement('template');
   tpl.innerHTML = s;
 
-  // 1.5: <img src="<base>/x.png" ...> -> reescreve src pra /api/files/read.
-  // Cobre o caso da markdown image syntax `![alt](path)` que marked gera como
+  // 1.5: <img src="<base>/x.png" ...> -> rewrites src to /api/files/read.
+  // Covers the markdown image syntax `![alt](path)`, which marked renders as
   // <img src="path">.
   for (const img of Array.from(tpl.content.querySelectorAll('img'))) {
     const src = img.getAttribute('src') || '';
@@ -238,13 +238,13 @@ export function linkifyFilePaths(html: string, botAuthor?: string | null): strin
   };
   walk(tpl.content);
 
-  // 3rd pass: pra cada fileLink que aponta pra imagem, anexa um <img>
-  // thumbnail logo apos o anchor (preview inline). Click no thumb tambem
-  // dispara o overlay (handler global no MessageBubble usa .fileLink).
+  // 3rd pass: for each fileLink pointing to an image, append an <img>
+  // thumbnail right after the anchor (inline preview). Clicking the thumb also
+  // opens the overlay (global handler in MessageBubble uses .fileLink).
   for (const a of Array.from(tpl.content.querySelectorAll('a.fileLink'))) {
     const path = (a as HTMLElement).dataset.filePath || '';
     if (!path || !isImagePath(path)) continue;
-    // Evita duplicar se o proximo sibling ja eh img inline
+    // Avoid duplicating if the next sibling is already an inline img
     const next = a.nextElementSibling;
     if (next && next.tagName === 'IMG' && next.classList.contains('inlineImage')) continue;
     const img = document.createElement('img');
@@ -306,8 +306,8 @@ export function addCodeCopyButtons(html: string): string {
  * Render a chat message: bot-authored content can already be HTML or
  * markdown — we run marked first (idempotent on plain HTML for our
  * subset), then sanitize, then expand emojis, then linkify file paths.
- * `botAuthor` é o slug do agente autor (quando bot) — usado pelo linkify
- * pra resolver paths `sessions/<topic>` no namespace global.
+ * `botAuthor` is the slug of the authoring agent (when a bot) — used by linkify
+ * to resolve `sessions/<topic>` paths into the global namespace.
  */
 export function renderBotMessage(raw: string, botAuthor?: string | null): string {
   const md = marked.parse(raw || '', { async: false }) as string;
@@ -316,12 +316,12 @@ export function renderBotMessage(raw: string, botAuthor?: string | null): string
 }
 
 /**
- * Mensagens de humanos passam pelo mesmo pipeline mas com `breaks: true`
- * — soft breaks (single \n) viram <br>. CommonMark default colapsa
- * single \n em espaco, e na pratica o humano espera "WYSIWYG" estilo
- * Slack/Discord (especialmente em paste de relatorio/output). Bots LLM
- * separam paragrafo com linha em branco, entao manter `breaks: false`
- * pra eles preserva markdown intencional.
+ * Human messages go through the same pipeline but with `breaks: true`
+ * — soft breaks (single \n) become <br>. CommonMark by default collapses
+ * a single \n into a space, and in practice the human expects Slack/Discord
+ * style "WYSIWYG" (especially when pasting a report/output). LLM bots
+ * separate paragraphs with a blank line, so keeping `breaks: false`
+ * for them preserves intentional markdown.
  */
 export function renderUserMessage(raw: string): string {
   const md = marked.parse(raw || '', { async: false, breaks: true }) as string;

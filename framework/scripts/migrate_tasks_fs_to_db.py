@@ -1,18 +1,18 @@
-"""Backfill idempotente: tasks em company/tasks/<slug>/metadata.yaml → Postgres.
+"""Idempotent backfill: tasks in company/tasks/<slug>/metadata.yaml → Postgres.
 
-Roda uma vez na instancia apos aplicar a migration 006. Le cada metadata.yaml
-de company/tasks/ (inclui _archive/ como archived_at=created_at), insere a
-linha em tasks.tasks + phases + worktrees.
+Runs once per instance after applying migration 006. Reads each metadata.yaml
+in company/tasks/ (including _archive/ as archived_at=created_at) and inserts
+the row into tasks.tasks + phases + worktrees.
 
-Execucao:
+Run:
     docker compose exec -T web python3 /app/framework/scripts/migrate_tasks_fs_to_db.py
 
-Ou via make:
+Or via make:
     make tasks-migrate
 
-Idempotente: ON CONFLICT DO UPDATE mantem o que ja foi backfillado.
-Nao deleta arquivos — operador remove manualmente quando validar que os
-dados estao OK no banco.
+Idempotent: ON CONFLICT DO UPDATE keeps what was already backfilled.
+Does not delete files — the operator removes them by hand after checking
+the data is OK in the database.
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
         try:
             meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
         except Exception as e:
-            print(f"  skip (yaml invalido) {task_dir.name}: {e}", file=sys.stderr)
+            print(f"  skip (invalid yaml) {task_dir.name}: {e}", file=sys.stderr)
             continue
         if not isinstance(meta, dict):
             continue
@@ -61,7 +61,7 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
         title = meta.get("title") or slug
         workflow = meta.get("workflow")
         status = meta.get("status") or "in_progress"
-        # Normaliza status que saiu de filesystem.
+        # Normalize status values coming from the filesystem.
         if status not in ("in_progress", "done", "blocked", "human_review"):
             status = "in_progress"
         current_step = None if archived else meta.get("current_step")
@@ -70,7 +70,7 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
         updated_at = _parse_iso(meta.get("updated_at")) or created_at
         archived_at = updated_at if archived else None
 
-        # Campos nao-schema vao pra metadata_extra.
+        # Non-schema fields go into metadata_extra.
         extra = {
             k: v for k, v in meta.items()
             if k not in (
@@ -81,7 +81,7 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
                 "worktrees", "assigned_topic", "__started_at",
             )
         }
-        # assigned_topic/__started_at sao dinamicos; nao persiste.
+        # assigned_topic/__started_at are dynamic; not persisted.
 
         task_id = await conn.fetchval(
             """INSERT INTO tasks.tasks
@@ -115,7 +115,7 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
             json.dumps(extra), archived_at, created_at, updated_at,
         )
 
-        # Phases. Limpa existentes e re-popula — idempotente sem checagem fina.
+        # Phases. Clear existing ones and repopulate — idempotent without fine-grained checks.
         await conn.execute("DELETE FROM tasks.phases WHERE task_id = $1", task_id)
         for idx, p in enumerate(meta.get("phases") or []):
             if not isinstance(p, dict):
@@ -136,7 +136,7 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
         # Worktrees.
         wts = meta.get("worktrees")
         if isinstance(wts, dict):
-            # idempotente: limpa e re-insere
+            # idempotent: clear and re-insert
             await conn.execute("DELETE FROM tasks.worktrees WHERE task_id = $1", task_id)
             for repo, info in wts.items():
                 if not isinstance(info, dict):
@@ -158,22 +158,22 @@ async def backfill_dir(conn: asyncpg.Connection, base: Path, archived: bool) -> 
 
 
 async def main():
-    # Paths default dentro do container web.
+    # Default paths inside the web container.
     tasks_dir = Path(os.environ.get("TASKS_DIR", "/workspace/company/tasks"))
     archive_dir = tasks_dir / "_archive"
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
-        print("ERRO: DATABASE_URL nao setado", file=sys.stderr)
+        print("ERROR: DATABASE_URL is not set", file=sys.stderr)
         sys.exit(1)
     if not tasks_dir.is_dir():
-        print(f"Nenhuma pasta em {tasks_dir} — nada pra migrar.")
+        print(f"No folder at {tasks_dir} — nothing to migrate.")
         return
 
     conn = await asyncpg.connect(dsn)
     try:
         active = await backfill_dir(conn, tasks_dir, archived=False)
         archived = await backfill_dir(conn, archive_dir, archived=True)
-        print(f"OK. {active} task(s) ativa(s), {archived} arquivada(s) migrada(s).")
+        print(f"OK. Migrated {active} active task(s), {archived} archived.")
     finally:
         await conn.close()
 

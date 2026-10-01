@@ -1,9 +1,9 @@
 #!/bin/bash
-# Atalho pra criar um novo agente: acrescenta entry minima em
-# instance/agents/agents.yaml e dispara o reconcile. Pra config avancada, edite
-# o yaml manualmente depois e rode `framework/scripts/reconcile.sh`.
+# Shortcut to create a new agent: appends a minimal entry to
+# instance/agents/agents.yaml and triggers reconcile. For advanced config, edit
+# the yaml by hand afterwards and run `framework/scripts/reconcile.sh`.
 #
-# Uso:
+# Usage:
 #   framework/scripts/new-agent.sh <name> "<Display Name>"
 set -euo pipefail
 
@@ -11,9 +11,9 @@ PROJECT_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
 if [ $# -lt 2 ]; then
-  echo "Uso: $0 <name> \"<Display Name>\""
-  echo "  name: slug lowercase (ex: contador, financeiro)"
-  echo "  Display Name: como aparece na UI (ex: \"Contador\", \"Financeiro\")"
+  echo "Usage: $0 <name> \"<Display Name>\""
+  echo "  name: lowercase slug (e.g. researcher, writer)"
+  echo "  Display Name: how it appears in the UI (e.g. \"Researcher\", \"Writer\")"
   exit 1
 fi
 
@@ -21,29 +21,29 @@ NAME="$1"
 DISPLAY_NAME="$2"
 AGENTS_YAML="instance/agents/agents.yaml"
 
-# Validacao do nome
+# Validate the name
 if ! [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,30}$ ]]; then
-  echo "ERRO: name deve ser lowercase, comecar com letra, so [a-z0-9-]. Recebido: $NAME" >&2
+  echo "ERROR: name must be lowercase, start with a letter, only [a-z0-9-]. Got: $NAME" >&2
   exit 1
 fi
 
-# Checa se ja existe
+# Check whether it already exists
 if grep -qE "^  - name: $NAME\$" "$AGENTS_YAML" 2>/dev/null; then
-  echo "ERRO: agente '$NAME' ja existe em $AGENTS_YAML" >&2
+  echo "ERROR: agent '$NAME' already exists in $AGENTS_YAML" >&2
   exit 1
 fi
 
 if [ ! -f "$AGENTS_YAML" ]; then
-  echo "ERRO: $AGENTS_YAML nao existe. Use framework/examples/agents.yaml.example como base." >&2
+  echo "ERROR: $AGENTS_YAML does not exist. Use framework/examples/agents.yaml.example as a base." >&2
   exit 1
 fi
 
-# Acrescenta entry minima (so o essencial; usuario ajusta depois)
+# Append a minimal entry (essentials only; the user adjusts it later)
 cat >> "$AGENTS_YAML" <<EOF
 
   - name: $NAME
     display_name: "$DISPLAY_NAME"
-    description: "TODO: descreva o papel deste agente em uma linha."
+    description: "TODO: describe this agent's role in one line."
     streams: [$NAME]
     pool_size: 2
     idle_timeout_sec: 900
@@ -59,14 +59,14 @@ cat >> "$AGENTS_YAML" <<EOF
       - mcp__ai_company__complete_phase
 EOF
 
-echo "✓ entry '$NAME' adicionada em $AGENTS_YAML"
+echo "✓ entry '$NAME' added to $AGENTS_YAML"
 echo ""
-echo "Edite os campos (description, write_access, allowed_tools, etc) antes de aplicar."
-echo "Quando estiver pronto, rode:"
+echo "Edit the fields (description, write_access, allowed_tools, etc) before applying."
+echo "When ready, run:"
 echo "  ./framework/scripts/reconcile.sh"
 echo ""
-echo "Pra aplicar direto agora (com os defaults), responda 'y':"
-read -r -p "Aplicar agora? (y/N) " APPLY
+echo "To apply right now (with the defaults), answer 'y':"
+read -r -p "Apply now? (y/N) " APPLY
 if [ "$APPLY" = "y" ] || [ "$APPLY" = "Y" ]; then
   ./framework/scripts/reconcile.sh
 fi

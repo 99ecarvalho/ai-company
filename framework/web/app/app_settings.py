@@ -1,12 +1,12 @@
-"""KV-backed config de instancia, persistida em web.app_settings.
+"""KV-backed instance config, persisted in web.app_settings.
 
-Single source of truth pra config editavel em runtime via PWA Settings.
-Hoje cobre:
-  - default_stream: nome do stream default usado pelo PWA.
-  - vapid: keypair de push notifications + contact email.
+Single source of truth for config editable at runtime via PWA Settings.
+Currently covers:
+  - default_stream: name of the default stream used by the PWA.
+  - vapid: push notification keypair + contact email.
 
-Politica de escrita: idempotente. SET sempre upserta. Generate VAPID
-recusa se ja existe (caller passa force=True pra reciclar).
+Write policy: idempotent. SET always upserts. Generate VAPID
+refuses if one already exists (caller passes force=True to rotate).
 """
 from __future__ import annotations
 
@@ -23,14 +23,14 @@ from . import db
 # ---------- low-level KV ----------
 
 async def get(key: str) -> dict | None:
-    """Le valor cru da DB (JSONB -> dict). None se ausente."""
+    """Reads the raw value from the DB (JSONB -> dict). None if absent."""
     row = await db.fetch_one(
         "SELECT value FROM web.app_settings WHERE key = $1", key,
     )
     if row is None:
         return None
     val = row["value"]
-    # asyncpg devolve JSONB como string em alguns paths; normaliza.
+    # asyncpg returns JSONB as a string in some paths; normalize.
     if isinstance(val, str):
         return json.loads(val)
     return dict(val) if val is not None else None
@@ -56,7 +56,7 @@ async def delete(key: str) -> None:
 # ---------- default_stream ----------
 
 async def get_default_stream() -> str:
-    """Nome do stream default. "" = sem default (PWA pede pra escolher)."""
+    """Default stream name. "" = no default (the PWA asks the user to pick one)."""
     row = await get("default_stream")
     if row and row.get("name"):
         return str(row["name"])
@@ -78,7 +78,7 @@ def _b64url(raw: bytes) -> str:
 
 
 def generate_vapid_keypair() -> dict[str, str]:
-    """EC P-256 keypair em base64url sem padding (formato esperado pelo
+    """EC P-256 keypair in unpadded base64url (the format expected by
     PushManager.subscribe applicationServerKey)."""
     priv = ec.generate_private_key(ec.SECP256R1())
     priv_bytes = priv.private_numbers().private_value.to_bytes(32, "big")
@@ -93,9 +93,9 @@ def generate_vapid_keypair() -> dict[str, str]:
 
 
 async def get_vapid() -> dict | None:
-    """Retorna {public_key, private_key, contact_email} ou None. Chaves
-    parciais (ex: so public) sao tratadas como ausentes pra evitar config
-    quebrada — generate sempre escreve as duas juntas."""
+    """Returns {public_key, private_key, contact_email} or None. Partial
+    keys (e.g. only public) are treated as absent to avoid a broken
+    config — generate always writes both together."""
     row = await get("vapid")
     if row and row.get("public_key") and row.get("private_key"):
         return {
@@ -127,8 +127,8 @@ async def set_vapid(
 
 
 async def set_vapid_contact_email(email: str, *, user_id: int | None = None) -> None:
-    """Atualiza so o contact_email mantendo as chaves. No-op se nao tem
-    keypair configurado ainda."""
+    """Updates only contact_email, keeping the keys. No-op if no
+    keypair is configured yet."""
     current = await get("vapid") or {}
     if not (current.get("public_key") and current.get("private_key")):
         return

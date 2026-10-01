@@ -13,11 +13,11 @@
     error = null;
     try {
       await authLogin(email.trim(), password);
-      // Full reload (nao goto/SPA): o `+layout.svelte` so chama
-      // startConversationsStream/startTasksStream em onMount, e onMount
-      // nao re-executa numa navegacao SPA. Sem reload, streams ficariam
-      // mortos na primeira sessao pos-login — sidebar mostraria
-      // "No conversations yet" ate o user dar refresh manualmente.
+      // Full reload (not goto/SPA): `+layout.svelte` only calls
+      // startConversationsStream/startTasksStream in onMount, and onMount
+      // doesn't re-run on an SPA navigation. Without a reload, the streams would
+      // be dead in the first post-login session — the sidebar would show
+      // "No conversations yet" until the user refreshed manually.
       window.location.assign('/');
     } catch (e) {
       error = e instanceof ApiError ? e.detail : String(e);

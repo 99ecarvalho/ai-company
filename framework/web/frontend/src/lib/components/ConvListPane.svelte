@@ -8,9 +8,9 @@
     refreshConversations
   } from '$lib/stores/conversations';
 
-  // D-96: contador "Active (N)" / "Closed (N)" conta apenas raizes
-  // (parent_conv_id == null). Filhas saem da sidebar — viraram chips no
-  // header da raiz. Contar todas inflaria o numero com filhas legacy.
+  // D-96: the "Active (N)" / "Closed (N)" counter counts only roots
+  // (parent_conv_id == null). Children left the sidebar — they became chips
+  // in the root's header. Counting all would inflate the number with legacy children.
   const rootCount = $derived(
     $conversations.filter((c) => c.parent_conv_id == null).length
   );
@@ -49,8 +49,8 @@
     </button>
   </header>
 
-  <!-- Search inline: filtro local de conversas por topic/agent/preview.
-       Busca full-text de mensagens historicas continua em /search. -->
+  <!-- Inline search: local conversation filter by topic/agent/preview.
+       Full-text search of historical messages still lives at /search. -->
   <div class="border-b border-border p-2">
     <div class="relative">
       <Search class="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />

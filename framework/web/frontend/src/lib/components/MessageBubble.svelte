@@ -14,18 +14,18 @@
   }
   let { msg }: Props = $props();
 
-  // Backend nao seta is_self no payload de mensagens — derivamos comparando
-  // sender com o username do usuario logado. Sem essa derivacao, mensagens
-  // do humano caem no variant 'other' e perdem o destaque (bg-accent +
-  // self-end).
+  // The backend doesn't set is_self in the message payload — we derive it by
+  // comparing sender with the logged-in user's username. Without this, the
+  // human's messages fall into the 'other' variant and lose the highlight
+  // (bg-accent + self-end).
   const isSelf = $derived(
     msg.is_self === true ||
       (!!$currentUser?.username && msg.sender === $currentUser.username)
   );
   const variant = $derived(isSelf ? 'self' : msg.is_bot ? 'bot' : 'other');
-  // Bot mantem CommonMark default (breaks: false) pra preservar markdown
-  // intencional do LLM. Humano usa renderUserMessage (breaks: true) — soft
-  // breaks viram <br>, comportamento Slack-like esperado em paste.
+  // Bot keeps the CommonMark default (breaks: false) to preserve the LLM's
+  // intentional markdown. Human uses renderUserMessage (breaks: true) — soft
+  // breaks become <br>, the Slack-like behavior expected on paste.
   const html = $derived(
     msg.is_bot
       ? renderBotMessage(msg.content || '', msg.sender)
@@ -81,10 +81,10 @@
     if (!a || !a.dataset.filePath) return;
     e.preventDefault();
     const path = a.dataset.filePath;
-    // Regra: nunca fazer um redirect que tire o humano da conversa.
-    // Diretorio → abre /files em nova aba (nao navega na aba atual).
-    // File viewable → FileViewer overlay (modal inline).
-    // File nao-viewable → download via anchor (fica na aba atual).
+    // Rule: never redirect in a way that takes the human out of the conversation.
+    // Directory → opens /files in a new tab (doesn't navigate the current tab).
+    // Viewable file → FileViewer overlay (inline modal).
+    // Non-viewable file → download via anchor (stays on the current tab).
     if (path.endsWith('/') || path === '') {
       const cleaned = path.replace(/\/+$/, '');
       window.open(`/files?path=${encodeURIComponent(cleaned)}`, '_blank', 'noopener');
@@ -102,7 +102,7 @@
     }
   }
 
-  /** Strip HTML/markdown pra ler texto puro no TTS. */
+  /** Strip HTML/markdown to read plain text in TTS. */
   function plainText(htmlSrc: string): string {
     const tmp = document.createElement('div');
     tmp.innerHTML = htmlSrc;
@@ -130,10 +130,10 @@
     }
   }
 
-  // Marca codeBlocks que excedem o cap de altura (CSS .mdBody .codeBlock pre
-  // max-height) com data-expandable="true". O CSS usa esse flag pra mostrar
-  // o botao Expand so quando ha conteudo escondido — codeblocks curtos nao
-  // ganham UI inutil.
+  // Marks codeBlocks that exceed the height cap (CSS .mdBody .codeBlock pre
+  // max-height) with data-expandable="true". The CSS uses that flag to show
+  // the Expand button only when there's hidden content — short code blocks
+  // don't get useless UI.
   $effect(() => {
     void html;
     if (!bodyEl) return;
@@ -154,12 +154,12 @@
   });
 </script>
 
-<!-- Bubble chat-style. User (self): alinha direita, bg-bubble-sent (tint
-     suave de accent, ~22% no dark / 15% no light — registra "azul =
-     enviado" sem o pico saturado), canto inf-direito reto. Agente:
-     alinha esquerda, bg-bubble-recv (raised neutro), canto inf-esquerdo
-     reto. Texto fica em text-fg pra ambos. max-w-[78%] garante ~22%
-     vazio do lado oposto mesmo em msgs longas. -->
+<!-- Chat-style bubble. User (self): right-aligned, bg-bubble-sent (soft
+     accent tint, ~22% in dark / 15% in light — reads as "blue = sent"
+     without the saturated peak), square bottom-right corner. Agent:
+     left-aligned, bg-bubble-recv (neutral raised), square bottom-left
+     corner. Text stays text-fg for both. max-w-[78%] guarantees ~22%
+     empty space on the opposite side even for long msgs. -->
 <div
   class="flex min-w-0 max-w-[78%] flex-col gap-1 rounded-2xl border px-3 py-2 text-sm text-fg shadow-sm"
   class:self-end={variant === 'self'}
@@ -210,5 +210,5 @@
   </div>
 </div>
 
-<!-- Estilos de markdown movidos pra app.css (.mdBody) — compartilhados
-     entre MessageBubble (chat) e FileViewerOverlay (visualizador .md). -->
+<!-- Markdown styles moved to app.css (.mdBody) — shared
+     between MessageBubble (chat) and FileViewerOverlay (.md viewer). -->

@@ -23,10 +23,10 @@
   let submitting = $state(false);
   let error = $state<string | null>(null);
 
-  // Seed quando o item muda (abre). initial agent default =
-  // WEB_DEFAULT_STREAM (vindo de /api/streams.default) — normalmente o
-  // product-owner, que eh quem produz a triagem formal. Usuario pode
-  // sobrescrever antes de confirmar.
+  // Seed when the item changes (opens). Initial agent default =
+  // WEB_DEFAULT_STREAM (from /api/streams.default) — usually the
+  // product-owner, who produces the formal triage. The user can
+  // override it before confirming.
   $effect(() => {
     if (!item) return;
     taskSlug = item.slug;

@@ -18,11 +18,11 @@
   const hasAny = $derived($conversations.length > 0);
   const tree = $derived($conversationTree);
 
-  // D-96: sidebar mostra apenas conversas raiz (parent_conv_id IS NULL).
-  // Filhas (delegacoes via ask_agent) saem da sidebar e aparecem como
-  // chips no header da raiz, com overlay read-only ao clicar. Isso
-  // elimina o multi-nesting visual e o problema "respondo no pai ou
-  // no filho?". Filhas continuam em tree.byId pra navegacao por chip.
+  // D-96: the sidebar shows only root conversations (parent_conv_id IS NULL).
+  // Children (delegations via ask_agent) leave the sidebar and appear as
+  // chips in the root's header, with a read-only overlay on click. This
+  // removes the visual multi-nesting and the "do I reply on the parent or
+  // the child?" problem. Children stay in tree.byId for chip navigation.
 </script>
 
 <div class="flex-1 overflow-y-auto">

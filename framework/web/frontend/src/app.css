@@ -2,10 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* mdBody — estilos de markdown renderizado (marked -> HTML). Usado por
- * MessageBubble (chat) e FileViewerOverlay (visualizador de .md). Substitui
- * @tailwindcss/typography (prose) que nao esta instalado. Preflight do
- * Tailwind zera tudo; aqui reintroduz o essencial. */
+/* mdBody — styles for rendered markdown (marked -> HTML). Used by
+ * MessageBubble (chat) and FileViewerOverlay (.md viewer). Replaces
+ * @tailwindcss/typography (prose), which is not installed. Tailwind's
+ * preflight resets everything; this brings back the essentials. */
 .mdBody > *:first-child { margin-top: 0; }
 .mdBody > *:last-child { margin-bottom: 0; }
 .mdBody p { margin: 0.5em 0; }
@@ -34,10 +34,10 @@
   border: 0;
   border-top: 1px solid var(--border);
 }
-/* Tabelas markdown sangram em mobile: largura intrinseca nao respeita
-   parent. `display: block` + scroll-x interno mantem a tabela legivel
-   sem estourar o bubble. `width: max-content` preserva colunas
-   ajustadas ao conteudo dentro do scroll container. */
+/* Markdown tables bleed on mobile: intrinsic width ignores the
+   parent. `display: block` + internal scroll-x keeps the table readable
+   without overflowing the bubble. `width: max-content` keeps columns
+   sized to their content inside the scroll container. */
 .mdBody table {
   display: block;
   margin: 0.5em 0;
@@ -57,8 +57,8 @@
   max-width: 100%;
   font-size: 12px;
 }
-/* Inline code com path/identifier longo (ex: nome de coluna SQL) sem
-   word-break vaza pra fora do bubble em mobile. */
+/* Inline code with a long path/identifier (e.g. a SQL column name) without
+   word-break leaks out of the bubble on mobile. */
 .mdBody code {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -73,15 +73,15 @@
   padding: 0;
   background: transparent;
 }
-/* Wrapper injetado por addCodeCopyButtons. Toolbar fixo no canto superior
-   direito (Expand + Copy). Hover-only em desktop (pointer fino), sempre
-   visivel em touch (sem hover). */
+/* Wrapper injected by addCodeCopyButtons. Toolbar pinned to the top-right
+   corner (Expand + Copy). Hover-only on desktop (fine pointer), always
+   visible on touch (no hover). */
 .mdBody .codeBlock {
   position: relative;
 }
-/* Cap inicial de altura: pre que excederia 200px fica truncado com fade-out
-   no rodape como dica visual. data-expandable e setado via JS no
-   MessageBubble apos medir scrollHeight do pre. */
+/* Initial height cap: a pre that would exceed 200px is truncated with a
+   fade-out at the bottom as a visual hint. data-expandable is set via JS in
+   MessageBubble after measuring the pre's scrollHeight. */
 .mdBody .codeBlock pre {
   max-height: 200px;
   transition: max-height 240ms ease;
@@ -176,7 +176,7 @@
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
-/* uPlot — adapta cores do chart ao tema (dark/light) */
+/* uPlot — adapts chart colors to the theme (dark/light) */
 .u-legend,
 .u-legend .u-label,
 .u-legend .u-value {
@@ -211,14 +211,14 @@
     --panel2: #1c232d;
     --border: #30363d;
     --on-accent: #ffffff;
-    /* Bolha de mensagem recebida (agente). No dark, sobe pra panel2 pra
-       criar contraste real contra o bg do feed (panel == surface,
+    /* Received message bubble (agent). In dark, goes up to panel2 to
+       create real contrast against the feed bg (panel == surface,
        panel2 == raised). */
     --bubble-recv: #1c232d;
     --bubble-recv-border: #3a4350;
-    /* Bolha enviada (humano). Tint suave do accent — registra "azul =
-       enviado" sem o pico saturado do bg-accent puro. blend ~18% no dark
-       sobre panel2 mantem leitura confortavel. */
+    /* Sent bubble (human). Soft accent tint — reads as "blue =
+       sent" without the saturated peak of plain bg-accent. A ~18% blend in dark
+       over panel2 keeps reading comfortable. */
     --bubble-sent: color-mix(in srgb, var(--accent) 22%, var(--panel2));
     --bubble-sent-border: color-mix(in srgb, var(--accent) 45%, var(--panel2));
     --sidebar-w: 300px;
@@ -238,11 +238,11 @@
     --panel2: #f6f8fa;
     --border: #d0d7de;
     --on-accent: #ffffff;
-    /* No light o bg do feed e cinza-claro (#f6f8fa); branco puro destaca
-       a bolha sem virar gritante. */
+    /* In light the feed bg is light gray (#f6f8fa); pure white makes
+       the bubble stand out without being loud. */
     --bubble-recv: #ffffff;
     --bubble-recv-border: #d0d7de;
-    /* No light, blend mais leve (15%) sobre branco evita lavar o azul. */
+    /* In light, a lighter blend (15%) over white avoids washing out the blue. */
     --bubble-sent: color-mix(in srgb, var(--accent) 15%, #ffffff);
     --bubble-sent-border: color-mix(in srgb, var(--accent) 38%, #ffffff);
   }
@@ -267,8 +267,8 @@
     box-sizing: border-box;
   }
 
-  /* Scrollbars: coerentes com o tema (claro + escuro) via tokens CSS.
-     Firefox usa scrollbar-width/color; WebKit precisa do ::-webkit-scrollbar. */
+  /* Scrollbars: consistent with the theme (light + dark) via CSS tokens.
+     Firefox uses scrollbar-width/color; WebKit needs ::-webkit-scrollbar. */
   * {
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--fg) 28%, transparent) transparent;
@@ -296,8 +296,8 @@
 }
 
 @layer utilities {
-  /* iOS notch / Android gesture-bar safe areas. Use combined com bottom-nav
-     fixo, FAB e header sticky. */
+  /* iOS notch / Android gesture-bar safe areas. Use together with the fixed
+     bottom-nav, FAB and sticky header. */
   .pt-safe { padding-top: env(safe-area-inset-top); }
   .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
   .pl-safe { padding-left: env(safe-area-inset-left); }

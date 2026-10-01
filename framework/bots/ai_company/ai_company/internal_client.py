@@ -1,11 +1,11 @@
-"""Client interno pra broker HTTP.
+"""Internal client for the HTTP broker.
 
-- Envio de mensagens: POST /api/messages no broker (HTTP).
-- Recebimento de mensagens: Postgres LISTEN direto (pg_notify dispara em cada
-  INSERT em messaging.messages via trigger).
-- Eventos sao convertidos para um shape padronizado (dict com type, sender_id,
+- Sending messages: POST /api/messages on the broker (HTTP).
+- Receiving messages: direct Postgres LISTEN (a trigger fires pg_notify on
+  every INSERT into messaging.messages).
+- Events are converted to a standard shape (dict with type, sender_id,
   sender_full_name, sender_email, subject, display_recipient, content, id)
-  consumido pelo Dispatcher/SessionManager.
+  consumed by the Dispatcher/SessionManager.
 """
 from __future__ import annotations
 
@@ -43,20 +43,20 @@ class TopicKey:
         full = f"{stream_safe}__{topic_safe}"
         if len(full.encode("utf-8")) <= SLUG_MAX_BYTES:
             return full
-        # Topic muito longo (ex: descrição inteira passada como next_topic).
-        # Trunca byte-safe e anexa hash curto pra manter slug determinístico e único.
+        # Topic too long (e.g. a whole description passed as next_topic).
+        # Truncate byte-safely and append a short hash to keep the slug deterministic and unique.
         digest = hashlib.sha1(self.topic.encode("utf-8")).hexdigest()[:10]
-        # Reserva: stream_safe + "__" + "__" + digest
+        # Reserved: stream_safe + "__" + "__" + digest
         reserved = len(stream_safe.encode("utf-8")) + 2 + 2 + len(digest)
         keep_bytes = max(10, SLUG_MAX_BYTES - reserved)
         topic_bytes = topic_safe.encode("utf-8")[:keep_bytes]
-        # Remove um último byte parcial de multibyte (decode com 'ignore' corta no ponto certo)
+        # Drop a trailing partial multibyte char (decode with 'ignore' cuts at the right point)
         topic_trunc = topic_bytes.decode("utf-8", errors="ignore").rstrip("_")
         return f"{stream_safe}__{topic_trunc}__{digest}"
 
 
 class InternalClient:
-    """Cliente HTTP do broker interno (envio + LISTEN/NOTIFY pra eventos)."""
+    """HTTP client for the internal broker (sending + LISTEN/NOTIFY for events)."""
 
     def __init__(self, broker_url: str, token: str, streams: list[str],
                  database_url: str | None = None):
@@ -69,11 +69,11 @@ class InternalClient:
         self._stream_id_by_name: dict[str, int] = {}
         self._subscribed_convs: set[int] = set()
         self._listen_conn: asyncpg.Connection | None = None
-        # Serializa chamadas em `_listen_conn` — asyncpg nao permite
-        # operacoes concorrentes na mesma conexao (stmt_exclusive_section).
-        # Sem este lock, N `add_listener` em paralelo (ex: ask_agents_many)
-        # derrubam todos menos um com InterfaceError, deixando o agente
-        # asker surdo pras respostas daquelas convs.
+        # Serializes calls on `_listen_conn` — asyncpg does not allow
+        # concurrent operations on the same connection (stmt_exclusive_section).
+        # Without this lock, N parallel `add_listener` calls (e.g. ask_agents_many)
+        # fail all but one with InterfaceError, leaving the asking agent
+        # deaf to the replies on those convs.
         self._listen_lock = asyncio.Lock()
         self._listener_task: asyncio.Task | None = None
         self._http: aiohttp.ClientSession | None = None
@@ -81,11 +81,11 @@ class InternalClient:
 
     @property
     def owned_streams(self) -> list[str]:
-        """Streams que este agente assina (fonte de eventos dele).
-        Usado pelo dispatcher pra filtrar eventos que chegam via
-        `subscribe_to_conversation` mas sao de conv filha em outro
-        stream — esses so devem destravar ask_agent/ask_human, nao
-        virar eventos enfileirados no topic loop local (D-75)."""
+        """Streams this agent subscribes to (its event sources).
+        Used by the dispatcher to filter events that arrive via
+        `subscribe_to_conversation` but belong to a child conv in another
+        stream — those must only unblock ask_agent/ask_human, not
+        become events queued in the local topic loop (D-75)."""
         return list(self._streams)
 
     @property
@@ -116,22 +116,22 @@ class InternalClient:
                 "full_name": me.get("username"),
                 "username": me.get("username"),
             }
-        # stream IDs (pros LISTEN channels)
+        # stream IDs (for the LISTEN channels)
         async with self._http.get(f"{self._broker}/api/streams") as r:
             r.raise_for_status()
             resp = await r.json()
             streams = resp.get("streams", []) if isinstance(resp, dict) else resp
             for s in streams:
                 self._stream_id_by_name[s["name"]] = s["id"]
-        # Catch-up de unread (D-52) ANTES do LISTEN. Pra cada stream, busca
-        # cursor persistido (last_read_message_id) e replaya msgs faltantes
-        # do broker. Em seguida ativa o LISTEN — janela entre o ultimo replay
-        # e o add_listener eh desprezivel (um UPDATE de cursor + add_listener).
-        # pg_notify nao seria entregue enquanto o LISTEN nao esta ativo, entao
-        # msgs novas nesse intervalo tambem entram no replay na proxima vez.
+        # Unread catch-up (D-52) BEFORE LISTEN. For each stream, fetch the
+        # persisted cursor (last_read_message_id) and replay missing msgs
+        # from the broker. Then enable LISTEN — the window between the last
+        # replay and add_listener is negligible (one cursor UPDATE + add_listener).
+        # pg_notify would not be delivered while LISTEN is not active, so
+        # new msgs in that window also get replayed next time.
         await self._catch_up_unread()
 
-        # Inicia LISTEN em cada stream configurado
+        # Start LISTEN on each configured stream
         self._listen_conn = await asyncpg.connect(self._database_url)
         for stream in self._streams:
             sid = self._stream_id_by_name.get(stream)
@@ -139,9 +139,9 @@ class InternalClient:
                 log.warning("internal_client.stream_not_found", stream=stream)
                 continue
             await self._listen_conn.add_listener(f"msg_stream_{sid}", self._on_notify)
-        # LISTEN no canal global `agent_ctrl` pra eventos de controle (cancel etc).
-        # Payload eh JSON com `stream` — filtramos em `_on_ctrl_notify` pros
-        # streams que este agente escuta.
+        # LISTEN on the global `agent_ctrl` channel for control events (cancel etc).
+        # Payload is JSON with `stream` — `_on_ctrl_notify` filters to the
+        # streams this agent listens to.
         await self._listen_conn.add_listener("agent_ctrl", self._on_ctrl_notify)
         log.info(
             "internal_client.started",
@@ -150,16 +150,16 @@ class InternalClient:
         )
 
     async def _catch_up_unread(self) -> None:
-        """Replaya mensagens que chegaram enquanto o bot esteve down.
+        """Replays messages that arrived while the bot was down.
 
-        Pra cada stream inscrito, busca cursor (`GET /api/subscriptions/cursor`)
-        e pede msgs `id > last_read` via `GET /api/messages?stream&since_id`.
-        Cada msg vira evento no mesmo shape do LISTEN path e entra no pipeline.
-        Cursor avanca ao fim do replay de cada stream.
+        For each subscribed stream, fetch the cursor (`GET /api/subscriptions/cursor`)
+        and request msgs with `id > last_read` via `GET /api/messages?stream&since_id`.
+        Each msg becomes an event in the same shape as the LISTEN path and enters the pipeline.
+        The cursor advances at the end of each stream's replay.
 
-        Em primeira subida (cursor NULL), setamos pro max(id) atual do stream
-        SEM replayar — evita avalanche de replays de todo o historico na
-        instalacao. Catch-up genuino acontece da 2a subida em diante.
+        On first boot (cursor NULL), we set it to the stream's current max(id)
+        WITHOUT replaying — avoids an avalanche replaying the whole history at
+        install time. Real catch-up happens from the 2nd boot onward.
         """
         if self._http is None:
             return
@@ -173,9 +173,9 @@ class InternalClient:
                     params={"stream": stream},
                 ) as r:
                     if r.status == 404:
-                        # subscription ainda nao existe — reconcile cria, mas em
-                        # race de boot pode nao ter sido aplicada. Pula; proxima
-                        # vez pega.
+                        # subscription does not exist yet — reconcile creates it, but
+                        # in a boot race it may not have been applied. Skip; next
+                        # time picks it up.
                         log.warning("internal_client.cursor_sub_missing", stream=stream)
                         continue
                     r.raise_for_status()
@@ -186,15 +186,15 @@ class InternalClient:
                 continue
 
             if last_read is None:
-                # Primeira subida: semeia cursor com a ultima msg do stream
-                # e nao replaya. Evita avalanche de N meses de historico.
+                # First boot: seed the cursor with the stream's last msg
+                # and do not replay. Avoids an avalanche of N months of history.
                 max_id = await self._fetch_max_stream_id(stream)
                 if max_id > 0:
                     await self._save_cursor(stream, max_id)
                 log.info("internal_client.cursor_seeded", stream=stream, last_read=max_id)
                 continue
 
-            # Replay: pagina ate esvaziar. Limit 500 por request; loop incrementa.
+            # Replay: page until empty. Limit 500 per request; loop advances.
             replayed = 0
             page_cursor = last_read
             while True:
@@ -211,13 +211,13 @@ class InternalClient:
                 if not rows:
                     break
                 for m in rows:
-                    # Ignora msgs proprias (bot nao consome o que ele mesmo postou)
+                    # Skip own msgs (the bot does not consume what it posted itself)
                     if m.get("sender_id") == self.user_id:
                         page_cursor = max(page_cursor, m["id"])
                         continue
-                    # Migration 026: catch-up tambem ignora echoes (mesma
-                    # justificativa do _on_notify) — cursor avanca pra nao
-                    # ficar em loop de replay.
+                    # Migration 026: catch-up also skips echoes (same
+                    # rationale as _on_notify) — the cursor advances to avoid
+                    # a replay loop.
                     if m.get("kind", "regular") != "regular":
                         page_cursor = max(page_cursor, m["id"])
                         continue
@@ -236,19 +236,19 @@ class InternalClient:
                 )
 
     async def _fetch_max_stream_id(self, stream: str) -> int:
-        """Descobre max(id) do stream consultando /api/messages com since=0 limit=1
-        ordenado DESC (o endpoint retorna ASC, entao fazemos loop com salto).
-        Solucao simples: busca limit=1 partindo de since_id=0 e assume 1 pagina;
-        pra stream com historico vasto, seeding com max=0 tbm eh aceitavel
-        (so significa que vai replayar tudo no proximo start — ja eh o
-        comportamento que queremos evitar; raro em producao porque o seed
-        ocorre exatamente na instalacao). Trade-off aceito pra nao criar
-        endpoint novo so pra isso.
+        """Finds the stream's max(id) by querying /api/messages with since=0 limit=1
+        ordered DESC (the endpoint returns ASC, so we loop with jumps).
+        Simple solution: fetch limit=1 starting at since_id=0 and assume 1 page;
+        for a stream with a large history, seeding with max=0 is also acceptable
+        (it only means everything is replayed on the next start — which is the
+        behavior we want to avoid; rare in production because seeding
+        happens right at install time). Trade-off accepted to avoid a new
+        endpoint just for this.
         """
         if self._http is None:
             return 0
-        # Bound otimista: pega 500 msgs e pega o max id. Na primeira subida
-        # isso eh 0 (stream vazio) ou <=500. Raro ter mais.
+        # Optimistic bound: fetch 500 msgs and take the max id. On first boot
+        # this is 0 (empty stream) or <=500. Rarely more.
         try:
             async with self._http.get(
                 f"{self._broker}/api/messages",
@@ -280,25 +280,25 @@ class InternalClient:
             log.exception("internal_client.cursor_save_exc", stream=stream)
 
     def mark_processed(self, stream: str, message_id: int) -> None:
-        """Avanca cursor pra `message_id` depois que o dispatcher terminou
-        de processar o turno daquela msg (D-78). Fire-and-forget.
+        """Advances the cursor to `message_id` after the dispatcher has finished
+        processing that msg's turn (D-78). Fire-and-forget.
 
-        Se chamado varias vezes pro mesmo stream, o broker faz
-        `GREATEST(atual, novo)` — cursor nunca regride. Se stream nao e
-        dos assinados por este agente, no-op.
+        If called several times for the same stream, the broker does
+        `GREATEST(current, new)` — the cursor never goes back. If the stream is
+        not one this agent subscribes to, no-op.
         """
         if not stream or stream not in self._streams:
             return
         asyncio.create_task(self._save_cursor(stream, message_id))
 
     def _event_from_message(self, m: dict) -> dict:
-        """Converte linha de /api/messages no shape de evento do Dispatcher.
-        Mesma forma que _enrich_and_enqueue monta pra notifies — centralizado
-        aqui pra reuso pelo catch-up.
+        """Converts a /api/messages row into the Dispatcher event shape.
+        Same shape _enrich_and_enqueue builds for notifies — centralized
+        here so catch-up can reuse it.
 
-        D-87: inclui `conversation_id` pra que claude_runner.handle possa
-        propagar ao McpBroker via register_topic — necessário pro handler
-        MCP de ask_agent passar parent_conv_id na criação da conv filha.
+        D-87: includes `conversation_id` so claude_runner.handle can
+        propagate it to the McpBroker via register_topic — needed by the
+        ask_agent MCP handler to pass parent_conv_id when creating the child conv.
         """
         return {
             "id": m["id"],
@@ -318,19 +318,19 @@ class InternalClient:
         self._stopped.set()
 
     def _on_notify(self, _conn, _pid, _channel: str, payload: str) -> None:
-        """Callback do LISTEN — roda no loop do asyncpg. Enriquece e enfileira."""
+        """LISTEN callback — runs in the asyncpg loop. Enriches and enqueues."""
         try:
             data = json.loads(payload)
-            # Filtro: ignora msgs proprias
+            # Filter: skip own msgs
             if data.get("sender_id") == self.user_id:
                 return
-            # Migration 026: ignora kind != 'regular' — echoes (D-100 forward
-            # de reply de conv-filha) sao puramente visuais, nao acordam o
-            # runner. Sem isso, o agente parent ganhava um turn extra
-            # redundante toda vez que um agente filho respondia (caso
-            # observado em 2026-04-28: PO escreveu "tres opcoes" e
-            # 13s depois acordou pra escrever "ja apresentei as tres
-            # opcoes" — gerado pelo eco do reply do executor).
+            # Migration 026: skip kind != 'regular' — echoes (D-100 forward
+            # of a child-conv reply) are purely visual and do not wake the
+            # runner. Without this, the parent agent got a redundant extra
+            # turn every time a child agent replied (case observed on
+            # 2026-04-28: the parent wrote "three options" and 13s later
+            # woke up to write "I already presented the three options" —
+            # triggered by the echo of the child's reply).
             if data.get("kind", "regular") != "regular":
                 return
             asyncio.create_task(self._enrich_and_enqueue(data))
@@ -338,8 +338,8 @@ class InternalClient:
             log.exception("internal_client.notify_parse_failed", payload=payload[:200])
 
     def _on_ctrl_notify(self, _conn, _pid, _channel: str, payload: str) -> None:
-        """Callback do LISTEN `agent_ctrl` — eventos de controle do framework
-        (cancel_topic etc). Filtra pelo stream que o agente escuta."""
+        """`agent_ctrl` LISTEN callback — framework control events
+        (cancel_topic etc). Filters by the streams the agent listens to."""
         try:
             data = json.loads(payload)
             stream = data.get("stream")
@@ -353,14 +353,14 @@ class InternalClient:
                 "user_id": data.get("user_id"),
                 "silent": bool(data.get("silent", False)),
             }
-            # Enfileira direto (sem enrichment — ja temos tudo no payload).
+            # Enqueue directly (no enrichment — the payload has everything).
             self._queue.put_nowait(ctrl_event)
         except Exception:
             log.exception("internal_client.ctrl_notify_failed", payload=payload[:200])
 
     async def _enrich_and_enqueue(self, data: dict) -> None:
-        """Busca stream/topic/sender metadata via HTTP (cache-friendly no futuro) e
-        converte pra shape de evento padronizado consumido pelo Dispatcher."""
+        """Fetches stream/topic/sender metadata via HTTP (cache-friendly in the future) and
+        converts it to the standard event shape consumed by the Dispatcher."""
         if self._http is None:
             return
         conv_id = data["conversation_id"]
@@ -377,21 +377,21 @@ class InternalClient:
             m = rows[0]
         event = self._event_from_message(m)
         await self._queue.put(event)
-        # D-78: cursor NAO avanca aqui (pre-D-78 avancava pra pular replay de
-        # msgs ja enfileiradas). Problema: se o container caisse com msg na
-        # queue in-memory, cursor estava adiante → catch-up no proximo start
-        # nao replayava → msg perdida. Agora o dispatcher chama
-        # `mark_processed` apos handler.handle terminar (em _run_turn),
-        # garantindo que so avanca depois de turn concluido. Replay duplicado
-        # no restart e tolerado: dispatcher re-enfileira, claude_runner
-        # resume pelo session_id, Claude ignora ou reprocessa — preferivel a
-        # perder a msg.
+        # D-78: the cursor does NOT advance here (pre-D-78 it did, to skip replay of
+        # already-queued msgs). Problem: if the container died with a msg in the
+        # in-memory queue, the cursor was ahead → catch-up on the next start
+        # did not replay it → msg lost. Now the dispatcher calls
+        # `mark_processed` after handler.handle finishes (in _run_turn),
+        # so it only advances after the turn completes. A duplicate replay
+        # on restart is tolerated: the dispatcher re-enqueues, claude_runner
+        # resumes by session_id, Claude ignores or reprocesses — better than
+        # losing the msg.
 
     async def subscribe_to_conversation(self, conversation_id: int) -> bool:
-        """LISTEN no canal `msg_conv_<conversation_id>` — escuta apenas
-        mensagens dessa conversa especifica. Usado por ask_agent pra aguardar
-        resposta do target SEM over-subscribe no stream inteiro (bug D-50).
-        Idempotente: no-op se ja subscrito.
+        """LISTEN on the `msg_conv_<conversation_id>` channel — only receives
+        messages from that specific conversation. Used by ask_agent to wait for
+        the target's reply WITHOUT over-subscribing to the whole stream (bug D-50).
+        Idempotent: no-op if already subscribed.
         """
         if self._listen_conn is None:
             return False
@@ -399,8 +399,8 @@ class InternalClient:
             return True
         try:
             async with self._listen_lock:
-                # Re-check inside the lock — evita double-add quando duas
-                # chamadas com o mesmo conv_id correm em paralelo.
+                # Re-check inside the lock — avoids a double add when two
+                # calls with the same conv_id race in parallel.
                 if conversation_id in self._subscribed_convs:
                     return True
                 await self._listen_conn.add_listener(
@@ -432,19 +432,19 @@ class InternalClient:
         client_id: str | None = None,
         kind: str = "regular",
     ) -> dict[str, Any]:
-        """D-87: `parent_conv_id` passa pro broker, que persiste na coluna
-        homonima de messaging.conversations quando cria a conv (primeira
-        msg em (stream, topic)). Hierarquia vira lookup O(1) via FK.
+        """D-87: `parent_conv_id` is passed to the broker, which stores it in the
+        column of the same name in messaging.conversations when it creates the conv
+        (first msg in (stream, topic)). The hierarchy becomes an O(1) FK lookup.
 
-        `client_id`: idempotency key (UNIQUE per conversation_id). Permite
-        re-envio seguro do mesmo conteudo (race, retry, double-fire de
-        D-100 echo) sem criar mensagens duplicadas. Opcional — None mantem
-        comportamento legado.
+        `client_id`: idempotency key (UNIQUE per conversation_id). Allows
+        safely resending the same content (race, retry, D-100 echo
+        double-fire) without creating duplicate messages. Optional — None keeps
+        the legacy behavior.
 
-        `kind` (migration 026): 'regular' (default) dispara turn no
-        listener do agente. 'echo' eh forward visual de reply de
-        conv-filha (D-100) — fica visivel no PWA mas nao acorda runner
-        do agente parent."""
+        `kind` (migration 026): 'regular' (default) triggers a turn in the
+        agent's listener. 'echo' is a visual forward of a child-conv
+        reply (D-100) — visible in the PWA but does not wake the
+        parent agent's runner."""
         assert self._http is not None
         body_json: dict[str, Any] = {"stream": stream, "topic": topic, "content": content}
         if parent_conv_id is not None:
@@ -463,14 +463,14 @@ class InternalClient:
             return await r.json()
 
     async def update_message(self, message_id: int, content: str) -> dict[str, Any]:
-        # Broker atual nao suporta edicao. No-op preservado pra compatibilidade
-        # de assinatura (callers podem invocar mas nao ha efeito).
+        # The current broker does not support editing. No-op kept for signature
+        # compatibility (callers may invoke it but it has no effect).
         log.warning("internal_client.update_message_noop", message_id=message_id)
         return {"result": "success"}
 
     async def archive_conversation(self, conv_id: int) -> dict[str, Any]:
-        """POST /api/conversations/<id>/archive. Backend faz cascade em
-        descendentes + cancel de runners ativos (D-72)."""
+        """POST /api/conversations/<id>/archive. The backend cascades to
+        descendants + cancels active runners (D-72)."""
         assert self._http is not None
         async with self._http.post(
             f"{self._broker}/api/conversations/{conv_id}/archive",
@@ -492,17 +492,17 @@ class InternalClient:
         kind: str = "ask_human",
         target_agent: str | None = None,
     ) -> dict[str, Any]:
-        """Registra pending_ask no broker. Essencial pra ask_human/ask_agent —
-        sem isso, o humano nao ve a conversa em Mine e o push_notifier nao
-        dispara. Chamado depois do send_message da pergunta.
+        """Registers a pending_ask on the broker. Essential for ask_human/ask_agent —
+        without it, the human does not see the conversation in Mine and the
+        push_notifier does not fire. Called after the question's send_message.
 
-        D-111: `kind='ask_agent'` persiste pra restart-recovery (broker auto-
-        resolve quando target responde). UI/push filtram por `kind='ask_human'`
-        pra nao alertar humano de asks agente-pra-agente.
+        D-111: `kind='ask_agent'` is persisted for restart recovery (the broker
+        auto-resolves it when the target replies). UI/push filter on `kind='ask_human'`
+        so the human is not alerted about agent-to-agent asks.
 
-        Resposta inclui `resolved: bool` — se true, ask ja foi respondido
-        (caso restart-recovery onde target respondeu antes do asker voltar);
-        caller le `answer_message_id` pra buscar a resposta direto."""
+        The response includes `resolved: bool` — if true, the ask was already answered
+        (restart-recovery case where the target replied before the asker came back);
+        the caller reads `answer_message_id` to fetch the answer directly."""
         assert self._http is not None
         async with self._http.post(
             f"{self._broker}/api/asks",

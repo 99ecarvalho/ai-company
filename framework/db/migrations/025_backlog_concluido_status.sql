@@ -1,20 +1,20 @@
 -- 025_backlog_concluido_status.sql
--- Adiciona 'concluido' ao vocabulario de status de tasks.backlog.
+-- Adds 'concluido' to the tasks.backlog status vocabulary.
 --
--- Semantica: item ja foi promovido (gerou tasks.tasks) E a task chegou em
--- terminal `done` via complete_phase. Antes desta migration o backlog
--- ficava preso em 'promovido' eternamente — o humano nao distinguia
--- visualmente o que ja foi entregue do que ainda esta em execucao na
--- coluna 'Promoted' do kanban.
+-- Semantics: the item was already promoted (created tasks.tasks) AND the task reached
+-- the `done` terminal via complete_phase. Before this migration the backlog
+-- was stuck in 'promovido' forever — the human could not visually tell
+-- what had been delivered from what was still in progress in the
+-- kanban's 'Promoted' column.
 --
--- Transicao 'promovido' -> 'concluido' eh disparada em
--- workflow.complete_phase (D-102) quando `next_='done'` e a task tem um
--- backlog associado (promoted_task_slug = task.slug). Backfill abaixo
--- corrige items historicos cujas tasks ja chegaram em done antes deste
--- hook existir — sem isso o kanban continuaria mostrando entregas
--- antigas como 'promovido' indefinidamente.
+-- The 'promovido' -> 'concluido' transition is fired in
+-- workflow.complete_phase (D-102) when `next_='done'` and the task has an
+-- associated backlog item (promoted_task_slug = task.slug). The backfill below
+-- fixes historical items whose tasks reached done before this
+-- hook existed — without it the kanban would keep showing old
+-- deliveries as 'promovido' indefinitely.
 --
--- Conjunto completo apos esta migration: aberto | rascunho | em_execucao
+-- Full set after this migration: aberto | rascunho | em_execucao
 -- | promovido | concluido | descartado.
 
 ALTER TABLE tasks.backlog
@@ -25,14 +25,14 @@ ALTER TABLE tasks.backlog
     CHECK (status IN ('aberto', 'rascunho', 'em_execucao', 'promovido', 'concluido', 'descartado'));
 
 COMMENT ON COLUMN tasks.backlog.status IS
-    'aberto = triado e aguardando priorizacao; '
-    'rascunho = brain-dump sem classificacao, aguardando especificacao humana; '
-    'em_execucao = convertido em task ativa (legacy/manual); '
-    'promovido = virou task via backlog_promote, task em andamento; '
-    'concluido = task atingiu terminal done via complete_phase; '
-    'descartado = arquivado sem promover.';
+    'aberto = triaged, waiting for prioritization; '
+    'rascunho = unclassified brain dump, waiting for a human to specify it; '
+    'em_execucao = turned into an active task (legacy/manual); '
+    'promovido = became a task through backlog_promote, task in progress; '
+    'concluido = the task reached the done terminal through complete_phase; '
+    'descartado = archived without being promoted.';
 
--- Backfill historico: items 'promovido' cuja task ja esta em 'done'.
+-- Historical backfill: 'promovido' items whose task is already 'done'.
 UPDATE tasks.backlog b
    SET status = 'concluido', updated_at = now()
   FROM tasks.tasks t

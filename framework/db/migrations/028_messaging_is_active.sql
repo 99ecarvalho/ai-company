@@ -1,18 +1,18 @@
 -- 028_messaging_is_active.sql
--- Soft-delete pra users e streams que correspondem a agentes desativados.
+-- Soft-delete for users and streams that belong to deactivated agents.
 --
--- Problema: quando um agente sai de instance/agents/agents.yaml, o reconcile
--- atual nao remove a row em messaging.users / messaging.streams. Ficam
--- artefatos (`tech-lead-bot`, stream `tech-lead`) que continuam aparecendo
--- em `_team_block` (claude_runner monta '## Equipe' lendo todos bots) e em
--- listagens da PWA. PO entao recebia "tech-lead" no system prompt como
--- peer valido e chamava `ask_agent(target_agent='tech-lead')` — a conv
--- filha era criada mas ficava parada porque nao ha container.
+-- Problem: when an agent leaves instance/agents/agents.yaml, the current
+-- reconcile does not remove its row in messaging.users / messaging.streams. Leftover
+-- artifacts (`tech-lead-bot`, stream `tech-lead`) kept showing up
+-- in `_team_block` (claude_runner builds '## Team' by reading all bots) and in
+-- PWA listings. The PO then got "tech-lead" in its system prompt as a
+-- valid peer and called `ask_agent(target_agent='tech-lead')` — the child
+-- conv was created but stalled because there is no container.
 --
--- Decisao: adicionar `is_active boolean DEFAULT true` em ambas tabelas
--- (soft-delete preserva historico de convs antigas com refs a esses
--- streams/users). Reconcile passa a marcar `is_active=false` quando
--- agente sai do yaml. Filtros de UI/prompt usam `is_active=true`.
+-- Decision: add `is_active boolean DEFAULT true` to both tables
+-- (soft-delete preserves the history of old convs that reference these
+-- streams/users). Reconcile now sets `is_active=false` when an
+-- agent leaves the yaml. UI/prompt filters use `is_active=true`.
 
 ALTER TABLE messaging.users
     ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT true;
@@ -21,12 +21,12 @@ ALTER TABLE messaging.streams
     ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT true;
 
 COMMENT ON COLUMN messaging.users.is_active IS
-    'false = agente removido do agents.yaml (soft-delete). Filtra de '
-    'system prompts (## Equipe) e listagens da PWA. Historico preservado.';
+    'false = agent removed from agents.yaml (soft delete). Filtered out of '
+    'system prompts (## Team) and PWA listings. History is kept.';
 
 COMMENT ON COLUMN messaging.streams.is_active IS
-    'false = stream do agente removido do agents.yaml (soft-delete). '
-    'Convs antigas continuam acessiveis mas stream nao aparece em UIs.';
+    'false = stream of an agent removed from agents.yaml (soft delete). '
+    'Old conversations stay accessible but the stream is hidden in UIs.';
 
 CREATE INDEX IF NOT EXISTS users_active_bot_idx
     ON messaging.users (agent_name)

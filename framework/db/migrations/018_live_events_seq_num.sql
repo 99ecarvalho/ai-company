@@ -1,34 +1,34 @@
--- 018: seq_num em telemetry.live_events
+-- 018: seq_num on telemetry.live_events
 --
--- Contexto: claude_runner emite thinking/tool_use via asyncio.create_task
--- (fire-and-forget) no mesmo assistant message. Os POSTs concorrentes
--- chegam ao banco em ordem nao-deterministica. `id` BIGSERIAL e atribuido
--- na ordem de commit no banco, nao na ordem logica do stream do SDK, entao
--- thinking pode ter id MAIOR que o tool_use que logicamente veio depois
--- dele. Frontend ordena por `ts, id` mas quando caem no mesmo segundo
--- ts (resolucao atual), o tie-break por id reflete a corrida, nao a ordem
--- do modelo.
+-- Context: claude_runner emits thinking/tool_use via asyncio.create_task
+-- (fire-and-forget) within the same assistant message. The concurrent POSTs
+-- reach the DB in non-deterministic order. `id` BIGSERIAL is assigned
+-- in DB commit order, not in the logical order of the SDK stream, so
+-- thinking can have a HIGHER id than the tool_use that logically came after
+-- it. The frontend sorts by `ts, id`, but when they fall in the same ts
+-- second (current resolution), the id tie-break reflects the race, not the
+-- model's order.
 --
--- Fix: `seq_num` gerado no agente em ordem estrita por conversation, via
--- asyncio.Lock + contador local. Monotonicamente crescente por conv.
--- Frontend tie-breaks por `seq_num` antes de id.
+-- Fix: `seq_num` generated in the agent in strict order per conversation, via
+-- asyncio.Lock + local counter. Monotonically increasing per conv.
+-- The frontend tie-breaks by `seq_num` before id.
 --
--- Backfill: `seq_num = id` pra linhas antigas (melhor aproximacao — usa
--- a ordem de INSERT como fallback histórico).
+-- Backfill: `seq_num = id` for old rows (best approximation — uses
+-- INSERT order as the historical fallback).
 
 ALTER TABLE telemetry.live_events
     ADD COLUMN seq_num BIGINT;
 
 UPDATE telemetry.live_events SET seq_num = id WHERE seq_num IS NULL;
 
--- Index composto pra queries "todos eventos de uma conv em ordem":
--- complementar ao index atual (conversation_id, ts DESC) que serve leitura
--- descendente. O tie-break primario continua por ts; seq_num so importa
--- no desempate.
+-- Composite index for "all events of a conv in order" queries:
+-- complements the current index (conversation_id, ts DESC) that serves
+-- descending reads. The primary tie-break is still ts; seq_num only matters
+-- for breaking ties.
 CREATE INDEX idx_live_events_conv_seq ON telemetry.live_events (conversation_id, seq_num);
 
--- Incluir seq_num no payload do NOTIFY pra o PWA ja receber o tie-break
--- correto sem precisar de refetch.
+-- Include seq_num in the NOTIFY payload so the PWA gets the correct
+-- tie-break without needing a refetch.
 CREATE OR REPLACE FUNCTION telemetry.notify_live_event() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM pg_notify(

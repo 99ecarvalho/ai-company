@@ -1,20 +1,20 @@
--- 019: FK parent_conv_id passa de ON DELETE SET NULL -> ON DELETE CASCADE
+-- 019: FK parent_conv_id changes from ON DELETE SET NULL -> ON DELETE CASCADE
 --
--- Contexto: migration 017 (D-87) introduziu `parent_conv_id` com ON DELETE
--- SET NULL. A intencao era conservadora: se algo deletasse um pai, filhos
--- sobreviveriam. Na pratica isso cria orfaos visiveis — filho aparece na
--- sidebar sem ancora de hierarquia, sem caminho de volta ao contexto do
--- ask_agent original.
+-- Context: migration 017 (D-87) introduced `parent_conv_id` with ON DELETE
+-- SET NULL. The intent was conservative: if something deleted a parent, children
+-- would survive. In practice this creates visible orphans — the child shows up in the
+-- sidebar with no hierarchy anchor, no way back to the context of the
+-- original ask_agent.
 --
--- Endpoints de delete/archive em main.py ja fazem cascade logica via
--- _collect_descendant_conv_ids(). Mudando o FK pra CASCADE, o banco
--- garante consistencia mesmo em edge cases (falha na funcao de coleta,
--- DELETE direto via psql, descendente novo criado entre coleta e DELETE).
+-- The delete/archive endpoints in main.py already do a logical cascade via
+-- _collect_descendant_conv_ids(). Switching the FK to CASCADE, the DB
+-- guarantees consistency even in edge cases (failure in the collect function,
+-- direct DELETE via psql, new descendant created between collect and DELETE).
 --
--- Archive (soft delete) continua funcionando via UPDATE + funcao recursiva
--- — CASCADE so atua em DELETE fisico.
+-- Archive (soft delete) keeps working via UPDATE + recursive function
+-- — CASCADE only acts on a physical DELETE.
 --
--- Migration reusa o nome do constraint pra manter compat.
+-- The migration reuses the constraint name to stay compatible.
 
 ALTER TABLE messaging.conversations
     DROP CONSTRAINT conversations_parent_conv_id_fkey;

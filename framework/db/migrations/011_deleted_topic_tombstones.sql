@@ -1,24 +1,24 @@
--- 011: tombstones de topics deletados pra evitar ressurgimento pos-DELETE.
+-- 011: tombstones for deleted topics to prevent resurrection after DELETE.
 --
--- Problema (D-72): quando o humano deleta uma conversation via PWA, o backend
--- faz DELETE na `messaging.conversations` e dispara cancel via pg_notify
--- pra liberar runners ativos. O dispatcher responde ao cancel postando uma
--- msg de confirmacao ("Cancelado pelo usuario" ou "Nada pra cancelar"). Essa
--- msg passa por `_get_or_create_conversation` que AUTO-CRIA a conv se nao
--- existe — resultado: a conv ressurge com a mensagem do dispatcher, anulando
--- o delete do humano.
+-- Problem (D-72): when the human deletes a conversation via the PWA, the backend
+-- DELETEs from `messaging.conversations` and fires a cancel via pg_notify
+-- to release active runners. The dispatcher answers the cancel by posting a
+-- confirmation msg ("cancelled by user" or "nothing to cancel"). That
+-- msg goes through `_get_or_create_conversation`, which AUTO-CREATES the conv if it
+-- does not exist — result: the conv comes back with the dispatcher's message, undoing
+-- the human's delete.
 --
--- Fix: registrar um tombstone `(stream_id, topic_name, deleted_at)` antes do
--- DELETE. `_get_or_create_conversation` consulta o tombstone: se deletado ha
--- menos de `TOMBSTONE_TTL_SEC` (default 5min, env), raise 410 Gone — dispatcher
--- loga warn, descarta a msg, e o slot de pool fica liberado sem ressurgir
--- a conv.
+-- Fix: record a tombstone `(stream_id, topic_name, deleted_at)` before the
+-- DELETE. `_get_or_create_conversation` checks the tombstone: if deleted less
+-- than `TOMBSTONE_TTL_SEC` ago (default 5min, env), raise 410 Gone — the dispatcher
+-- logs a warn, drops the msg, and the pool slot is released without resurrecting
+-- the conv.
 --
--- TTL curto (5min) porque topics `__ask-from-<agent>-<uid>` tem uid random e
--- nao colidem; tombstone expirado eh inofensivo. Cleanup periodico via
--- scheduler job (futuro) ou simples DELETE WHERE deleted_at < now() - interval.
+-- Short TTL (5min) because `__ask-from-<agent>-<uid>` topics have a random uid and
+-- do not collide; an expired tombstone is harmless. Periodic cleanup via a
+-- scheduler job (future) or a simple DELETE WHERE deleted_at < now() - interval.
 --
--- Aditivo: tabela nova, zero impacto em schema existente. Reversivel trivial.
+-- Additive: new table, zero impact on existing schema. Trivially reversible.
 
 CREATE TABLE messaging.deleted_topics (
     stream_id  INTEGER NOT NULL REFERENCES messaging.streams(id) ON DELETE CASCADE,
@@ -27,6 +27,6 @@ CREATE TABLE messaging.deleted_topics (
     PRIMARY KEY (stream_id, topic_name)
 );
 
--- Index pra consulta rapida por tempo (cleanup + TTL check).
+-- Index for fast lookup by time (cleanup + TTL check).
 CREATE INDEX idx_deleted_topics_deleted_at
     ON messaging.deleted_topics (deleted_at);

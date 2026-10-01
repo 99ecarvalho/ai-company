@@ -1,86 +1,92 @@
-# ai-company — contexto auto-carregado
+# ai-company — auto-loaded context
 
-> Messaging em **broker interno** (Postgres + HTTP no container `web`).
+> Messaging runs on an **internal broker** (Postgres + HTTP in the `web` container).
 
-Framework self-hosted pra orquestrar agentes Claude Code: cada agente roda em container, escuta streams (broker HTTP no `web` container, persistência Postgres com `pg_notify`), e usa MCP pra `ask_human`, `ask_agent`, `complete_phase` e memória persistente. Orchestrator (reactor LISTEN + scheduler APScheduler) + transcriber GPU (faster-whisper) + web PWA (conversas + voz + push VAPID + telemetria + file viewer/upload) acompanham o core.
+Self-hosted framework to orchestrate Claude Code agents: each agent runs in a container, listens to streams (HTTP broker in the `web` container, Postgres persistence with `pg_notify`), and uses MCP for `ask_human`, `ask_agent`, `complete_phase`, `init_repo` and persistent memory. Orchestrator (LISTEN reactor + APScheduler scheduler) + transcriber (ai-transcriber, faster-whisper, GPU optional) + TTS (ai-tts, Piper) + web PWA (conversations + voice + VAPID push + telemetry + file viewer/upload) come with the core.
 
-> **CLAUDE.local.md** (gitignored): se existir, contém overrides locais — modo autônomo, build logs, anotações pessoais da instância. Leia-o também se presente.
+> **CLAUDE.local.md** (gitignored): if it exists, it holds local overrides — autonomous mode, build logs, personal notes for the instance. Read it too if present.
 
-## Estrutura do repo (3 zonas)
+## Repo layout (4 zones)
 
-- **`framework/`** (tracked) — código do ai-company: `bots/`, `orchestrator/`, `web/`, `transcriber/`, `watchdog/`, `docker/`, `scripts/`, `agent-template/`, `examples/`.
-- **`instance/`** (gitignored) — estado/config da empresa usuária: `agents/agents.yaml`, `agents/<nome>/`, `company/`, `repos/`, `backups/`, `heartbeats/`, `sessions/<nome>/` (runtime cwds por topic, D-51). Paths customizáveis via `.env` (`AGENTS_DIR`, `COMPANY_DIR`, `BACKUPS_DIR`, `REPOS_DIR`, `SESSIONS_DIR`) — default mantém tudo em `./instance/`.
-- **`.dev/`** (gitignored, opcional) — meta-desenvolvimento local: se você mantém notas em `notes/PROJECT_PLAN.md`, `notes/DECISIONS.md`, `notes/EXECUTION_LOG.md`, `notes/QUESTIONS.md`, leia antes de mexer no framework.
+- **`framework/`** (tracked) — ai-company code: `bots/` (Python package `framework/bots/ai_company/ai_company`), `orchestrator/`, `web/`, `watchdog/`, `db/migrations/`, `docker/`, `scripts/`, `system_prompts/`, `templates/`, `agent-template/`, `examples/`.
+- **`external/`** (tracked as git submodules) — `external/ai-tts` ([ai-tts](https://github.com/99ecarvalho/ai-tts), compose service `tts`) and `external/ai-transcriber` ([ai-transcriber](https://github.com/99ecarvalho/ai-transcriber), compose service `transcriber`). Separate repos: change them there, then bump the pointer here. Fetch with `git clone --recurse-submodules`, `make submodules` or `./run.sh submodules [--latest]`.
+- **`instance/`** (gitignored) — state/config of the user company: `agents/agents.yaml`, `agents/<name>/`, `company/`, `repos/`, `worktrees/`, `hooks/`, `backups/`, `heartbeats/`, `sessions/<name>/` (runtime cwds per topic, D-51). Paths customizable via `.env` (`AGENTS_DIR`, `COMPANY_DIR`, `BACKUPS_DIR`, `REPOS_DIR`, `SESSIONS_DIR`, `WORKTREES_DIR`, `HOOKS_DIR`) — the default keeps everything in `./instance/`.
+- **`.dev/`** (gitignored, optional) — local meta-development: if you keep notes in `notes/PROJECT_PLAN.md`, `notes/DECISIONS.md`, `notes/EXECUTION_LOG.md`, `notes/QUESTIONS.md`, read them before touching the framework.
 
-## Regras absolutas
+## Absolute rules
 
-- **Framework, não app fixo.** A source of truth dos agentes é `instance/agents/agents.yaml` (gitignored; inicialize via `bash framework/scripts/bootstrap-env.sh` que copia o `.example`). `docker-compose.override.yml` e `instance/agents/<name>/agent.yaml` são **gerados** por `framework/scripts/reconcile.py`. Nunca edite à mão; edite `agents.yaml` + `make reconcile`.
-- **Repo = framework distribuível.** Nada específico de uma empresa ou usuário deve ir pro repo tracked. Instância inteira em `instance/`, meta-dev em `.dev/`, ambos gitignored. Defaults tracked (`framework/examples/*`, `framework/agent-template/`) têm que ser genéricos.
-- **Escopo do projeto = framework + orquestrador + broker.** O conteúdo de `instance/repos/` é workspace dos agentes (código gerado pelo dev durante tasks) e **NÃO é alvo de melhoria nem revisão**.
-- **Plataforma, não papéis.** Ao propor features/próximos passos, **nunca** sugerir agentes/papéis específicos de um tipo de negócio. Sugerir só capabilities de plataforma (memória, ask_agent, auto-recovery, telemetria, TLS, scaffold, plugin system, etc). Teste: "esse item é código que escrevo uma vez e serve pra qualquer empresa?" — se não, é papel, não sugere.
-- **Vocabulário da instância NUNCA vai pro framework.** Nomes de fases (e.g. `intake`, `plan`, `build`, `review`, `wrap`) ou de papéis (e.g. `coordinator`, `analyst`, `executor`, `reviewer`) são convenção da instância usuária — **não são** invariantes do ai-company. O framework só sabe de primitivas genéricas: **steps arbitrários** declarados pela instância + **terminais semânticos** que a lógica do orchestrator conhece (hoje `done`/`halt`/`human_review`, porque esses mudam status/dispatch no reactor). Sintoma do smell: ver enum/constante/mapeamento com nomes específicos de instância dentro de `framework/`. Se isso acontecer, mova a taxonomia pra config da instância (ex: `instance/company/workflows.yaml`) carregada em runtime. Teste: "se eu entregar o framework pra uma empresa que usa outros nomes de fase, o código quebra?" — se sim, é cagada.
-- **Commits frequentes** conforme avança. Sem `git push` sem autorização explícita.
-- **Nunca mexa fora do diretório do projeto** exceto leituras estritamente necessárias.
-- **Edit Python → rebuild, não restart.** As imagens `agent` e `web` fazem `COPY` do código no build (não há bind-mount do source). `docker compose restart <svc>` reinicia o **mesmo binary** — a mudança no host **não carrega**. Fluxo correto após editar código: `docker compose build <svc> && docker compose up -d --force-recreate <svc>` (ou `make build` pra rebuildar todas). Idem após mexer em [framework/bots/ai_company/](framework/bots/ai_company/): rebuildar a imagem `agent` (afeta todos os containers de agente).
+- **Framework, not a fixed app.** The agents' source of truth is `instance/agents/agents.yaml` (gitignored; initialize it with `bash framework/scripts/bootstrap-env.sh` or `./run.sh setup`, which copy the `.example`). `docker-compose.override.yml` and `instance/agents/<name>/agent.yaml` are **generated** by `framework/scripts/reconcile.py`. Never edit them by hand; edit `agents.yaml` + `make reconcile`.
+- **Repo = distributable framework.** Nothing specific to a company or user goes into the tracked repo. The whole instance lives in `instance/`, meta-dev in `.dev/`, both gitignored. Tracked defaults (`framework/examples/*`, `framework/agent-template/`, `framework/templates/`) must be generic.
+- **Project scope = framework + orchestrator + broker.** The content of `instance/repos/` is the agents' workspace (code produced by agents during tasks) and is **NOT a target for improvement or review**. Same for `external/` from this repo: TTS/transcriber changes belong in their own repos.
+- **Platform, not roles.** When proposing features/next steps, **never** suggest agents/roles specific to a type of business. Suggest only platform capabilities (memory, ask_agent, auto-recovery, telemetry, TLS, scaffold, plugin system, etc). Test: "is this item code I write once and that serves any company?" — if not, it's a role; don't suggest it.
+- **Instance vocabulary NEVER goes into the framework.** Phase names (e.g. `intake`, `plan`, `build`, `review`, `wrap`) or role names (e.g. `coordinator`, `analyst`, `executor`, `reviewer`) are conventions of the user instance — they are **not** invariants of ai-company. The framework only knows generic primitives: **arbitrary steps** declared by the instance + **semantic terminals** that the orchestrator logic knows (today `done`/`halt`/`human_review`, because those change status/dispatch in the reactor). Smell: an enum/constant/mapping with instance-specific names inside `framework/`. If that happens, move the taxonomy to instance config (e.g. `instance/company/workflows.yaml`) loaded at runtime. Test: "if I hand the framework to a company that uses other phase names, does the code break?" — if yes, it's a mess.
+- **Commit often** as you go. No `git push` without explicit authorization.
+- **Never touch anything outside the project directory** except strictly necessary reads.
+- **Edit Python → rebuild, not restart.** The `agent` and `web` images `COPY` the code at build time (there's no bind mount of the source). `docker compose restart <svc>` restarts the **same binary** — the change on the host **doesn't load**. Correct flow after editing code: `./run.sh rebuild <svc>` (= `docker compose build <svc> && docker compose up -d --force-recreate <svc>`), or `make build` to rebuild all of them. Same after touching [framework/bots/ai_company/](framework/bots/ai_company/): rebuild the `agent` image (affects every agent container).
+- **Repos are read-only for agents (D-115).** Agent containers mount `repos/` read-only, with only each repo's `.git/` plus `<repos>/.gitdirs` writable; code is edited only in worktrees (`create_worktree`). New repos are created by the `init_repo` MCP tool through the web container ([framework/web/app/repos.py](framework/web/app/repos.py), `POST /api/repos/init`), with the git dir in `<repos>/.gitdirs/<name>.git`. Don't give agents a write path back into `repos/`.
 
-## Como o system prompt dos agentes eh montado
+## How the agents' system prompt is assembled
 
-`claude_runner._build_system_prompt` ([framework/bots/ai_company/ai_company/claude_runner.py](framework/bots/ai_company/ai_company/claude_runner.py)) monta o `--append-system-prompt` concatenando, nesta ordem (cada secao tem toggle em `instance/company/system_prompts/config.yaml`):
+`claude_runner._build_system_prompt` ([framework/bots/ai_company/ai_company/claude_runner.py](framework/bots/ai_company/ai_company/claude_runner.py)) builds the `--append-system-prompt` by concatenating, in this order (each section has a toggle in `instance/company/system_prompts/config.yaml`, template in `framework/examples/system_prompts/config.yaml.example`):
 
-1. `framework/system_prompts/platform.md` (read-only, embutido nas imagens `agent` e `web` via `COPY`) — **invariantes do framework**: honestidade, hierarquia raiz->filha (broker 409), reply-as-gateway, MCP tools, baseline_sha discipline, memoria/skills/sobrecarga genericos. Nao editavel pela instancia (ate o PWA marca read-only); mudar exige editar no repo + rebuild.
-2. `## Modo de invocacao` (dinamico) — query no `messaging.conversations.parent_conv_id` em runtime: diz se a conv eh raiz (humano/cron) ou filha (`ask_agent` por outro agente) + nome do pai. Substitui a heuristica "Question from `<X>`" que cada agente fazia manualmente.
-3. `## Estado da task` (dinamico, condicional `topic = task-*`) — snapshot de `tasks.tasks` + `phases` + `worktrees`: slug, titulo, workflow, current_step, complexity, baselines (`metadata_extra.baseline`), worktrees ativas, fases concluidas, origin. Evita o `get_task_state` ritual no inicio da fase.
-4. `## Instrucoes da fase atual` (dinamico, condicional) — campo `instructions` (markdown) do step corrente em `instance/company/workflows.yaml` -> `workflows.<wf>.steps.<step>.instructions`. **Toda mecanica de fase** (gate de aprovacao, worktree, push/MR, loop pos-review, encerramento) vive aqui — nao nos CLAUDE.md dos agentes.
+1. `system_prompts/platform.md` ([framework/system_prompts/platform.md](framework/system_prompts/platform.md)) — **framework invariants**: honesty, root->child hierarchy (broker 409), reply-as-gateway, MCP tools, baseline_sha discipline, generic memory/skills/overload.
+2. `## Invocation mode` (dynamic) — query on `messaging.conversations.parent_conv_id` at runtime: says whether the conv is root (human/cron) or child (`ask_agent` from another agent) + the parent's name. Replaces the "Question from `<X>`" heuristic each agent used to apply by hand.
+3. `## Task state` (dynamic, conditional on `topic = task-*`) — snapshot of `tasks.tasks` + `phases` + `worktrees`: slug, title, workflow, current_step, complexity, baselines (`metadata_extra.baseline`), active worktrees, completed phases, origin. Avoids the `get_task_state` ritual at the start of the phase.
+4. `## Current phase instructions` (dynamic, conditional) — the `instructions` field (markdown) of the current step in `instance/company/workflows.yaml` -> `workflows.<wf>.steps.<step>.instructions`. **All phase mechanics** (approval gate, worktree, push/MR, post-review loop, wrap-up) live here — not in the agents' CLAUDE.md.
 
-   **Runtime overrides por step (D-113):** o mesmo step pode declarar `overrides: {model, effort, memory: {enabled, auto_inject_limit}}`. Quando preenchido, sobrescreve a config do agente em `agents.yaml` *apenas durante este step*. Workflow autoritario, sem teto. Util pra triagem em Sonnet/low e execucao em Opus/high sem agentes duplicados. PWA Settings -> Workflows tem fieldset dedicado por step. Hot-reload: editar via PWA aplica no proximo spawn, sem rebuild.
-5. `agents/<nome>/CLAUDE.md` — **identidade + stack do papel** (PHP/Slim do core, Go repos, anti-escopo, etc). Nao deve ter mecanica de framework nem de fase — se tiver, eh sintoma de drift.
-6. `company/CONTEXT.md` — catalogo geral da instancia (workflow.md, glossario.md, memoria.md, templates/, etc).
-7. `company/philosophy.md` — opcional (toggle off por default).
-8. `## Equipe` (dinamico) — peers que o agente pode chamar via `ask_agent` (filtrado por `agent_policies.can_ask`).
+   **Runtime overrides per step (D-113):** the same step can declare `overrides: {model, effort, memory: {enabled, auto_inject_limit}}`. When set, it overrides the agent's config from `agents.yaml` *only during this step*. The workflow is authoritative, no ceiling. Useful for triage on Sonnet/low and execution on Opus/high without duplicate agents. PWA Settings -> Workflows has a dedicated fieldset per step. Hot-reload: editing via the PWA applies on the next spawn, no rebuild.
+5. `agents/<name>/CLAUDE.md` — **identity + stack of the role** (languages, repos, out-of-scope, etc). Must not contain framework or phase mechanics — if it does, that's a symptom of drift.
+6. `company/CONTEXT.md` — the instance's general catalog (workflow, glossary, memory, templates/, etc). Seeded from `framework/templates/CONTEXT.md.example`.
+7. `company/philosophy.md` — optional (skipped while empty; templates in `framework/templates/philosophies/`).
+8. `## Team` (dynamic) — peers the agent can call via `ask_agent` (filtered by `agent_policies.can_ask`).
 
-**Editor PWA:** Settings -> Workflows edita `steps.<step>.instructions` direto (textarea com block-scalar yaml `|-` no save). Settings -> Preview simula contexto via params (`?mode=child&parent=<x>&task_slug=<y>`) pra ver o concatenado final pra qualquer agente em qualquer cenario.
+**PWA editor:** Settings -> Workflows edits `steps.<step>.instructions` directly (textarea with a `|-` yaml block scalar on save). Settings -> Preview simulates context via params (`?mode=child&parent=<x>&task_slug=<y>`) to see the final concatenation for any agent in any scenario.
 
-**Backend mirror:** `framework/web/app/main.py:_preview_*_block` reproduz a logica do runner pra preview. Se mudar uma das duas, sincronize a outra.
+**Backend mirror:** `framework/web/app/main.py:_preview_*_block` reproduces the runner's logic for the preview. If you change one of the two, sync the other.
 
-**Regra dura:** mecanica de framework (broker, hierarquia, MCP tools) fica em `platform.md`; mecanica de fase em `workflows.yaml.steps.<step>.instructions` (instancia, mas por workflow nao por agente); identidade de papel + stack em `agents/<nome>/CLAUDE.md`. Se um CLAUDE.md de agente comeca a falar sobre `complete_phase`/`create_worktree`/`ask_human` em filha/etc, eh sinal de que algo voltou pra camada errada.
+**Hard rule:** framework mechanics (broker, hierarchy, MCP tools) stay in `platform.md`; phase mechanics in `workflows.yaml.steps.<step>.instructions` (instance, but per workflow, not per agent); role identity + stack in `agents/<name>/CLAUDE.md`. If an agent's CLAUDE.md starts talking about `complete_phase`/`create_worktree`/`ask_human` in a child/etc, something has moved back into the wrong layer.
 
-## Mantendo `.dev/notes/` sincronizado
+## Keeping `.dev/notes/` in sync
 
-Se você está hackeando o framework e tem um `.dev/notes/` (PROJECT_PLAN, EXECUTION_LOG, QUESTIONS, DECISIONS), mantenha sincronizado — notas só servem se estão atualizadas. Histórico mostrou que é fácil esquecer durante rajadas de commits, e Claude futura entrando "fria" precisa desses arquivos pra ter mapa.
+If you're hacking on the framework and have a `.dev/notes/` (PROJECT_PLAN, EXECUTION_LOG, QUESTIONS, DECISIONS), keep it in sync — notes are only useful if they're up to date. History shows it's easy to forget during bursts of commits, and a future Claude coming in "cold" needs these files as a map.
 
-- **Após CADA commit ou cluster que fecha uma feature:**
-  - Atualize a 1ª linha de [.dev/notes/EXECUTION_LOG.md](.dev/notes/EXECUTION_LOG.md) se o estado corrente mudou
-  - Adicione 1 entrada nova no topo do EXECUTION_LOG descrevendo o que mudou
-  - Decisão arquitetônica autônoma → registre em [.dev/notes/DECISIONS.md](.dev/notes/DECISIONS.md) com **D-NN** novo
-  - Pergunta resolvida em QUESTIONS.md? Mova/remova.
-- **Ao iniciar sessão nova:** `git log --oneline` desde último update das notes (`stat -c "%y" .dev/notes/EXECUTION_LOG.md`). Gap > 3 commits sem update → **proponha catch-up antes de começar feature nova**.
-- **Antes de feature grande:** PROJECT_PLAN.md está coerente com a arquitetura atual? Se não, refresh primeiro. Commits sem notes = trabalho sem mapa pra Claude futura.
-- **Critério de "atualização suficiente":** Claude novo lendo os 4 arquivos consegue (a) descrever o estado de hoje em 3 frases, (b) saber por que cada decisão recente foi tomada, (c) saber o que está aberto. Se não, falta atualizar.
+- **After EVERY commit or cluster that closes a feature:**
+  - Update the 1st line of [.dev/notes/EXECUTION_LOG.md](.dev/notes/EXECUTION_LOG.md) if the current state changed
+  - Add 1 new entry at the top of EXECUTION_LOG describing what changed
+  - Autonomous architectural decision → record it in [.dev/notes/DECISIONS.md](.dev/notes/DECISIONS.md) with a new **D-NN**
+  - Question resolved in QUESTIONS.md? Move/remove it.
+- **When starting a new session:** `git log --oneline` since the last notes update (`stat -c "%y" .dev/notes/EXECUTION_LOG.md`). Gap > 3 commits without an update → **propose a catch-up before starting a new feature**.
+- **Before a big feature:** is PROJECT_PLAN.md consistent with the current architecture? If not, refresh it first. Commits without notes = work without a map for a future Claude.
+- **"Sufficient update" criterion:** a new Claude reading the 4 files can (a) describe today's state in 3 sentences, (b) know why each recent decision was made, (c) know what is open. If not, an update is missing.
 
-Esta regra é **invariante operacional** — mesmo peso que "rode os testes antes de comitar". Em dúvida se vale atualizar, **vale**.
+This rule is an **operational invariant** — same weight as "run the tests before committing". When in doubt whether it's worth updating, **it is**.
 
-## Acesso rápido
+## Quick access
 
-- **Web PWA (interface primária):** `http://localhost:9090` — conversas, gravação voz→texto, file viewer/upload, paste de screenshots, push VAPID, telemetria 📊 (custo/tokens/latência), memória 🧠, hire de novo agente 👔.
-- **Bootstrap do zero:** `bash framework/scripts/bootstrap-env.sh && make reconcile`. O bootstrap cria `.env` com secrets random + pré-cria `instance/{agents,company,repos,backups,heartbeats}` + copia `agents.yaml.example`. Reconcile detecta postgres+web não-up e sobe automaticamente. Scheduler é DB-backed (D-112): jobs custom criados via PWA `/scheduler`, native overrides via `/settings/routines`.
-- **Verificar containers:** `docker compose ps` (mínimo 8: postgres, web, transcriber, watchdog, orchestrator-reactor, scheduler + N agentes).
-- **Logs estruturados JSON:** `make logs-<agente>` ou `docker compose logs -f <agente>`.
-- **Shell num agente:** `make shell-<agente>`.
-- **Status de tasks:** `find instance/company/tasks/ -name "metadata.yaml" -exec head -5 {} \;`.
-- **Eventos pendentes:** consulta no Postgres — `docker compose exec postgres psql -U ai_company -d ai_company -c "SELECT id, event_type, status FROM orchestrator.events WHERE status='pending';"`.
-- **Novo agente:** edite `instance/agents/agents.yaml` (ou `make new-agent NAME=<slug> DISPLAY="Nome"`), depois `make reconcile` (idempotente — cuida de user+stream no broker, .env, override, compose up).
-- **Transcrever áudio:** automático no PWA (clique no botão de gravação). Ad-hoc: `curl -X POST http://transcriber:8000/transcribe -F file=@audio.mp3` de dentro da rede compose.
-- **Auto-recovery:** claude_runner retenta até 2x em SIGKILL/SIGTERM com `--resume`. Watchdog monitora heartbeats em `instance/heartbeats/` e restarta agent com stale > 180s (cooldown 10min). `DRY_RUN=1` no watchdog pra modo observador.
-- **ask_agent (MCP tool):** agente A consulta agente B via `ask_agent(target_agent, question)`. Topic `__ask-from-A-<uid>` no `#B`. Default timeout 30min, com extensão indefinida se B estiver bloqueado em `ask_human`. Tópicos `__*` ficam ocultos do PWA exceto quando têm `pending_ask`. Habilitar adicionando `mcp__ai_company__ask_agent` em `allowed_tools`.
-- **Banco direto:** `docker compose exec postgres psql -U ai_company -d ai_company`. Schemas: `messaging`, `orchestrator`, `memory`, `telemetry`, `web`.
+- **`./run.sh` (main entry point):** `./run.sh help` lists everything — `install`, `setup`, `submodules [--latest]`, `reconcile`, `start`/`stop`/`restart`, `build`, `rebuild <svc>`, `status`, `logs [svc|agent]`, `shell <agent>`, `psql`, `test [unit|services|e2e|all]`, `smoke`, `backup`, `reset`. The Makefile targets still work.
+- **Web PWA (primary interface):** `http://localhost:9090` — conversations, voice→text recording, file viewer/upload, screenshot paste, VAPID push, telemetry 📊 (cost/tokens/latency), memory 🧠, hire a new agent 👔.
+- **Bootstrap from scratch:** `./run.sh install` (or `bash framework/scripts/bootstrap-env.sh && make reconcile` after `make submodules`). The bootstrap creates `.env` with random secrets + pre-creates `instance/{agents,company,repos,worktrees,backups,sessions,heartbeats}` + copies `agents.yaml.example`. Reconcile detects postgres+web not being up and starts them automatically. The scheduler is DB-backed (D-112): custom jobs created via PWA `/scheduler`, native overrides via `/settings/routines`.
+- **Check containers:** `docker compose ps` or `./run.sh status` (at least 7: postgres, web, tts, transcriber, watchdog, orchestrator-reactor, scheduler + N `agent-<name>` services).
+- **Structured JSON logs:** `./run.sh logs <agent>`, `make logs-agent-<agent>` or `docker compose logs -f agent-<agent>`.
+- **Shell in an agent:** `./run.sh shell <agent>` or `make shell-agent-<agent>`.
+- **Tests:** `./run.sh test` (agent + web unit tests in `.venv`), `./run.sh test services` (ai-tts + ai-transcriber suites), `./run.sh test e2e` (Playwright).
+- **Task status:** `find instance/company/tasks/ -name "metadata.yaml" -exec head -5 {} \;`.
+- **Pending events:** query Postgres — `docker compose exec postgres psql -U ai_company -d ai_company -c "SELECT id, event_type, status FROM orchestrator.events WHERE status='pending';"` (or `./run.sh psql -c "..."`).
+- **New agent:** edit `instance/agents/agents.yaml` (or `make new-agent NAME=<slug> DISPLAY="Name"`), then `make reconcile` (idempotent — handles user+stream in the broker, .env, override, compose up).
+- **New repo for agents:** agents call the `init_repo` MCP tool (web creates it via `POST /api/repos/init`); after adding repos by hand, `make reconcile` so agents get the per-repo `.git/` mounts.
+- **Transcribe audio:** automatic in the PWA (click the record button). Ad-hoc: `curl -X POST http://transcriber:8000/transcribe -F file=@audio.mp3` from inside the compose network (ai-transcriber's native API; add `-H "Authorization: Bearer $TRANSCRIBER_API_KEY"` if set).
+- **Synthesize speech:** `POST http://tts:8000/synthesize` with `{"text": "...", "format": "wav"|"mp3"}` inside the compose network (ai-tts); the PWA goes through `/api/tts/synthesize`. `./run.sh smoke` exercises both services.
+- **Auto-recovery:** claude_runner retries once on SIGKILL/SIGTERM with `--resume`. The watchdog monitors heartbeats in `instance/heartbeats/` and restarts agents stale > 180s (cooldown 10min). `DRY_RUN=1` on the watchdog for observer mode.
+- **ask_agent (MCP tool):** agent A consults agent B via `ask_agent(target_agent, question)`. Topic `__ask-from-A-<uid>` in `#B`. Default timeout 30min, extended indefinitely if B is blocked on `ask_human`. `__*` topics are hidden in the PWA except when they have a `pending_ask`. Enable it by adding `mcp__ai_company__ask_agent` to `allowed_tools`.
+- **Database directly:** `./run.sh psql` or `docker compose exec postgres psql -U ai_company -d ai_company`. Schemas: `messaging`, `orchestrator`, `memory`, `telemetry`, `web`.
 
-## Mexendo na PWA / frontend
+## Working on the PWA / frontend
 
-- **Antes de tocar em layout/UI:** leia [framework/web/frontend/MOBILE.md](framework/web/frontend/MOBILE.md). Compila armadilhas reais (`flex-wrap` + `truncate`, `shrink-0` em group de botões, `pb-safe-nav` vs `pb-bottomNav`, cache de bundle). Custo de revisar < custo de caçar overflow horizontal num device físico.
-- **Cache (D-96):** `index.html`, `sw.js`, `manifest.webmanifest` saem com `Cache-Control: no-cache`; `/_app/*` (bundles hashed) com `max-age=31536000, immutable`. Não retire esses headers — sem eles, rebuild não aparece pro user.
-- **Validar mobile via Playwright:** viewport 390x844 (iPhone 14). Dump rápido:
+- **Before touching layout/UI:** read [framework/web/frontend/MOBILE.md](framework/web/frontend/MOBILE.md). It collects real pitfalls (`flex-wrap` + `truncate`, `shrink-0` on button groups, `pb-safe-nav` vs `pb-bottomNav`, bundle cache). Reviewing it costs less than hunting horizontal overflow on a physical device.
+- **Cache (D-96):** `index.html`, `sw.js`, `manifest.webmanifest` are served with `Cache-Control: no-cache`; `/_app/*` (hashed bundles) with `max-age=31536000, immutable`. Don't remove these headers — without them, a rebuild doesn't show up for the user.
+- **Validate mobile via Playwright:** viewport 390x844 (iPhone 14). Quick dump:
   ```js
   await page.setViewportSize({ width: 390, height: 844 });
   page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
-  // > 0 = página tem overflow horizontal.
+  // > 0 = the page has horizontal overflow.
   ```

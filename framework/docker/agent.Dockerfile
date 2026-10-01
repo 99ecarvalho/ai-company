@@ -1,15 +1,15 @@
-# Imagem base compartilhada por todos os agentes.
-# A diferenca entre secretario/dev/revisor/etc. eh apenas env + volume no compose.
+# Base image shared by all agents.
+# Agents differ only in env + volumes in the compose file.
 FROM node:20-slim
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Dependencias de sistema:
-# - python3 + venv: runtime do ai_company (Fase 1+)
-# - git + openssh-client: pro dev fazer operacoes em repos/ (Fase 4+)
-# - gosu: drop-privilege do root (entrypoint) para node (user final)
-# - tzdata: respeitar TZ
-# - iproute2 + ca-certificates + curl: utilitarios de rede/debug
+# System dependencies:
+# - python3 + venv: ai_company runtime (Phase 1+)
+# - git + openssh-client: for agents to run git operations in repos/ (Phase 4+)
+# - gosu: drop privileges from root (entrypoint) to node (final user)
+# - tzdata: honor TZ
+# - iproute2 + ca-certificates + curl: network/debug utilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
     git openssh-client \
@@ -18,14 +18,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
-# yq (mikefarah/yq) — parser de YAML em CLI, util pra ler manifests como
-# agents.yaml/workflows.yaml sem shell-fu. Imagem estatica.
+# yq (mikefarah/yq) — CLI YAML parser, handy for reading manifests such as
+# agents.yaml/workflows.yaml without shell-fu. Static binary.
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
       amd64) yq_arch="amd64" ;; \
       arm64) yq_arch="arm64" ;; \
-      *) echo "arch nao suportada pra yq: $arch" >&2; exit 1 ;; \
+      *) echo "unsupported arch for yq: $arch" >&2; exit 1 ;; \
     esac; \
     yq_v="4.44.3"; \
     curl -fsSL -o /usr/local/bin/yq \
@@ -33,10 +33,10 @@ RUN set -eux; \
     chmod 0755 /usr/local/bin/yq; \
     yq --version
 
-# glab (GitLab CLI) + gh (GitHub CLI) — usados pra abrir MR/PR ao fim de cada
-# task. Instalados em paralelo pra manter o framework agnostico — a mesma
-# imagem de agente serve instancias que usam GitLab ou GitHub.
-# glab so distribui .deb/.apk em amd64 e .tar.gz em arm64 — branches distintos.
+# glab (GitLab CLI) + gh (GitHub CLI) — used to open an MR/PR at the end of each
+# task. Both are installed to keep the framework agnostic — the same agent
+# image serves instances that use GitLab or GitHub.
+# glab only ships .deb/.apk on amd64 and .tar.gz on arm64 — separate branches.
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     glab_v="1.92.1"; \
@@ -57,10 +57,10 @@ RUN set -eux; \
         rm -rf /tmp/glab.tgz /tmp/bin /tmp/LICENSE* /tmp/README* /tmp/manpages 2>/dev/null || true; \
         gh_arch="arm64" \
         ;; \
-      *) echo "arch nao suportada: $arch" >&2; exit 1 ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
     esac; \
     glab --version; \
-    # gh (tar.gz disponivel em ambas as arch)
+    # gh (tar.gz available for both archs)
     curl -fsSL -o /tmp/gh.tgz \
       "https://github.com/cli/cli/releases/download/v${gh_v}/gh_${gh_v}_linux_${gh_arch}.tar.gz"; \
     tar -xzf /tmp/gh.tgz -C /tmp; \
@@ -68,8 +68,8 @@ RUN set -eux; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${gh_v}_linux_${gh_arch}" 2>/dev/null || true; \
     gh --version
 
-# PostgreSQL client 16 (precisa bater com server postgres:16-alpine pra pg_dump
-# nao reclamar de version mismatch). Usa repo apt.postgresql.org.
+# PostgreSQL client 16 (must match the postgres:16-alpine server so pg_dump
+# does not complain about a version mismatch). Uses the apt.postgresql.org repo.
 RUN install -d /usr/share/keyrings \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
         | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
@@ -79,35 +79,35 @@ RUN install -d /usr/share/keyrings \
     && apt-get install -y --no-install-recommends postgresql-client-16 \
     && rm -rf /var/lib/apt/lists/*
 
-# Claude Code CLI (global, disponivel como `claude`)
+# Claude Code CLI (global, available as `claude`)
 RUN npm install -g @anthropic-ai/claude-code
 
-# Python venv para o ai_company. PATH coloca venv na frente.
+# Python venv for ai_company. PATH puts the venv first.
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Deps do ai_company (cached layer)
+# ai_company deps (cached layer)
 COPY framework/bots/ai_company/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# Codigo do framework
+# Framework code
 COPY framework/bots/ai_company /app/ai_company_src
 RUN pip install --no-cache-dir /app/ai_company_src
 
 # Framework-fixed system prompt sections (read-only; not editable per-instance).
 COPY framework/system_prompts /app/system_prompts
 
-# Orquestrador (reactor + scheduler) embutido na mesma imagem.
-# Reactor e scheduler rodam `python3 /app/orchestrator/<script>.py`.
+# Orchestrator (reactor + scheduler) bundled in the same image.
+# Reactor and scheduler run `python3 /app/orchestrator/<script>.py`.
 COPY framework/orchestrator /app/orchestrator
 
 WORKDIR /app
 
-# Entrypoint: copia credenciais staging (RO) -> volume, chown, gosu node, exec
+# Entrypoint: copy staging credentials (RO) -> volume, chown, gosu node, exec
 COPY framework/docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Diretorio onde o Claude CLI escreve (sessoes, cache). Volume nomeado por agente.
+# Directory the Claude CLI writes to (sessions, cache). One named volume per agent.
 RUN mkdir -p /home/node/.claude && chown -R node:node /home/node/.claude
 
 ENTRYPOINT ["/app/entrypoint.sh"]

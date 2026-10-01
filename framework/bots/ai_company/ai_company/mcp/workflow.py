@@ -1,27 +1,27 @@
-"""WorkflowManager — protocolo generico de tasks multi-fase.
+"""WorkflowManager — generic protocol for multi-phase tasks.
 
-Este modulo e **agnostico a vocabulario**: ele nao sabe o que e "triagem",
-"analise", "coordenador", etc. A instancia (empresa) declara seus steps,
-agentes default, artifacts e transicoes em `company/workflows.yaml`. O
-framework carrega em runtime, valida contra a declaracao e resolve
-roteamento.
+This module is **vocabulary-agnostic**: it does not know what "triage",
+"analysis", "coordinator", etc. are. The instance (company) declares its steps,
+default agents, artifacts and transitions in `company/workflows.yaml`. The
+framework loads it at runtime, validates against the declaration and resolves
+routing.
 
-O framework conhece APENAS:
-  - Tasks, com slug kebab-case, vivem no Postgres (schema `tasks`).
-  - Artifacts (os .md produzidos em cada fase) continuam em
-    `company/tasks/<slug>/` — agentes escrevem via Write tool do CLI,
-    PWA le e renderiza.
-  - Uma fase tem um `step` (string livre, definido pela instancia).
-  - Transicoes terminais com semantica fixa: `done` | `halt` | `human_review`
-    — esses nomes sao parte do protocolo porque mudam status e dispatch
-    no reactor. Instancias nao podem redefinir.
-  - `metadata.workflow: <name>` seleciona qual workflow da company rege
-    a task. Se nao existe workflows.yaml ou o name nao bate, o framework
-    roda em **modo permissivo** — aceita qualquer step mas nao resolve
-    agent default nem valida transicao.
+The framework knows ONLY:
+  - Tasks, with a kebab-case slug, live in Postgres (schema `tasks`).
+  - Artifacts (the .md files produced in each phase) stay in
+    `company/tasks/<slug>/` — agents write them via the CLI Write tool,
+    the PWA reads and renders them.
+  - A phase has a `step` (free string, defined by the instance).
+  - Terminal transitions with fixed semantics: `done` | `halt` | `human_review`
+    — these names are part of the protocol because they change status and
+    dispatch in the reactor. Instances cannot redefine them.
+  - `metadata.workflow: <name>` selects which company workflow governs
+    the task. If there is no workflows.yaml or the name does not match, the
+    framework runs in **permissive mode** — accepts any step but does not
+    resolve a default agent nor validate transitions.
 
-Events em Postgres (orchestrator.events); reactor consome via LISTEN.
-Schema de tasks.* adicionado pela migration 006 (D-53).
+Events in Postgres (orchestrator.events); the reactor consumes them via LISTEN.
+tasks.* schema added by migration 006 (D-53).
 """
 from __future__ import annotations
 
@@ -45,33 +45,33 @@ log = get_logger(__name__)
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
-# Terminais de protocolo — parte do framework, nao da instancia.
-# Cada um tem semantica distinta pro reactor:
-#   done          => status=done       (sucesso)
-#   halt          => status=blocked    (pausa — humano desbloqueia)
-#   human_review  => status=human_review (escala — humano decide direcao)
+# Protocol terminals — part of the framework, not of the instance.
+# Each one has distinct semantics for the reactor:
+#   done          => status=done       (success)
+#   halt          => status=blocked    (pause — a human unblocks)
+#   human_review  => status=human_review (escalation — a human decides direction)
 TERMINALS: set[str] = {"done", "halt", "human_review"}
 
 
 class WorkflowError(ValueError):
-    """Erro de protocolo — retorna como JSONRPC_INVALID_PARAMS."""
+    """Protocol error — returned as JSONRPC_INVALID_PARAMS."""
 
 
-# ---------- Definicao de workflow carregada de workflows.yaml ----------
+# ---------- Workflow definition loaded from workflows.yaml ----------
 
 
 @dataclass(frozen=True)
 class StepDef:
-    """Declaracao de um step segundo a instancia."""
+    """Declaration of a step according to the instance."""
     name: str
-    agent: str | None               # None => exige next_agent na chamada
-    artifact: str | None            # default de arquivo produzido neste step
-    next: frozenset[str]            # steps/terminais validos como proximo
-    # Quando True, ao entrar neste step o framework limpa o claude_session_id
-    # da conv destino (stream, topic) — proximo spawn roda `claude -p` sem
-    # `--resume`, com janela de contexto fresca. As `instructions` do step
-    # passam via append-system-prompt como sempre (build dinamico). Default
-    # False: mantem sessao via --resume (comportamento legado).
+    agent: str | None               # None => the call must pass next_agent
+    artifact: str | None            # default file produced in this step
+    next: frozenset[str]            # steps/terminals valid as next
+    # When True, on entering this step the framework clears the claude_session_id
+    # of the target conv (stream, topic) — the next spawn runs `claude -p` without
+    # `--resume`, with a fresh context window. The step's `instructions`
+    # go through append-system-prompt as usual (dynamic build). Default
+    # False: keeps the session via --resume (legacy behavior).
     fresh_session: bool = False
 
 
@@ -80,13 +80,13 @@ class WorkflowDef:
     name: str
     initial_step: str
     steps: dict[str, StepDef] = field(default_factory=dict)
-    # Agente que orquestra esse workflow — dono da conv-supervisora que
-    # `backlog_promote` cria. NULL => fallback pra `initial_step.agent`
-    # (compat com workflows pre-orchestrator). Diferente do
-    # `initial_step.agent`: o orchestrator pode nao tocar a primeira fase
-    # mas continua sendo a raiz das convs do task. Ex: workflow de deploy
-    # tem orchestrator=`deploy-coordinator`, mas a primeira fase pode ir
-    # direto pra `executor-test`.
+    # Agent that orchestrates this workflow — owner of the supervisor conv that
+    # `backlog_promote` creates. NULL => fallback to `initial_step.agent`
+    # (compat with pre-orchestrator workflows). Unlike
+    # `initial_step.agent`: the orchestrator may not run the first phase
+    # but is still the root of the task's convs. E.g. a deploy workflow
+    # has orchestrator=`deploy-lead`, but the first phase may go
+    # straight to `test-runner`.
     orchestrator: str | None = None
 
     def step(self, name: str) -> StepDef | None:
@@ -94,10 +94,10 @@ class WorkflowDef:
 
 
 class WorkflowRegistry:
-    """Carrega workflows.yaml da instancia e entrega WorkflowDef por nome.
+    """Loads the instance's workflows.yaml and returns a WorkflowDef by name.
 
-    Leitura soh na hora da chamada (nao faz cache hit-the-disk-once) —
-    reconcile/reload e barato e permite editar workflows.yaml sem restart.
+    Reads only at call time (no hit-the-disk-once cache) —
+    reconcile/reload is cheap and lets workflows.yaml be edited without a restart.
     """
 
     def __init__(self, workflows_path: Path):
@@ -125,8 +125,8 @@ class WorkflowRegistry:
                     fresh_session=bool(s_body.get("fresh_session", False)),
                 )
             initial_step_name = str(wf_body.get("initial_step") or "")
-            # orchestrator: campo dedicado; sem ele, fallback pro agente do
-            # initial_step (compat com workflows antigos).
+            # orchestrator: dedicated field; without it, fall back to the
+            # initial_step agent (compat with old workflows).
             orchestrator = wf_body.get("orchestrator")
             if not orchestrator and initial_step_name in steps:
                 orchestrator = steps[initial_step_name].agent
@@ -152,11 +152,11 @@ def _now_iso() -> str:
 
 
 class WorkflowManager:
-    """Protocolo generico — delega taxonomia pra WorkflowRegistry.
+    """Generic protocol — delegates the taxonomy to WorkflowRegistry.
 
-    Persistencia em Postgres (tasks.tasks, tasks.phases, tasks.worktrees).
-    `company_dir` ainda eh passado pra resolver `workflows.yaml` e pro
-    diretorio de artifacts `company/tasks/<slug>/` (onde os .md vivem).
+    Persistence in Postgres (tasks.tasks, tasks.phases, tasks.worktrees).
+    `company_dir` is still passed to resolve `workflows.yaml` and the
+    artifacts directory `company/tasks/<slug>/` (where the .md files live).
     """
 
     def __init__(self, company_dir: Path, db_pool: asyncpg.Pool):
@@ -169,7 +169,7 @@ class WorkflowManager:
     # ---------- helpers ----------
 
     def _task_dir(self, slug: str) -> Path:
-        """Path de artifacts (.md) da task no filesystem — metadata vive no banco."""
+        """Filesystem path of the task's artifacts (.md) — metadata lives in the DB."""
         return self.tasks_dir / slug
 
     async def _load_task_row(self, conn: asyncpg.Connection, slug: str) -> dict[str, Any] | None:
@@ -215,13 +215,13 @@ class WorkflowManager:
         current_step: str | None,
         next_: str,
     ) -> None:
-        """Valida transicao contra o workflow declarado. Modo permissivo
-        (aceita tudo) se nao ha wf ou o step nao esta declarado."""
+        """Validates the transition against the declared workflow. Permissive mode
+        (accepts everything) if there is no wf or the step is not declared."""
         if wf is None or current_step is None:
-            return  # modo permissivo
+            return  # permissive mode
         step = wf.step(current_step)
         if step is None:
-            return  # step ausente no wf — permissivo
+            return  # step missing from the wf — permissive
         if next_ not in step.next:
             allowed = sorted(step.next)
             raise WorkflowError(
@@ -235,13 +235,13 @@ class WorkflowManager:
         next_: str,
         next_agent_override: str | None,
     ) -> tuple[str | None, bool]:
-        """Retorna (agent_resolved_or_override, is_terminal).
+        """Returns (agent_resolved_or_override, is_terminal).
 
-        Ordem de resolucao:
+        Resolution order:
           1. terminal → (None, True).
-          2. next_agent_override sempre vence.
-          3. wf.step(next_).agent se declarado.
-          4. erro: exige override.
+          2. next_agent_override always wins.
+          3. wf.step(next_).agent if declared.
+          4. error: override required.
         """
         if next_ in TERMINALS:
             return None, True
@@ -278,27 +278,27 @@ class WorkflowManager:
         origin_topic: str | None,
         standalone: bool = False,
     ) -> str:
-        """Escolhe o topic onde o handoff vai ser postado.
+        """Picks the topic where the handoff will be posted.
 
-        Prioridade:
-          1. `explicit_topic` (override passado pelo chamador).
-          2. `standalone=True` -> sempre `task-<slug>`. Fan-out pede
-             isolamento por design; rule (3) abaixo nao se aplica porque
-             o humano *quer* uma conv nova.
-          3. Se o handoff volta pro agente de origem (o que abriu a task),
-             usa o topic onde o humano pediu — mantém humano e agente na
-             mesma thread ao longo do ciclo de vida da task.
+        Priority:
+          1. `explicit_topic` (override passed by the caller).
+          2. `standalone=True` -> always `task-<slug>`. Fan-out calls for
+             isolation by design; rule (3) below does not apply because
+             the human *wants* a new conv.
+          3. If the handoff returns to the origin agent (the one that opened
+             the task), use the topic where the human asked — keeps human and
+             agent in the same thread throughout the task's lifecycle.
           4. Fallback `task-<slug>`.
 
-        Regra (3) evita o modo de falha em que o retorno pro origin-agent
-        cai num topic novo `task-<slug>` que o humano nem sabe que existe;
-        se o agente esquecer de chamar `ask_human`, a mensagem fica
-        silenciada. Posta direto na conversa que ja esta aberta.
+        Rule (3) avoids the failure mode where the return to the origin agent
+        lands in a new `task-<slug>` topic the human does not even know exists;
+        if the agent forgets to call `ask_human`, the message goes
+        unnoticed. Post directly in the conversation that is already open.
 
-        Mas no caso ops (mega-agente, agent==origin_stream sempre)
-        a rule (3) dispararia em todo handoff, inclusive fan-out, e
-        colapsaria as N tasks paralelas na conv original. `standalone`
-        sinaliza esse contexto e desativa o fold-back.
+        But in the ops case (mega-agent, agent==origin_stream always)
+        rule (3) would fire on every handoff, fan-out included, and
+        collapse the N parallel tasks into the original conv. `standalone`
+        signals that context and disables the fold-back.
         """
         if explicit_topic:
             return explicit_topic
@@ -313,7 +313,7 @@ class WorkflowManager:
             return origin_topic
         return f"task-{task_slug}"
 
-    # ---------- API principal ----------
+    # ---------- main API ----------
 
     async def complete_phase(
         self,
@@ -336,22 +336,22 @@ class WorkflowManager:
         baseline: dict[str, str] | None = None,
         standalone: bool = False,
     ) -> dict[str, Any]:
-        """Registra fim da step atual e dispara handoff pro proximo step.
+        """Records the end of the current step and triggers the handoff to the next step.
 
-        Primeira chamada cria a task (schema permite upsert). `current_step`
-        eh lido do banco. Se nao existir, vem do `workflow.initial_step`.
-        Modo permissivo (sem workflow declarado) usa 'start' como fallback.
+        The first call creates the task (the schema allows upsert). `current_step`
+        is read from the DB. If missing, it comes from `workflow.initial_step`.
+        Permissive mode (no declared workflow) falls back to 'start'.
 
-        Tudo em uma transacao: UPSERT tasks, INSERT phases, INSERT
-        orchestrator.events. Se algo falhar, rollback atomico.
+        All in one transaction: UPSERT tasks, INSERT phases, INSERT
+        orchestrator.events. If anything fails, atomic rollback.
         """
         if not SLUG_RE.match(task_slug):
             raise WorkflowError(
                 f"invalid task_slug: {task_slug!r}. Use kebab-case without accents."
             )
 
-        # Artifacts continuam no filesystem — complete_phase exige que o arquivo
-        # exista antes de registrar a fase no banco (evita phases orfas).
+        # Artifacts stay on the filesystem — complete_phase requires the file
+        # to exist before recording the phase in the DB (avoids orphan phases).
         task_dir = self._task_dir(task_slug)
         task_dir.mkdir(parents=True, exist_ok=True)
         artifact_path = task_dir / artifact
@@ -366,20 +366,20 @@ class WorkflowManager:
                 task_row = await self._load_task_row(conn, task_slug)
                 is_first_call = task_row is None
 
-                # Workflow vem do banco (se task existe) ou do argumento (create).
+                # Workflow comes from the DB (if the task exists) or from the argument (create).
                 wf_name = (task_row or {}).get("workflow") or workflow
                 wf = self._resolve_workflow(wf_name)
 
                 # Resolve current_step.
-                # Ordem: banco > ultima fase concluida > initial_step do wf > 'start'.
+                # Order: DB > last completed phase > wf initial_step > 'start'.
                 #
-                # O fallback pra "ultima fase concluida" e critico em tasks que
-                # ja passaram por terminal nao-`done` (halt/human_review). Nesses
-                # casos `current_step` no banco esta NULL (UPSERT seta NULL pra
-                # is_terminal); usar `initial_step` faria um `complete_phase`
-                # subsequente (ex: PO indo pra `encerramento` apos human_review)
-                # registrar `from_step=triagem` no payload, gerando handoff com
-                # "Previous step: triagem" errado.
+                # The fallback to "last completed phase" is critical for tasks that
+                # already went through a non-`done` terminal (halt/human_review). In
+                # those cases `current_step` in the DB is NULL (UPSERT sets NULL for
+                # is_terminal); using `initial_step` would make a subsequent
+                # `complete_phase` (e.g. an agent moving to the closing step after
+                # human_review) record `from_step=<initial step>` in the payload,
+                # producing a handoff with a wrong "Previous step: <initial step>".
                 current_step = (task_row or {}).get("current_step")
                 if not current_step and task_row is not None:
                     last_done_step = await conn.fetchval(
@@ -398,9 +398,9 @@ class WorkflowManager:
 
                 now = datetime.now(tz=timezone.utc)
 
-                # Determina started_at da fase concluida. Se ja existe fase
-                # em aberto (completed_at NULL), usa o started_at dela. Senao,
-                # usa created_at da task (primeira fase).
+                # Determine started_at of the completed phase. If there is already an
+                # open phase (completed_at NULL), use its started_at. Otherwise,
+                # use the task's created_at (first phase).
                 in_flight = await conn.fetchrow(
                     """SELECT id, idx, started_at FROM tasks.phases
                         WHERE task_id = (SELECT id FROM tasks.tasks WHERE slug = $1)
@@ -413,9 +413,9 @@ class WorkflowManager:
                     (task_row["created_at"] if task_row else now)
                 )
 
-                # UPSERT task. Atributos descritivos (origin_*, complexity, impact,
-                # difficulty, origin) so escrevem se nao setados ainda — evita
-                # sobrescrever acidental em chamadas subsequentes.
+                # UPSERT task. Descriptive attributes (origin_*, complexity, impact,
+                # difficulty, origin) are only written if not set yet — avoids
+                # accidental overwrites on subsequent calls.
                 task_id = await conn.fetchval(
                     """INSERT INTO tasks.tasks
                         (slug, title, workflow, status, current_step, current_agent,
@@ -458,9 +458,9 @@ class WorkflowManager:
                     origin,
                 )
 
-                # baseline: merge no metadata_extra.baseline (dict repo->sha).
-                # Aditivo: novos repos se somam; NAO sobrescreve sha existente
-                # (garantia de D-analista: "baseline imutavel por repo").
+                # baseline: merge into metadata_extra.baseline (dict repo->sha).
+                # Additive: new repos are added; does NOT overwrite an existing sha
+                # (guarantee: "baseline is immutable per repo").
                 if baseline:
                     for repo, sha in baseline.items():
                         if not (repo and sha):
@@ -478,23 +478,23 @@ class WorkflowManager:
                             task_id, repo, sha,
                         )
 
-                # blocked_reason detalhado (CASE acima usa current_step como placeholder).
+                # Detailed blocked_reason (the CASE above uses current_step as a placeholder).
                 if is_terminal and next_ == "halt":
                     await conn.execute(
                         "UPDATE tasks.tasks SET blocked_reason = $2 WHERE id = $1",
-                        task_id, f"halt por {agent_name} na step '{current_step}'",
+                        task_id, f"halt by {agent_name} at step '{current_step}'",
                     )
                 elif is_terminal and next_ == "human_review":
                     await conn.execute(
                         "UPDATE tasks.tasks SET blocked_reason = $2 WHERE id = $1",
-                        task_id, f"human_review pedido por {agent_name} na step '{current_step}'",
+                        task_id, f"human_review requested by {agent_name} at step '{current_step}'",
                     )
 
-                # D-102: terminal `done` -> backlog item linkado vai pra
-                # 'concluido'. Usuario pediu coluna separada no kanban pra
-                # distinguir o que ja foi entregue do que ainda esta rodando
-                # (antes ambos ficavam em 'promovido'). NOOP se task nao
-                # nasceu de backlog (promoted_task_slug NULL ou row ausente).
+                # D-102: terminal `done` -> the linked backlog item moves to
+                # 'concluido'. The user asked for a separate kanban column to
+                # tell what was already delivered from what is still running
+                # (before, both stayed in 'promovido'). NOOP if the task did not
+                # come from the backlog (promoted_task_slug NULL or row missing).
                 if is_terminal and next_ == "done":
                     await conn.execute(
                         """UPDATE tasks.backlog
@@ -504,8 +504,8 @@ class WorkflowManager:
                         task_slug,
                     )
 
-                # Fecha a fase in-flight se existe; senao cria uma fase nova ja
-                # concluida (atomicamente representa a conclusao + arquivamento).
+                # Close the in-flight phase if it exists; otherwise create a new phase
+                # already completed (atomically represents completion + archiving).
                 if in_flight is not None:
                     await conn.execute(
                         """UPDATE tasks.phases
@@ -516,11 +516,11 @@ class WorkflowManager:
                     )
                     last_idx = in_flight["idx"]
                 else:
-                    # Append apos o ultimo idx existente (-1 quando vazio,
-                    # via COALESCE; +1 da 0 na primeira fase).
-                    # NOTA: nao use `int(x or -1)` aqui — `0 or -1 == -1` em
-                    # Python (0 eh falsy), o que reinserta idx=0 em tasks
-                    # com exatamente uma fase e quebra o unique constraint.
+                    # Append after the last existing idx (-1 when empty,
+                    # via COALESCE; +1 gives 0 for the first phase).
+                    # NOTE: do not use `int(x or -1)` here — `0 or -1 == -1` in
+                    # Python (0 is falsy), which re-inserts idx=0 on tasks
+                    # with exactly one phase and breaks the unique constraint.
                     last_idx_row = await conn.fetchval(
                         "SELECT COALESCE(MAX(idx), -1) FROM tasks.phases WHERE task_id = $1",
                         task_id,
@@ -533,7 +533,7 @@ class WorkflowManager:
                         task_id, last_idx, current_step, agent_name, started_at, now, artifact, summary,
                     )
 
-                # Cria fase in-flight pra proxima step (se nao terminal).
+                # Create the in-flight phase for the next step (if not terminal).
                 if not is_terminal:
                     await conn.execute(
                         """INSERT INTO tasks.phases
@@ -542,10 +542,10 @@ class WorkflowManager:
                         task_id, last_idx + 1, next_, resolved_agent, now,
                     )
 
-                # Snapshot origem (pra reactor postar terminal la).
+                # Snapshot the origin (so the reactor posts the terminal there).
                 task_final = await self._load_task_row(conn, task_slug)
 
-                # Payload + event pro reactor consumir.
+                # Payload + event for the reactor to consume.
                 next_artifact_default = self._expected_artifact_for(wf, next_) if not is_terminal else None
                 resolved_origin_stream = task_final["origin_stream"] if task_final else None
                 resolved_origin_topic = task_final["origin_topic"] if task_final else None
@@ -557,9 +557,9 @@ class WorkflowManager:
                     origin_topic=resolved_origin_topic,
                     standalone=bool(standalone),
                 )
-                # fresh_session do step destino: reactor usa pra zerar
-                # claude_session_id da conv (stream, topic) antes de postar
-                # o handoff. Ignorado em terminais (sem dispatch a fazer).
+                # fresh_session of the target step: the reactor uses it to clear
+                # the conv's (stream, topic) claude_session_id before posting
+                # the handoff. Ignored for terminals (no dispatch to do).
                 next_fresh_session = False
                 if not is_terminal and wf is not None:
                     next_step_def = wf.step(next_)
@@ -625,10 +625,10 @@ class WorkflowManager:
                 "a separate message announcing the dispatch; it's already done. "
                 "If you want to notify the human of the status, use notify_human."
             )
-            # Aviso extra quando o retorno cai no topic de origem (humano esta
-            # vendo essa conversa ao vivo). Sem `ask_human` / `complete_phase` a
-            # run termina silenciosa mas a mensagem ja esta na thread aberta —
-            # ainda assim, convem o agente bloquear corretamente.
+            # Extra warning when the return lands in the origin topic (the human is
+            # watching this conversation live). Without `ask_human` / `complete_phase`
+            # the run ends silently but the message is already in the open thread —
+            # still, the agent should block properly.
             if (
                 resolved_origin_stream
                 and resolved_origin_topic
@@ -713,20 +713,20 @@ class WorkflowManager:
         branch: str | None = None,
         agent_name: str,
     ) -> dict[str, Any]:
-        """Cria worktree isolada + registra no banco, atomico.
+        """Creates an isolated worktree + records it in the DB, atomically.
 
-        Resolve baseline_sha quando nao fornecido (default-branch HEAD do
-        remote). Cria em `${WORKTREES_DIR}/<repo>/<slug>/`, fora da arvore
-        `repos/<repo>/` — worktrees nunca poluem o status do repo canonico.
+        Resolves baseline_sha when not provided (the remote's default-branch
+        HEAD). Creates it at `${WORKTREES_DIR}/<repo>/<slug>/`, outside the
+        `repos/<repo>/` tree — worktrees never pollute the canonical repo's status.
 
-        Idempotente: se (task_id, repo, branch) ja existe no banco E path em
-        disco casa com um worktree valido, retorna sem recriar. Se path sumiu
-        ou HEAD nao bate, recria.
+        Idempotent: if (task_id, repo, branch) already exists in the DB AND the
+        path on disk matches a valid worktree, returns without recreating. If the
+        path is gone or HEAD does not match, recreates.
 
         Baseline resolution:
-          - explicit `baseline_sha` sempre ganha prioridade;
-          - senao, `git fetch --quiet origin` + `git rev-parse origin/<default>`,
-            onde `<default>` vem de `git symbolic-ref refs/remotes/origin/HEAD`.
+          - an explicit `baseline_sha` always takes priority;
+          - otherwise, `git fetch --quiet origin` + `git rev-parse origin/<default>`,
+            where `<default>` comes from `git symbolic-ref refs/remotes/origin/HEAD`.
         """
         if not SLUG_RE.match(task_slug):
             raise WorkflowError(f"invalid task_slug: {task_slug!r}")
@@ -755,7 +755,7 @@ class WorkflowManager:
                     f"Task {task_slug!r} does not exist. Run complete_phase first to create it."
                 )
 
-        # Resolve baseline antes de mexer em disco — se falhar, nada foi alterado.
+        # Resolve the baseline before touching disk — if it fails, nothing changed.
         if not baseline_sha:
             baseline_sha = await self._resolve_default_baseline(repo_dir)
         elif not re.fullmatch(r"[0-9a-f]{7,40}", baseline_sha):
@@ -763,25 +763,25 @@ class WorkflowManager:
                 f"baseline_sha {baseline_sha!r} does not look like a hex SHA (7-40 chars)."
             )
 
-        # Idempotencia: ja existe worktree valida nesse path apontando pro branch?
+        # Idempotency: is there already a valid worktree at this path on the branch?
         existing = await self._existing_worktree(repo_dir, wt_path, branch_final)
         if existing is None:
-            # Cria. Se algo no caminho ficou sujo (path existe sem ser worktree,
-            # ou branch ja existe solta), aborta com msg — nao tentamos chute.
+            # Create. If something along the way is dirty (path exists but is not a
+            # worktree, or the branch already exists loose), abort with a msg — no guessing.
             worktrees_root.mkdir(parents=True, exist_ok=True)
             (worktrees_root / repo).mkdir(parents=True, exist_ok=True)
             await self._git_worktree_add(repo_dir, wt_path, branch_final, baseline_sha)
 
         wt_path_str = str(wt_path)
         async with self._pool.acquire() as conn:
-            # Upsert por (task_id, repo, branch). Path atualiza se mudou.
+            # Upsert by (task_id, repo, branch). Path is updated if it changed.
             await conn.execute(
                 """INSERT INTO tasks.worktrees (task_id, repo, branch, path)
                    VALUES ($1, $2, $3, $4)
                    ON CONFLICT (task_id, repo, branch) DO UPDATE SET path = EXCLUDED.path""",
                 task_id, repo, branch_final, wt_path_str,
             )
-            # Guarda baseline_sha no metadata_extra (append por repo).
+            # Store baseline_sha in metadata_extra (appended per repo).
             await conn.execute(
                 """UPDATE tasks.tasks
                       SET metadata_extra = jsonb_set(
@@ -816,16 +816,16 @@ class WorkflowManager:
         }
 
     async def _resolve_default_baseline(self, repo_dir: Path) -> str:
-        """Resolve SHA do default branch remoto.
+        """Resolves the SHA of the remote default branch.
 
-        Fluxo:
-          1. `git fetch --quiet origin` — garante refs atualizadas.
+        Flow:
+          1. `git fetch --quiet origin` — ensures up-to-date refs.
           2. `git symbolic-ref refs/remotes/origin/HEAD` -> `refs/remotes/origin/<default>`.
           3. `git rev-parse refs/remotes/origin/<default>` -> SHA.
 
-        Se origin/HEAD nao estiver setada localmente (clone antigo), tenta
-        `git remote set-head origin --auto` antes. Se tudo falhar, sobe erro
-        explicativo — NAO chutamos `main` ou `master`.
+        If origin/HEAD is not set locally (old clone), it first tries
+        `git remote set-head origin --auto`. If everything fails, raises an
+        explanatory error — we do NOT guess `main` or `master`.
 
         A repo with no `origin` remote (e.g. one made by init_repo) has no
         remote default branch: its local HEAD is the baseline.
@@ -861,7 +861,7 @@ class WorkflowManager:
 
         head_ref = await self._git_symbolic_ref_head(repo_dir)
         if head_ref is None:
-            # Tenta auto-detectar e setar origin/HEAD localmente.
+            # Try to auto-detect and set origin/HEAD locally.
             auto = await asyncio.create_subprocess_exec(
                 "git", "-C", str(repo_dir), "remote", "set-head", "origin", "--auto",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -904,13 +904,13 @@ class WorkflowManager:
     async def _existing_worktree(
         self, repo_dir: Path, wt_path: Path, branch: str,
     ) -> dict[str, Any] | None:
-        """Checa se ja existe worktree valida no path + branch esperados.
+        """Checks whether a valid worktree already exists at the expected path + branch.
 
-        Retorna dict com info quando casa; None caso contrario.
+        Returns a dict with info when it matches; None otherwise.
         """
         if not wt_path.exists():
             return None
-        # `git worktree list --porcelain` — parseamos pra achar entry com esse path.
+        # `git worktree list --porcelain` — parse it to find the entry with this path.
         proc = await asyncio.create_subprocess_exec(
             "git", "-C", str(repo_dir), "worktree", "list", "--porcelain",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -936,8 +936,8 @@ class WorkflowManager:
                 expected = f"refs/heads/{branch}"
                 if ref == expected:
                     return {"path": e["worktree"], "branch": branch}
-                # Path existe mas branch diferente — retorna None pra forcar erro
-                # no git worktree add (que falhara com "already exists").
+                # Path exists but on a different branch — return None to force an error
+                # in git worktree add (which will fail with "already exists").
                 return None
         return None
 
@@ -963,28 +963,28 @@ class WorkflowManager:
         task_slug: str,
         agent_name: str,
     ) -> dict[str, Any]:
-        """Remove todas as worktrees registradas pra uma task.
+        """Removes all worktrees registered for a task.
 
-        Fluxo por worktree:
-          1. `git -C <repo_canonico> worktree remove --force <path>` — remove
-             registro do git + apaga pasta (quando path ainda existe em disco).
-          2. `git -C <repo_canonico> worktree prune` — garante que registros
-             orfaos no git sumam mesmo se a pasta ja nao existia.
-          3. `shutil.rmtree(path)` como backstop — se por algum motivo o
-             worktree remove falhou mas a pasta persistiu.
-          4. `DELETE FROM tasks.worktrees WHERE ...` — so apaga a linha se o
-             path realmente sumiu do disco.
+        Flow per worktree:
+          1. `git -C <canonical_repo> worktree remove --force <path>` — removes
+             the git record + deletes the folder (when the path still exists on disk).
+          2. `git -C <canonical_repo> worktree prune` — ensures orphan git
+             records go away even if the folder no longer existed.
+          3. `shutil.rmtree(path)` as a backstop — in case the worktree remove
+             failed for some reason but the folder persisted.
+          4. `DELETE FROM tasks.worktrees WHERE ...` — only deletes the row if the
+             path is really gone from disk.
 
-        Idempotente: rodar de novo em task ja limpa nao causa erro; retorna
-        removed=[] e guidance informando.
+        Idempotent: running again on an already-clean task does not error; returns
+        removed=[] and an informative guidance.
 
-        Falhas nao sao mascaradas: se alguma worktree nao pode ser removida,
-        retorna em `failed` e o chamador (tipicamente coordenador no
-        encerramento) deve escalar via `complete_phase(next='human_review')`.
+        Failures are not masked: if a worktree cannot be removed, it is
+        returned in `failed` and the caller (typically the agent closing the
+        task) must escalate via `complete_phase(next='human_review')`.
 
-        Repo canonico e resolvido como `/workspace/repos/<repo>` — convencao
-        de bind mount do framework. Se a instancia usar prefixo diferente,
-        esta logica precisa mudar junto.
+        The canonical repo is resolved as `/workspace/repos/<repo>` — the
+        framework's bind mount convention. If the instance uses a different
+        prefix, this logic must change with it.
         """
         if not SLUG_RE.match(task_slug):
             raise WorkflowError(f"invalid task_slug: {task_slug!r}")
@@ -1044,7 +1044,7 @@ class WorkflowManager:
             except Exception as e:  # noqa: BLE001
                 errors.append(f"worktree remove exc: {e}")
 
-            # 2) git worktree prune (limpa registros orfaos)
+            # 2) git worktree prune (cleans orphan records)
             try:
                 prune_proc = await asyncio.create_subprocess_exec(
                     "git", "-C", canonical_repo, "worktree", "prune",
@@ -1055,7 +1055,7 @@ class WorkflowManager:
             except Exception as e:  # noqa: BLE001
                 errors.append(f"worktree prune exc: {e}")
 
-            # 3) rmtree backstop — se path persiste, remove manualmente
+            # 3) rmtree backstop — if the path persists, remove it manually
             if os.path.exists(path):
                 try:
                     shutil.rmtree(path)
@@ -1151,23 +1151,23 @@ class WorkflowManager:
         reason: str,
         standalone: bool = False,
     ) -> dict[str, Any]:
-        """D-57 fase 2.5: reabre task em status terminal pra rodar mais um step.
+        """D-57 phase 2.5: reopens a task in a terminal status to run one more step.
 
-        Uso esperado: humano pede revisao pos-encerramento ("vi a task em done,
-        falta X"). Coordenador (ou outro agente instruido explicitamente) chama
-        reopen_task pra voltar a task pra in_progress no step desejado. O
-        reactor recebe um evento phase_complete normal e despacha pro
-        next_agent — mesmo fluxo de complete_phase.
+        Expected use: the human asks for a revision after closing ("I saw the task
+        is done, X is missing"). The orchestrating agent (or another agent explicitly
+        instructed) calls reopen_task to move the task back to in_progress at the
+        desired step. The reactor receives a normal phase_complete event and
+        dispatches to next_agent — same flow as complete_phase.
 
-        Difere de complete_phase em dois pontos:
-          - Nao exige artifact (nenhuma fase foi concluida agora; so estamos
-            religando a task).
-          - Aceita transicionar *pra* um step do workflow sem passar por
-            complete_phase do step anterior (porque o estado terminal ja foi
-            registrado no fechamento original).
+        Differs from complete_phase in two ways:
+          - Does not require an artifact (no phase was completed now; we are only
+            restarting the task).
+          - Allows transitioning *to* a workflow step without going through the
+            previous step's complete_phase (because the terminal state was
+            already recorded at the original close).
 
-        Nao muda o prompt de nenhum agente — por design (ver D-57). Fica como
-        ferramenta disponivel, so invocada quando humano pedir explicitamente.
+        Does not change any agent's prompt — by design (see D-57). It stays as an
+        available tool, only invoked when the human explicitly asks.
         """
         if not SLUG_RE.match(task_slug):
             raise WorkflowError(f"invalid task_slug: {task_slug!r}")
@@ -1212,10 +1212,10 @@ class WorkflowManager:
                 now = datetime.now(tz=timezone.utc)
                 task_id = task_row["id"]
 
-                # Religa a task: status volta pra in_progress, current_step/agent
-                # apontam pro alvo, blocked_reason mantido historicamente no
-                # payload do evento (mas removido da row — ela nao esta mais
-                # bloqueada).
+                # Restart the task: status goes back to in_progress, current_step/agent
+                # point to the target, blocked_reason kept historically in the
+                # event payload (but removed from the row — it is no longer
+                # blocked).
                 await conn.execute(
                     """UPDATE tasks.tasks
                           SET status = 'in_progress',
@@ -1227,15 +1227,15 @@ class WorkflowManager:
                     task_id, next_step, resolved_agent,
                 )
 
-                # Cria fase in-flight pro next_step (igual a complete_phase faz
-                # no branch nao-terminal).
+                # Create the in-flight phase for next_step (same as complete_phase does
+                # in the non-terminal branch).
                 last_idx_row = await conn.fetchval(
                     "SELECT COALESCE(MAX(idx), -1) FROM tasks.phases WHERE task_id = $1",
                     task_id,
                 )
-                # COALESCE retorna -1 pra task vazia; +1 da 0. Nao usar
-                # `int(x or -1)` — `0 or -1 == -1` em Python falsifica o caso
-                # MAX(idx)=0 (task com exatamente uma fase) e gera duplicate.
+                # COALESCE returns -1 for an empty task; +1 gives 0. Do not use
+                # `int(x or -1)` — `0 or -1 == -1` in Python breaks the
+                # MAX(idx)=0 case (task with exactly one phase) and produces a duplicate.
                 next_idx = int(last_idx_row) + 1
                 await conn.execute(
                     """INSERT INTO tasks.phases
@@ -1244,9 +1244,9 @@ class WorkflowManager:
                     task_id, next_idx, next_step, resolved_agent, now,
                 )
 
-                # Evento phase_complete pro reactor despachar. from_step aponta
-                # pro ultimo step completado antes do terminal — leitura
-                # informativa, nao controla validacao.
+                # phase_complete event for the reactor to dispatch. from_step points
+                # to the last step completed before the terminal — informational
+                # only, does not drive validation.
                 last_done = await conn.fetchrow(
                     """SELECT step FROM tasks.phases
                         WHERE task_id = $1 AND completed_at IS NOT NULL

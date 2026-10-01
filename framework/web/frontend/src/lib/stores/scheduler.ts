@@ -72,14 +72,14 @@ export function stopSchedulerStream(): void {
 
 export async function runJobNow(jobId: string): Promise<void> {
   await api.post(`/api/scheduler/jobs/${encodeURIComponent(jobId)}/run`);
-  // Refresh imediato pra ver last_fire_at atualizar quando o job terminar
-  // (proximo poll, 5s).
+  // Immediate refresh to see last_fire_at update when the job finishes
+  // (next poll, 5s).
   refreshScheduler();
 }
 
 export async function pauseJob(jobId: string): Promise<void> {
   await api.post(`/api/scheduler/jobs/${encodeURIComponent(jobId)}/pause`);
-  // Optimistic: marca paused localmente; proximo poll sobrescreve.
+  // Optimistic: mark paused locally; the next poll overwrites it.
   schedulerJobs.update((jobs) =>
     jobs.map((j) => (j.id === jobId ? { ...j, paused: true, next_run_time: null } : j))
   );
@@ -200,25 +200,25 @@ export const resetRoutine = (id: string) =>
     `/api/scheduler/routines/${encodeURIComponent(id)}`
   );
 
-/** Retorna string tipo "em 2h 14min" ou "agora" / "atrasado" pra ISO timestamp futuro. */
+/** Returns a string like "in 2h 14min" or "now" for a future ISO timestamp. */
 export function fmtUntil(iso: string | null): string {
   if (!iso) return '—';
   const target = new Date(iso).getTime();
   if (isNaN(target)) return '—';
   const diff = Math.floor((target - Date.now()) / 1000);
-  if (diff <= 0) return 'agora';
-  if (diff < 60) return `em ${diff}s`;
+  if (diff <= 0) return 'now';
+  if (diff < 60) return `in ${diff}s`;
   if (diff < 3600) {
     const m = Math.floor(diff / 60);
     const s = diff % 60;
-    return s > 0 && m < 5 ? `em ${m}min ${s}s` : `em ${m}min`;
+    return s > 0 && m < 5 ? `in ${m}min ${s}s` : `in ${m}min`;
   }
   if (diff < 86400) {
     const h = Math.floor(diff / 3600);
     const m = Math.floor((diff % 3600) / 60);
-    return m > 0 ? `em ${h}h ${m}min` : `em ${h}h`;
+    return m > 0 ? `in ${h}h ${m}min` : `in ${h}h`;
   }
   const d = Math.floor(diff / 86400);
   const h = Math.floor((diff % 86400) / 3600);
-  return h > 0 ? `em ${d}d ${h}h` : `em ${d}d`;
+  return h > 0 ? `in ${d}d ${h}h` : `in ${d}d`;
 }

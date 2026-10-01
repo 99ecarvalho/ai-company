@@ -1,19 +1,19 @@
--- init.sql — schema unico do ai-company (Postgres unifica messaging +
+-- init.sql — single ai-company schema (Postgres unifies messaging +
 -- orchestrator + memory + telemetry + web).
 --
--- Aplicado automaticamente pelo container postgres no primeiro boot (via
--- /docker-entrypoint-initdb.d/). Dados persistem no volume postgres-data.
+-- Applied automatically by the postgres container on first boot (via
+-- /docker-entrypoint-initdb.d/). Data persists in the postgres-data volume.
 --
--- Pra aplicar mudancas de schema depois do initial boot: drop & recreate DB,
--- ou escrever ALTER TABLE numa migration file separada (TODO: alembic se ficar
--- complexo).
+-- To apply schema changes after the initial boot: drop & recreate the DB,
+-- or write ALTER TABLE in a separate migration file (TODO: alembic if it gets
+-- complex).
 --
--- Schemas por dominio:
---   messaging     — broker de chat (streams, topics, mensagens, asks)
---   orchestrator  — eventos de workflow entre agentes
---   memory        — fatos persistentes por agente
---   telemetry     — stats de execucoes Claude (custo, tokens, latencia)
---   web           — estado da PWA (push subs, conversas fechadas)
+-- Schemas by domain:
+--   messaging     — chat broker (streams, topics, messages, asks)
+--   orchestrator  — workflow events between agents
+--   memory        — persistent facts per agent
+--   telemetry     — Claude run stats (cost, tokens, latency)
+--   web           — PWA state (push subs, closed conversations)
 
 CREATE SCHEMA IF NOT EXISTS messaging;
 CREATE SCHEMA IF NOT EXISTS orchestrator;
@@ -23,7 +23,7 @@ CREATE SCHEMA IF NOT EXISTS web;
 
 
 -- ============================================================
--- messaging: broker de chat
+-- messaging: chat broker
 -- ============================================================
 
 CREATE TABLE messaging.users (
@@ -32,16 +32,16 @@ CREATE TABLE messaging.users (
     username      TEXT UNIQUE NOT NULL,
     full_name     TEXT NOT NULL,
     kind          TEXT NOT NULL CHECK (kind IN ('human', 'bot')),
-    agent_name    TEXT,                 -- set quando kind='bot'; nome do agente
-    api_token     TEXT UNIQUE,          -- Bearer token pra bots (gerado no reconcile)
-    password_hash TEXT,                 -- bcrypt pra humans (futuro)
+    agent_name    TEXT,                 -- set when kind='bot'; agent name
+    api_token     TEXT UNIQUE,          -- Bearer token for bots (generated at reconcile)
+    password_hash TEXT,                 -- bcrypt for humans (future)
     is_admin      BOOLEAN NOT NULL DEFAULT false,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE messaging.streams (
     id            SERIAL PRIMARY KEY,
-    name          TEXT UNIQUE NOT NULL, -- ex: 'secretario', 'debug', 'orquestracao'
+    name          TEXT UNIQUE NOT NULL, -- e.g. 'assistant', 'debug', 'orchestration'
     description   TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -74,12 +74,12 @@ CREATE TABLE messaging.messages (
 );
 CREATE INDEX messages_conv_time ON messaging.messages (conversation_id, sent_at);
 CREATE INDEX messages_sender_time ON messaging.messages (sender_id, sent_at);
--- Search global FTS (usado por GET /api/search). simple = sem stemming language-specific.
+-- Global FTS search (used by GET /api/search). simple = no language-specific stemming.
 CREATE INDEX messages_fts_idx ON messaging.messages USING gin (to_tsvector('simple', content));
 
--- agent_policies: regras de quem pode falar com quem via ask_agent.
--- Editavel via /api/agent-policies pela UI (matriz checkbox). NULL em ambas
--- colunas = sem restricao. Validado em claude_runner._on_ask_agent.
+-- agent_policies: rules for who can talk to whom via ask_agent.
+-- Editable via /api/agent-policies from the UI (checkbox matrix). NULL in both
+-- columns = no restriction. Validated in claude_runner._on_ask_agent.
 CREATE TABLE messaging.agent_policies (
     agent              TEXT PRIMARY KEY,
     can_ask            TEXT[],
@@ -87,8 +87,8 @@ CREATE TABLE messaging.agent_policies (
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- pending_asks: 1 pergunta bloqueante por conversation no max (broker assegura).
--- Reusado pelo ask_human (humano responde) e ask_agent (agent target responde).
+-- pending_asks: at most 1 blocking question per conversation (broker enforces).
+-- Reused by ask_human (human answers) and ask_agent (target agent answers).
 CREATE TABLE messaging.pending_asks (
     conversation_id   INTEGER PRIMARY KEY REFERENCES messaging.conversations(id) ON DELETE CASCADE,
     asker_id          INTEGER NOT NULL REFERENCES messaging.users(id),
@@ -102,13 +102,13 @@ CREATE TABLE messaging.pending_asks (
 
 
 -- ============================================================
--- orchestrator: eventos de workflow (antes: instance/events/*.json)
+-- orchestrator: workflow events (formerly: instance/events/*.json)
 -- ============================================================
 
 CREATE TABLE orchestrator.events (
     id            BIGSERIAL PRIMARY KEY,
     emitted_by    TEXT NOT NULL,          -- agent name
-    event_type    TEXT NOT NULL,          -- ex: 'phase_complete'
+    event_type    TEXT NOT NULL,          -- e.g. 'phase_complete'
     task_slug     TEXT,
     payload       JSONB NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending'
@@ -122,7 +122,7 @@ CREATE INDEX events_status_time ON orchestrator.events (status, created_at);
 
 
 -- ============================================================
--- memory: fatos persistentes por agente (antes: SQLite /memory/*.db)
+-- memory: persistent facts per agent (formerly: SQLite /memory/*.db)
 -- ============================================================
 
 CREATE TABLE memory.facts (
@@ -141,7 +141,7 @@ CREATE INDEX facts_fts ON memory.facts USING gin (to_tsvector('simple', key || '
 
 
 -- ============================================================
--- telemetry: stats de execucoes Claude
+-- telemetry: Claude run stats
 -- ============================================================
 
 CREATE TABLE telemetry.events (
@@ -160,9 +160,9 @@ CREATE TABLE telemetry.events (
 CREATE INDEX telemetry_agent_time ON telemetry.events (agent, ts DESC);
 CREATE INDEX telemetry_time ON telemetry.events (ts DESC);
 
--- Live trace events: captura cada evento do stream-json do claude (run_start,
--- thinking, tool_use, tool_result, run_end) por conversation. Consumido via
--- SSE pra mostrar atividade em tempo real no PWA. Cleanup via scheduler.
+-- Live trace events: captures each event of claude's stream-json (run_start,
+-- thinking, tool_use, tool_result, run_end) per conversation. Consumed via
+-- SSE to show real-time activity in the PWA. Cleanup via scheduler.
 CREATE TABLE telemetry.live_events (
     id              BIGSERIAL PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES messaging.conversations(id) ON DELETE CASCADE,
@@ -174,7 +174,7 @@ CREATE TABLE telemetry.live_events (
 );
 CREATE INDEX idx_live_events_conv_ts ON telemetry.live_events (conversation_id, ts DESC);
 
--- pg_notify trigger: emite no channel `live_event_<conv_id>` em cada INSERT.
+-- pg_notify trigger: emits on channel `live_event_<conv_id>` on each INSERT.
 CREATE OR REPLACE FUNCTION telemetry.notify_live_event() RETURNS TRIGGER AS $$
 BEGIN
     PERFORM pg_notify(
@@ -196,7 +196,7 @@ FOR EACH ROW EXECUTE FUNCTION telemetry.notify_live_event();
 
 
 -- ============================================================
--- web: estado da PWA
+-- web: PWA state
 -- ============================================================
 
 CREATE TABLE web.push_subscriptions (
@@ -216,10 +216,10 @@ CREATE TABLE web.closed_conversations (
     PRIMARY KEY (conversation_id, user_id)
 );
 
--- Cost budgets por agente (em USD/dia). Scheduler action `cost_budget_check`
--- compara gasto agregado de telemetry.events com daily_usd_limit. Quando
--- excede, posta alert no stream do agente e registra em budget_alerts pra
--- nao spammar (cooldown 1 dia).
+-- Cost budgets per agent (in USD/day). Scheduler action `cost_budget_check`
+-- compares aggregated spend from telemetry.events with daily_usd_limit. When
+-- exceeded, posts an alert on the agent's stream and records it in budget_alerts
+-- to avoid spamming (1-day cooldown).
 CREATE TABLE web.cost_budgets (
     agent             TEXT PRIMARY KEY,
     daily_usd_limit   NUMERIC(10, 4) NOT NULL CHECK (daily_usd_limit > 0),
@@ -234,9 +234,9 @@ CREATE TABLE web.budget_alerts (
     PRIMARY KEY (agent, alert_date)
 );
 
--- Sessions de humanos no PWA. Criadas no /api/auth/login (bcrypt check),
--- consumidas via cookie HttpOnly em get_principal. Expiracao explicita por
--- coluna; cleanup de expiradas eh on-the-fly (nao precisa de cron).
+-- Human sessions in the PWA. Created at /api/auth/login (bcrypt check),
+-- consumed via HttpOnly cookie in get_principal. Explicit expiry per
+-- column; cleanup of expired ones is on-the-fly (no cron needed).
 CREATE TABLE web.sessions (
     token       TEXT PRIMARY KEY,
     user_id     INTEGER NOT NULL REFERENCES messaging.users(id) ON DELETE CASCADE,
@@ -248,14 +248,14 @@ CREATE INDEX idx_web_sessions_expires ON web.sessions(expires_at);
 
 
 -- ============================================================
--- Convencoes de pg_notify:
---   Canal 'msg_conv_<conversation_id>' recebe INSERTs em messaging.messages
---     (topic-scoped; usado por ask_agent pra evitar over-subscribe — ver 003)
---   Canal 'msg_stream_<stream_id>' recebe mesmos INSERTs (stream-scoped)
---   Canal 'msg_all' recebe todos INSERTs (usado pelo web: SSE + push)
---   Canal 'ask_<conversation_id>' notifica resolucao de pending_ask
---   Canal 'event_new' notifica nova entry em orchestrator.events
--- Triggers estao definidos aqui; broker/reactor fazem LISTEN.
+-- pg_notify conventions:
+--   Channel 'msg_conv_<conversation_id>' receives INSERTs on messaging.messages
+--     (topic-scoped; used by ask_agent to avoid over-subscribing — see 003)
+--   Channel 'msg_stream_<stream_id>' receives the same INSERTs (stream-scoped)
+--   Channel 'msg_all' receives all INSERTs (used by web: SSE + push)
+--   Channel 'ask_<conversation_id>' notifies resolution of a pending_ask
+--   Channel 'event_new' notifies a new entry in orchestrator.events
+-- Triggers are defined here; broker/reactor do the LISTEN.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION messaging.notify_message() RETURNS TRIGGER AS $$
@@ -319,6 +319,6 @@ CREATE TRIGGER trg_notify_event
 
 
 -- ============================================================
--- Streams base criadas no bootstrap (via script, nao aqui)
--- (empresa, orquestracao sao criadas via broker/reconcile)
+-- Base streams created at bootstrap (via script, not here)
+-- (other streams are created via broker/reconcile)
 -- ============================================================

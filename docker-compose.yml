@@ -1,11 +1,11 @@
-# ai-company — stack base.
-# Messaging vive em Postgres + broker HTTP no 'web' (sem broker externo).
+# ai-company — base stack.
+# Messaging lives in Postgres + an HTTP broker in 'web' (no external broker).
 
 name: ai-company
 
 services:
 
-  # --- Postgres: storage unico do sistema ---
+  # --- Postgres: the system's single storage ---
   # Schemas: messaging, orchestrator, memory, telemetry, web.
   postgres:
     image: postgres:16-alpine
@@ -17,8 +17,8 @@ services:
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - postgres-data:/var/lib/postgresql/data:rw
-      # Schema agora vem via framework/db/migrations/, aplicadas pelo entrypoint
-      # do web container antes de subir o uvicorn. Ver framework/scripts/migrate.py.
+      # The schema now comes from framework/db/migrations/, applied by the web
+      # container's entrypoint before uvicorn starts. See framework/scripts/migrate.py.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_company}"]
       interval: 10s
@@ -27,8 +27,8 @@ services:
       start_period: 120s
 
   # --- Web: broker HTTP (messages, events SSE, subs, users) + PWA ---
-  # Porta 9090 no host (configuravel via WEB_PORT — util pra multi-empresa
-  # na mesma maquina). Roda tambem as rotas de admin / telemetry / memory.
+  # Port 9090 on the host (configurable via WEB_PORT — useful for several
+  # companies on one machine). Also serves the admin / telemetry / memory routes.
   web:
     build:
       context: .
@@ -59,26 +59,26 @@ services:
       SCHEDULER_URL: http://scheduler:8811
       LOG_LEVEL: INFO
       PROJECT_ROOT_HOST: ${PWD}
-      # HOME do usuario host — propagado pra que agent_bootstrap.py expanda
-      # ${HOME}/.claude/ ao montar volumes via SDK (compose normalmente
-      # resolve esse var no host; sem CLI, web faz manual via env).
+      # Host user's HOME — passed through so agent_bootstrap.py can expand
+      # ${HOME}/.claude/ when mounting volumes via the SDK (compose normally
+      # resolves this var on the host; without the CLI, web does it via env).
       HOST_HOME: ${HOME}
-      # COMPOSE_PROJECT_NAME: usado pelo agent_bootstrap pra computar
-      # container names (`<project>-agent-<slug>-1`). Compose ja injeta
-      # COMPOSE_PROJECT_NAME automaticamente em alguns contextos, mas
-      # passar explicito garante que o web container sempre veja o nome
-      # correto, mesmo quando customizado em .env.
+      # COMPOSE_PROJECT_NAME: used by agent_bootstrap to compute
+      # container names (`<project>-agent-<slug>-1`). Compose already injects
+      # COMPOSE_PROJECT_NAME automatically in some contexts, but passing it
+      # explicitly ensures the web container always sees the correct name,
+      # even when customized in .env.
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-ai-company}
-      # Hire/onboard: slug do agente que hospeda claude CLI pra geracao
-      # de drafts. Container name eh derivado dinamicamente do slug +
-      # COMPOSE_PROJECT_NAME (cobre instancias com project name custom).
-      # HIRE_AGENT_CONTAINER (override total) ainda funciona pra setups
-      # exoticos que precisam apontar pra container fora do padrao.
+      # Hire/onboard: slug of the agent that hosts the claude CLI used to
+      # generate drafts. The container name is derived dynamically from the
+      # slug + COMPOSE_PROJECT_NAME (covers instances with a custom project name).
+      # HIRE_AGENT_CONTAINER (full override) still works for unusual setups
+      # that need to point at a non-standard container.
       HIRE_AGENT: ${HIRE_AGENT:-executor}
       HIRE_AGENT_CONTAINER: ${HIRE_AGENT_CONTAINER:-}
       TZ: ${TZ:-America/Sao_Paulo}
-      # PWA — defaults genericos do framework, sobrescritos pelo .env da
-      # instancia. Manifest renderizado dinamicamente em /manifest.webmanifest.
+      # PWA — generic framework defaults, overridden by the instance's .env.
+      # The manifest is rendered dynamically at /manifest.webmanifest.
       PWA_NAME: ${PWA_NAME:-Agents}
       PWA_SHORT_NAME: ${PWA_SHORT_NAME:-Agents}
       PWA_DESCRIPTION: ${PWA_DESCRIPTION:-Multi-agent orchestration}
@@ -91,16 +91,16 @@ services:
       INSTANCE_WEB_DIR: /workspace/web
       HIRE_MODEL: ${HIRE_MODEL:-}
     volumes:
-      - ${AGENTS_DIR:-./instance/agents}:/workspace/agents      # rw pra "contratar" novo agent (reconcile)
-      - ${COMPANY_DIR:-./instance/company}:/workspace/company   # rw pra viewer de arquivos + upload
+      - ${AGENTS_DIR:-./instance/agents}:/workspace/agents      # rw to "hire" a new agent (reconcile)
+      - ${COMPANY_DIR:-./instance/company}:/workspace/company   # rw for the file viewer + upload
       - ${REPOS_DIR:-./instance/repos}:/workspace/repos         # rw: file viewer + /api/repos/init (agents mount it ro, D-115)
-      - ${SESSIONS_DIR:-./instance/sessions}:/workspace/sessions  # rw: reconcile mkdir's <name>/ por agente novo
+      - ${SESSIONS_DIR:-./instance/sessions}:/workspace/sessions  # rw: reconcile mkdirs <name>/ per new agent
       - ${INSTANCE_WEB_DIR:-./instance/web}:/workspace/web:ro   # ro: PWA assets override (icons/)
-      # Reconcile in-process: .env e override.yml rw pra escrita de tokens
-      # rotacionados + geracao de service defs.
-      - ./.env:/workspace/.env                                  # rw: reconcile upsert_env (tokens rotacionados)
-      - ./docker-compose.override.yml:/workspace/docker-compose.override.yml  # rw: reconcile gera service defs
-      - /var/run/docker.sock:/var/run/docker.sock               # pra criar agentes via docker SDK + auto-bootstrap
+      # In-process reconcile: .env and override.yml rw to write rotated
+      # tokens + generate service defs.
+      - ./.env:/workspace/.env                                  # rw: reconcile upsert_env (rotated tokens)
+      - ./docker-compose.override.yml:/workspace/docker-compose.override.yml  # rw: reconcile generates service defs
+      - /var/run/docker.sock:/var/run/docker.sock               # to create agents via the docker SDK + auto-bootstrap
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
       interval: 30s
@@ -108,7 +108,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # --- Orchestrator reactor: consome orchestrator.events + posta handoffs ---
+  # --- Orchestrator reactor: consumes orchestrator.events + posts handoffs ---
   orchestrator-reactor:
     image: ai-company/agent:0.1.0
     build:
@@ -139,7 +139,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # --- Watchdog: restarta agentes com heartbeat stale ---
+  # --- Watchdog: restarts agents with a stale heartbeat ---
   watchdog:
     build:
       context: ./framework/watchdog
@@ -164,8 +164,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # --- Hot reload (DEV ONLY): watcher de CLAUDE.md/agent.yaml -> docker restart
-  # Habilita com: docker compose --profile dev up -d hot-reload
+  # --- Hot reload (DEV ONLY): watches CLAUDE.md/agent.yaml -> docker restart
+  # Enable with: docker compose --profile dev up -d hot-reload
   hot-reload:
     image: ai-company/watchdog:0.1.0
     build:
@@ -272,15 +272,15 @@ services:
     volumes:
       - whisper-cache:/cache
 
-  # --- Cloudflared named tunnel (opcional, profile `tunnel`) ---
-  # Expoe o `web:8090` interno num hostname publico via Cloudflare edge,
-  # sem port-forward / DNS / Let's Encrypt. HTTPS automatico. D-94.
+  # --- Cloudflared named tunnel (optional, profile `tunnel`) ---
+  # Exposes the internal `web:8090` on a public hostname via the Cloudflare
+  # edge, with no port-forward / DNS / Let's Encrypt. Automatic HTTPS. D-94.
   #
-  # Uso: criar tunnel no Cloudflare Zero Trust dashboard, copiar o token,
-  # colar em `CF_TUNNEL_TOKEN` no .env, e:
+  # Usage: create a tunnel in the Cloudflare Zero Trust dashboard, copy the
+  # token, paste it into `CF_TUNNEL_TOKEN` in .env, and:
   #   docker compose --profile tunnel up -d cloudflared
-  # Sem profile, o servico nao sobe — instancia que nao quer publica
-  # roda como sempre.
+  # Without the profile the service does not start — an instance that does
+  # not want to be public runs as usual.
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]

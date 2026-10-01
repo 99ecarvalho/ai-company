@@ -1,10 +1,10 @@
--- 022: backfill corrigido do conversation_id em telemetry.events.
+-- 022: corrected backfill of conversation_id in telemetry.events.
 --
--- A migration 020 tentou matchear `c.topic_name = e.topic_slug`, mas topic_slug
--- e '<stream>__<topic>' (TopicKey.slug()) enquanto c.topic_name e so o topic.
--- Aqui dividimos corretamente: parte 1 como stream (via JOIN streams) e parte
--- 2 como topic_name. Condicao de ambiguidade continua: so atribui quando
--- existe match unico.
+-- Migration 020 tried to match `c.topic_name = e.topic_slug`, but topic_slug
+-- is '<stream>__<topic>' (TopicKey.slug()) while c.topic_name is just the topic.
+-- Here we split correctly: part 1 as stream (via JOIN streams) and part
+-- 2 as topic_name. The ambiguity condition still holds: only assigns when
+-- there is a unique match.
 
 UPDATE telemetry.events e
    SET conversation_id = c.id

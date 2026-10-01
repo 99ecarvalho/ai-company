@@ -1,6 +1,6 @@
 /**
- * File path helpers — extension-based decision pra abrir no FileViewer
- * overlay vs. download direto.
+ * File path helpers — extension-based decision to open in the FileViewer
+ * overlay vs. direct download.
  */
 
 const VIEWABLE_EXT = new Set([

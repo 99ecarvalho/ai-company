@@ -1,13 +1,13 @@
 /**
- * Svelte action — bind a um container (textarea wrapper, panel, etc) pra
- * aceitar drop de arquivos com auto-upload. Complementa pasteImages
- * (clipboard images) cobrindo qualquer tipo de arquivo.
+ * Svelte action — bind to a container (textarea wrapper, panel, etc) to
+ * accept file drops with auto-upload. Complements pasteImages
+ * (clipboard images) by covering any file type.
  *
- * Uso:
+ * Usage:
  *   <div use:dragDropFiles={{ onUpload, onError }}>...</div>
  *
- * Adiciona class `drag-over` enquanto arquivos estao sendo arrastados
- * sobre o node — caller estiliza visualmente.
+ * Adds class `drag-over` while files are being dragged
+ * over the node — the caller styles it visually.
  */
 import type { Action } from 'svelte/action';
 import { uploadFile, type UploadResponse } from '$lib/api';
@@ -72,7 +72,7 @@ export const dragDropFiles: Action<HTMLElement, DragDropFilesOptions> = (
   function onDragLeave(e: DragEvent) {
     if (!hasFiles(e)) return;
     preventDefault(e);
-    // Soh remove se saimos do node de verdade (nao apenas pra um child).
+    // Only remove if we really left the node (not just moved into a child).
     const related = e.relatedTarget as Node | null;
     if (!related || !node.contains(related)) {
       node.classList.remove('drag-over');

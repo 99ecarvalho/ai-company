@@ -22,7 +22,7 @@
   import { logEvent } from '$lib/stores/ui';
 
   type Tab = 'sections' | 'preview' | 'agents' | 'routines' | 'workflows' | 'system';
-  // Tab inicial via ?tab= (deep-link de outras paginas, ex: /scheduler).
+  // Initial tab via ?tab= (deep-link from other pages, e.g. /scheduler).
   const initialTab = (() => {
     const t = $page.url.searchParams.get('tab');
     return t === 'preview' || t === 'agents' || t === 'routines' || t === 'workflows' || t === 'system'
@@ -220,9 +220,9 @@
   <PageHeader title="Settings" />
 
   <div class="flex-1 overflow-y-auto overflow-x-hidden p-4">
-  <!-- Tabs scrollam horizontalmente em mobile (5 tabs nao cabem em 390px).
-       Em sm+ cabe inline sem scroll. `whitespace-nowrap` + `shrink-0` em
-       cada tab garante que nao quebrem nem comprimam. -->
+  <!-- Tabs scroll horizontally on mobile (5 tabs don't fit in 390px).
+       On sm+ they fit inline without scrolling. `whitespace-nowrap` + `shrink-0` on
+       each tab ensures they don't break or shrink. -->
   <div class="-mx-4 mb-4 flex gap-1 overflow-x-auto border-b border-border px-4">
     <button
       type="button"

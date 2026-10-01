@@ -18,7 +18,7 @@ test.describe('Image preview inline', () => {
     await fs.unlink(DEST_PNG).catch(() => undefined);
   });
 
-  test('markdown ![](path) renderiza <img>; bare path tem fileLink + thumbnail', async ({ page, request }) => {
+  test('markdown ![](path) renders <img>; bare path gets fileLink + thumbnail', async ({ page, request }) => {
     const topic = `e2e-img-${Date.now()}`;
     const sent = await postMessage(
       request, 'inbox', topic,
@@ -29,20 +29,20 @@ test.describe('Image preview inline', () => {
     await page.goto('/');
     await page.getByRole('button', { name: new RegExp(`inbox\\s+${topic}`) }).click();
 
-    // <img> com classe inlineImage e src apontando pro endpoint files/read
+    // <img> with class inlineImage and src pointing to the files/read endpoint
     const images = page.locator('img.inlineImage');
     await expect(images.first()).toBeVisible({ timeout: 10_000 });
     expect(await images.count()).toBeGreaterThanOrEqual(2);
 
-    // src normalizado
+    // normalized src
     const src0 = await images.first().getAttribute('src');
     expect(src0).toContain('/api/files/read?path=company%2Fe2e-image-test.png');
 
-    // Thumb (segundo <img>) tem class inlineImageThumb
+    // Thumb (second <img>) has class inlineImageThumb
     const thumb = page.locator('img.inlineImageThumb').first();
     await expect(thumb).toBeVisible();
 
-    // fileLink ao bare path
+    // fileLink on the bare path
     const link = page.locator('a.fileLink', { hasText: 'company/e2e-image-test.png' });
     await expect(link).toBeVisible();
 

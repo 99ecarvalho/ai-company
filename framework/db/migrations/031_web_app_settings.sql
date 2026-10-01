@@ -1,19 +1,19 @@
--- 031: web.app_settings — KV generico pra config de instancia editavel
--- via PWA Settings em vez de .env. Substitui (com fallback) os env vars
+-- 031: web.app_settings — generic KV for instance config editable
+-- via PWA Settings instead of .env. Replaces (with fallback) the env vars
 -- WEB_DEFAULT_STREAM, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_CONTACT_EMAIL.
 --
--- Motivacao: instancias fresh ficavam com push desabilitado e
--- default_stream apontando pra agente inexistente, sem visibilidade no
--- PWA. Mover pra DB resolve dois pontos:
---   1. Editavel em runtime sem mexer em arquivo + restart
---   2. Onboarding pode auto-detectar gaps + oferecer "Generate VAPID" button
+-- Motivation: fresh instances ended up with push disabled and
+-- default_stream pointing to a nonexistent agent, with no visibility in the
+-- PWA. Moving it to the DB solves two things:
+--   1. Editable at runtime without touching files + restart
+--   2. Onboarding can auto-detect gaps + offer a "Generate VAPID" button
 --
--- Politica de fallback: callsites leem da DB primeiro; se ausente, caem no
--- env var equivalente. Instancias existentes nao quebram. Eventualmente
--- env vars sao removidos do bootstrap-env.sh (novas instancias).
+-- Fallback policy: callsites read from the DB first; if missing, they fall back to the
+-- equivalent env var. Existing instances do not break. Eventually the
+-- env vars get removed from bootstrap-env.sh (new instances).
 --
--- Schema: KV deliberadamente generico (1 row por chave, value JSONB) em
--- vez de coluna-por-setting. Adicionar setting novo = upsert, sem migration.
+-- Schema: deliberately generic KV (1 row per key, value JSONB) instead
+-- of a column per setting. Adding a new setting = upsert, no migration.
 
 CREATE TABLE web.app_settings (
     key         TEXT PRIMARY KEY,
@@ -23,6 +23,6 @@ CREATE TABLE web.app_settings (
 );
 
 COMMENT ON TABLE web.app_settings IS
-    'Config de instancia editavel via PWA Settings. Chaves canonicas hoje: '
+    'Instance config editable from PWA Settings. Current canonical keys: '
     '"default_stream" (string), "vapid" ({public_key, private_key, contact_email}). '
-    'Callsites caem em env vars equivalentes quando a chave nao existe.';
+    'Callers fall back to the equivalent env vars when a key is missing.';

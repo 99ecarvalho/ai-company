@@ -84,8 +84,8 @@
     }
   }
 
-  // Merge: para cada custom job do DB, pega o runtime do schedulerJobs
-  // pelo slug (id). Jobs disabled no DB nao aparecem no runtime.
+  // Merge: for each custom job from the DB, take its runtime from schedulerJobs
+  // by slug (id). Jobs disabled in the DB don't show up in the runtime.
   const mergedCustomJobs = $derived(
     customJobs.map((c) => {
       const runtime = $schedulerJobs.find((j) => j.id === c.slug) || null;
@@ -249,8 +249,8 @@
     {:else}
       {#each mergedCustomJobs as { custom, runtime } (custom.slug)}
         <div class="flex flex-col gap-1 border-b border-border px-3 py-3">
-          <!-- Mobile: titulo + tags wrap; botoes vao pra linha proxima.
-               sm+: titulo + tags + botoes inline com ml-auto. -->
+          <!-- Mobile: title + tags wrap; buttons go to the next line.
+               sm+: title + tags + buttons inline with ml-auto. -->
           <div class="flex min-w-0 flex-wrap items-center gap-2">
             <Clock class="h-4 w-4 shrink-0 {custom.enabled ? 'text-accent' : 'text-muted'}" />
             <span class="min-w-0 flex-1 truncate font-mono text-sm font-semibold text-fg sm:flex-none">{custom.slug}</span>
@@ -262,8 +262,8 @@
             {:else if runtime?.paused}
               <span class="rounded bg-warn/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warn">paused</span>
             {/if}
-            <!-- Em mobile o grupo de acoes wrappa pra propria linha (basis-full
-                 quando estreito); em sm+ fica inline com ml-auto. -->
+            <!-- On mobile the action group wraps onto its own line (basis-full
+                 when narrow); on sm+ it stays inline with ml-auto. -->
             <span class="flex w-full flex-wrap items-center gap-1 sm:ml-auto sm:w-auto sm:shrink-0">
               {#if custom.action === 'post_message' && custom.runs && custom.runs.length > 0}
                 <button

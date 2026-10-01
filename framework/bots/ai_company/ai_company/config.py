@@ -1,25 +1,25 @@
-"""Config do agente: mistura env vars + agent.yaml.
+"""Agent config: combines env vars + agent.yaml.
 
-Env obrigatorios:
-  AGENT_NAME                — nome do agente (casa com subpasta agents/<name>/)
-  BROKER_URL                — URL do broker interno (ex: http://web:8090)
-  BROKER_TOKEN              — Bearer token de auth do bot no broker
-  DATABASE_URL              — postgres://... (pra LISTEN/NOTIFY + memory)
+Required env:
+  AGENT_NAME                — agent name (matches the agents/<name>/ subfolder)
+  BROKER_URL                — internal broker URL (e.g. http://web:8090)
+  BROKER_TOKEN              — Bearer token the bot uses to auth with the broker
+  DATABASE_URL              — postgres://... (for LISTEN/NOTIFY + memory)
 
-Opcionais (com defaults):
-  POOL_SIZE                 — override do pool_size em agent.yaml
-  LOG_LEVEL                 — INFO por padrao
+Optional (with defaults):
+  POOL_SIZE                 — overrides pool_size from agent.yaml
+  LOG_LEVEL                 — INFO by default
   WORKSPACE_REPOS           — /workspace/repos
-  WORKTREES_DIR             — /workspace/worktrees (isolado de WORKSPACE_REPOS
-                              pra evitar sujar status do repo canonico; lido
-                              por WorkflowManager.create_worktree)
+  WORKTREES_DIR             — /workspace/worktrees (separate from WORKSPACE_REPOS
+                              to avoid dirtying the canonical repo's status; read
+                              by WorkflowManager.create_worktree)
   WORKSPACE_COMPANY         — /workspace/company
   WORKSPACE_AGENT           — /app/agents/<name>
-  WORKSPACE_SESSIONS        — /workspace/sessions (D-51: root dos cwds por topic)
+  WORKSPACE_SESSIONS        — /workspace/sessions (D-51: root of the per-topic cwds)
   CLAUDE_HOME               — /home/node/.claude
-  TRANSCRIBER_URL           — vazio desliga auto-transcricao (ex: http://transcriber:8000)
-  TRANSCRIBER_LANGUAGE      — vazio = auto-detect (ex: "pt")
-  TELEMETRY_URL             — vazio desliga envio de telemetria (ex: http://web:8090/api/telemetry/event)
+  TRANSCRIBER_URL           — empty disables auto-transcription (e.g. http://transcriber:8000)
+  TRANSCRIBER_LANGUAGE      — empty = auto-detect (e.g. "pt")
+  TELEMETRY_URL             — empty disables sending telemetry (e.g. http://web:8090/api/telemetry/event)
 """
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ class BrokerConfig:
     database_url: str
 
 
-# Tools default: apenas a tool ask_human do MCP. Agentes que precisam de file
-# I/O devem sobrescrever em agent.yaml com allowed_tools: [Read, Write, Edit, ...].
+# Default tools: only the MCP ask_human tool. Agents that need file
+# I/O must override this in agent.yaml with allowed_tools: [Read, Write, Edit, ...].
 DEFAULT_ALLOWED_TOOLS: list[str] = ["mcp__ai_company__ask_human"]
 
 # The MCP server was called agent_framework before the rename; accept tool
@@ -70,10 +70,10 @@ class AgentConfig:
     transcriber_language: str | None
     telemetry_url: str | None
     memory_enabled: bool
-    memory_auto_inject_limit: int     # 0 = tools disponiveis mas sem auto-inject
-    model: str | None                 # None = usa default do claude CLI
-    effort: str | None                # None = sem flag; valores: low|medium|high|xhigh|max
-    main_repo: str | None             # nome do repo em workspace_repos/ cujo .claude/ eh mergeado no session_dir (D-64)
+    memory_auto_inject_limit: int     # 0 = tools available but no auto-inject
+    model: str | None                 # None = use the claude CLI default
+    effort: str | None                # None = no flag; values: low|medium|high|xhigh|max
+    main_repo: str | None             # name of the repo in workspace_repos/ whose .claude/ is merged into the session_dir (D-64)
 
     @classmethod
     def from_env(cls) -> "AgentConfig":
@@ -94,16 +94,16 @@ class AgentConfig:
         model = data.get("model") or None
         effort = data.get("effort") or None
         thinking = data.get("thinking")
-        # thinking=true sem effort explicito vira --effort high (atalho)
+        # thinking=true without an explicit effort becomes --effort high (shortcut)
         if thinking and not effort:
             effort = "high"
-        # Valida effort se especificado
+        # Validate effort if specified
         if effort and effort not in ("low", "medium", "high", "xhigh", "max"):
             raise RuntimeError(
-                f"effort invalido: {effort!r}. Use low|medium|high|xhigh|max"
+                f"invalid effort: {effort!r}. Use low|medium|high|xhigh|max"
             )
 
-        # memory config: objeto {enabled, auto_inject_limit}, ou bool shortcut
+        # memory config: object {enabled, auto_inject_limit}, or bool shortcut
         mem_cfg = data.get("memory")
         if mem_cfg is None:
             memory_enabled = True
@@ -150,5 +150,5 @@ class AgentConfig:
 def _req_env(name: str) -> str:
     v = os.environ.get(name)
     if not v:
-        raise RuntimeError(f"Env var obrigatoria nao setada: {name}")
+        raise RuntimeError(f"Required env var not set: {name}")
     return v

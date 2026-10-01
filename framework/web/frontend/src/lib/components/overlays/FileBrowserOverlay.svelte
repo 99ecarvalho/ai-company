@@ -27,8 +27,8 @@
   const currentRoot = $derived<Root>((currentPath.split('/')[0] as Root) ?? 'company');
   const segments = $derived(currentPath.split('/').filter(Boolean));
 
-  // Reage ao target mudar — suporta re-abrir o overlay em paths diferentes
-  // sem unmount/mount.
+  // Reacts to target changes — supports re-opening the overlay on different
+  // paths without unmount/mount.
   $effect(() => {
     const t = $fileBrowserTarget;
     if (!t) return;
@@ -90,11 +90,11 @@
     goto(`/files?path=${encodeURIComponent(currentPath)}`);
   }
 
-  // Load inicial — caso target ja estivesse setado antes do mount.
+  // Initial load — in case target was already set before mount.
   load();
 
   onDestroy(() => {
-    // Limpa target pra reabertura futura funcionar como fresh request.
+    // Clear target so a future reopen works as a fresh request.
     fileBrowserTarget.set(null);
   });
 </script>

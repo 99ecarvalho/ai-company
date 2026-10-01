@@ -1,7 +1,7 @@
-"""Entry point do agente. Roda como `python3 -m ai_company.main` dentro do container.
+"""Agent entry point. Runs as `python3 -m ai_company.main` inside the container.
 
-Le config via env, sobe BrokerClient + McpServer + Dispatcher + WorkerPool,
-processa eventos ate receber SIGTERM/KeyboardInterrupt.
+Reads config from env, starts BrokerClient + McpServer + Dispatcher + WorkerPool,
+and processes events until it receives SIGTERM/KeyboardInterrupt.
 """
 from __future__ import annotations
 
@@ -38,15 +38,15 @@ async def _run() -> None:
         idle_timeout_sec=config.idle_timeout_sec,
     )
 
-    # Pool de Postgres compartilhado pro workflow + ask tracker
+    # Shared Postgres pool for the workflow + ask tracker
     import asyncpg
     db_pool = await asyncpg.create_pool(config.broker.database_url, min_size=1, max_size=4)
 
-    # MCP broker + workflow manager + server (tudo in-process)
+    # MCP broker + workflow manager + server (all in-process)
     pending_dir = config.agent_home / "pending_questions"
     broker = McpBroker(pending_dir=pending_dir)
 
-    # WorkflowManager habilitado sempre que company_dir eh gravavel
+    # WorkflowManager is enabled whenever company_dir is writable
     workflow: WorkflowManager | None = None
     try:
         config.workspace_company.mkdir(parents=True, exist_ok=True)
@@ -54,7 +54,7 @@ async def _run() -> None:
     except (PermissionError, OSError) as e:
         log.info("agent.workflow_disabled", reason=str(e))
 
-    # Memoria de longo prazo (opcional — controlado por memory.enabled em agents.yaml)
+    # Long-term memory (optional — controlled by memory.enabled in agents.yaml)
     memory: MemoryStore | None = None
     if config.memory_enabled:
         try:
@@ -84,7 +84,7 @@ async def _run() -> None:
     )
     await mcp_server.start()
 
-    # Cliente HTTP do broker interno (messaging + events SSE)
+    # HTTP client for the internal broker (messaging + events SSE)
     broker_client = BrokerClient(
         broker_url=config.broker.url,
         token=config.broker.token,
@@ -92,7 +92,7 @@ async def _run() -> None:
         database_url=config.broker.database_url,
     )
 
-    # Callback pra postar perguntas do agente no broker
+    # Callback to post the agent's questions to the broker
     async def _on_ask(key: TopicKey, question: str, context: str, blocking: bool) -> None:
         tag = "❓ **Question**" if blocking else "ℹ️ **Question (non-blocking)**"
         parts = [f"{tag}", "", question.strip()]
@@ -104,8 +104,8 @@ async def _run() -> None:
             await broker_client.send_message(key.stream, key.topic, "\n".join(parts))
         except Exception:
             log.exception("agent.on_ask_post_failed", topic=key.slug())
-        # Registra pending_ask pro humano ver em Mine + push_notifier disparar.
-        # Falha nao e fatal — conversa ainda foi postada.
+        # Register a pending_ask so the human sees it in Mine + push_notifier fires.
+        # Failure is not fatal — the conversation was still posted.
         try:
             await broker_client.create_pending_ask(
                 stream=key.stream, topic=key.topic,
@@ -115,7 +115,7 @@ async def _run() -> None:
             log.exception("agent.on_ask_register_failed", topic=key.slug())
     broker.set_on_ask(_on_ask)
 
-    # Callback pra notify_human (post simples, sem pending_ask)
+    # Callback for notify_human (plain post, no pending_ask)
     async def _on_notify(key: TopicKey, message: str) -> None:
         try:
             await broker_client.send_message(key.stream, key.topic, message)
@@ -123,24 +123,24 @@ async def _run() -> None:
             log.exception("agent.on_notify_post_failed", topic=key.slug())
     broker.set_on_notify(_on_notify)
 
-    # Callback pra archive_conversation (POST /api/conversations/<id>/archive).
-    # Erro propaga pro handler MCP renderizar pro agente — vai sair como
-    # `archive failed: ...` no resultado da tool.
+    # Callback for archive_conversation (POST /api/conversations/<id>/archive).
+    # Errors propagate to the MCP handler, which renders them for the agent — they show up as
+    # `archive failed: ...` in the tool result.
     async def _on_archive(conv_id: int) -> None:
         await broker_client.archive_conversation(conv_id)
     broker.set_on_archive(_on_archive)
 
-    # Callback pra ask_agent: D-96 modelo flat (raiz -> filha, no max 1 nivel).
-    # Primeiro lookup: existe child conv ativa pra par (raiz_conv, target)?
-    # Se sim, REUSE — Claude --resume preserva contexto da sessao filha entre
-    # invocacoes (sessao filha persistente por par). Se nao, cria conv nova
-    # com topic `__child-<uid8>` (sem cadeia, sem regex parsing — fonte de
-    # verdade da hierarquia eh `parent_conv_id` no schema).
+    # Callback for ask_agent: D-96 flat model (root -> child, at most 1 level).
+    # First lookup: is there an active child conv for the (root_conv, target) pair?
+    # If so, REUSE it — Claude --resume preserves the child session's context across
+    # invocations (persistent child session per pair). If not, create a new conv
+    # with topic `__child-<uid8>` (no chain, no regex parsing — the source of
+    # truth for the hierarchy is `parent_conv_id` in the schema).
     import uuid as _uuid
 
     async def _check_policy(from_a: str, target_a: str) -> None:
-        """Defense-in-depth: confere messaging.agent_policies. Levanta
-        ValueError se policy bloqueia. NULL nas colunas = sem restricao."""
+        """Defense-in-depth: checks messaging.agent_policies. Raises
+        ValueError if the policy blocks it. NULL in the columns = no restriction."""
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT can_ask FROM messaging.agent_policies WHERE agent = $1",
@@ -173,12 +173,12 @@ async def _run() -> None:
         question: str,
         context: str,
     ) -> tuple[TopicKey, str | None]:
-        # Policy check (defense-in-depth, complementa o filtro de Equipe no
-        # system prompt — Claude pode tentar ignorar contexto)
+        # Policy check (defense-in-depth, complements the Team filter in the
+        # system prompt — Claude may try to ignore context)
         await _check_policy(from_agent, target_agent)
 
-        # D-96: parent_conv_id resolve pra conv da raiz (asker). Web broker
-        # rejeita 409 se asker ja for filho — agente filha nao delega.
+        # D-96: parent_conv_id resolves to the root (asker) conv. The web broker
+        # rejects with 409 if the asker is already a child — a child agent does not delegate.
         parent_conv_id = (
             broker.conv_id_for_slug(asker_topic.slug()) if asker_topic else None
         )
@@ -188,9 +188,9 @@ async def _run() -> None:
                 "no registered conv_id — please open an issue."
             )
 
-        # Lookup: child conv ativa nao-arquivada pra par (parent_conv_id, target).
-        # Se existe, reusa topic — Claude --resume mantem contexto entre invocacoes.
-        # Se nao existe, cria nova com `__child-<uid8>`.
+        # Lookup: active, non-archived child conv for the (parent_conv_id, target) pair.
+        # If it exists, reuse the topic — Claude --resume keeps context across invocations.
+        # If not, create a new one with `__child-<uid8>`.
         async with db_pool.acquire() as conn:
             existing = await conn.fetchrow(
                 """SELECT c.id AS conv_id, c.topic_name
@@ -210,9 +210,9 @@ async def _run() -> None:
                 "agent.ask_agent.reuse_child",
                 target=target_key.slug(), parent_conv_id=parent_conv_id,
             )
-            # D-111 restart-recovery: child conv ja existe — checa se ja tem
-            # pending_ask kind='ask_agent' (resolvido ou pendente). Pula
-            # repost da question pra nao duplicar contexto pro target.
+            # D-111 restart-recovery: the child conv already exists — check whether it already has
+            # a pending_ask kind='ask_agent' (resolved or pending). Skip
+            # reposting the question so the target doesn't get duplicated context.
             async with db_pool.acquire() as conn:
                 pa = await conn.fetchrow(
                     """SELECT pa.resolved_at, pa.answer_message_id, pa.kind, m.content
@@ -229,8 +229,8 @@ async def _run() -> None:
                         target=target_key.slug(),
                         answer_message_id=pa["answer_message_id"],
                     )
-                    # Garante subscribe (caso o internal_client tenha sido
-                    # restartado e perdido a subscription in-memory).
+                    # Ensure the subscription (in case internal_client was
+                    # restarted and lost the in-memory subscription).
                     try:
                         await broker_client.subscribe_to_conversation(existing_conv_id)
                     except Exception:
@@ -240,9 +240,9 @@ async def _run() -> None:
                             conversation_id=existing_conv_id,
                         )
                     return target_key, pa["content"]
-                # Pending nao-resolvido: target ainda nao respondeu. Garante
-                # subscribe e devolve sem repostar nem criar novo pending_ask
-                # — ja existe um, mesmo target, mesma conv.
+                # Unresolved pending: the target has not answered yet. Ensure the
+                # subscription and return without reposting or creating a new pending_ask
+                # — one already exists, same target, same conv.
                 log.info(
                     "agent.ask_agent.recovered_pending",
                     target=target_key.slug(),
@@ -256,8 +256,8 @@ async def _run() -> None:
                         conversation_id=existing_conv_id,
                     )
                 return target_key, None
-            # Sem pending_ask na conv (caso pre-D-111 ou conv reusada apos
-            # ciclo anterior fechado): segue o fluxo normal (post + create
+            # No pending_ask in the conv (pre-D-111 case or conv reused after
+            # a previous cycle closed): follow the normal flow (post + create
             # pending_ask).
         else:
             uid = _uuid.uuid4().hex[:8]
@@ -267,7 +267,7 @@ async def _run() -> None:
                 target=target_key.slug(), parent_conv_id=parent_conv_id,
             )
 
-        # Montar mensagem com mention do target pra destacar
+        # Build the message with a mention of the target to highlight it
         parts = [
             f"**Question from `{from_agent}`**",
             "",
@@ -280,11 +280,11 @@ async def _run() -> None:
             target_key.stream, target_key.topic, "\n".join(parts),
             parent_conv_id=parent_conv_id,
         )
-        # Subscrever SOMENTE nesta conversation (nao no stream inteiro do
-        # target) pra receber a resposta. Antes usava subscribe_to_stream,
-        # que causava o asker a receber TODAS mensagens do stream do target —
-        # inclusive perguntas de OUTROS agentes, que o asker re-despachava
-        # (double-routing bug em ask_agent).
+        # Subscribe ONLY to this conversation (not the target's whole
+        # stream) to receive the answer. It used to use subscribe_to_stream,
+        # which made the asker receive ALL messages in the target's stream —
+        # including questions from OTHER agents, which the asker re-dispatched
+        # (double-routing bug in ask_agent).
         conv_id = posted.get("conversation_id") if isinstance(posted, dict) else None
         if conv_id is not None:
             try:
@@ -299,10 +299,10 @@ async def _run() -> None:
                 "agent.ask_agent.no_conv_id",
                 target=target_key.slug(), posted=posted,
             )
-        # D-111: persiste pending_ask kind='ask_agent' pra restart-recovery.
-        # Auto-resolve atual (UPDATE quando alguem nao-asker posta) ja cobre.
-        # Filtros em UI/push (Mine, push notifier) usam kind='ask_human' pra
-        # nao alertar humano. Reverte D-46 com kind explicito.
+        # D-111: persist a pending_ask kind='ask_agent' for restart-recovery.
+        # The current auto-resolve (UPDATE when someone other than the asker posts) already covers it.
+        # UI/push filters (Mine, push notifier) use kind='ask_human' so the
+        # human is not alerted. Reverts D-46 with an explicit kind.
         try:
             await broker_client.create_pending_ask(
                 stream=target_key.stream,
@@ -318,8 +318,8 @@ async def _run() -> None:
                 "agent.ask_agent.pending_ask_failed",
                 target=target_key.slug(),
             )
-            # nao quebra o fluxo: se falhar, ask_agent funciona como antes
-            # (in-memory) — apenas perde restart-recovery.
+            # does not break the flow: if it fails, ask_agent works as before
+            # (in-memory) — it only loses restart-recovery.
         log.info(
             "agent.ask_agent.posted",
             target=target_key.slug(),
@@ -329,9 +329,9 @@ async def _run() -> None:
         return target_key, None
     broker.set_on_ask_agent(_on_ask_agent)
 
-    # Check pro timeout adaptativo do ask_agent: true se target tem ask_human
-    # pendente (nao resolvido). Quando o broker bate no timeout, consulta
-    # isso; se true, estende indefinidamente (humano esta bloqueando o loop).
+    # Check for ask_agent's adaptive timeout: true if the target has a pending
+    # (unresolved) ask_human. When the broker hits the timeout, it checks
+    # this; if true, it extends indefinitely (the human is blocking the loop).
     async def _target_blocked_on_human(target_key: TopicKey) -> bool:
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -346,10 +346,10 @@ async def _run() -> None:
             return row is not None
     broker.set_check_target_blocked_on_human(_target_blocked_on_human)
 
-    # Recovery de perguntas pendentes de runs anteriores (crash recovery)
+    # Recover pending questions from previous runs (crash recovery)
     _recover_pending_questions(broker, broker_client, log)
 
-    # Componentes de dispatch
+    # Dispatch components
     pool = WorkerPool(size=config.pool_size)
     session_mgr = SessionManager(
         agent_home=config.agent_home,
@@ -378,8 +378,8 @@ async def _run() -> None:
         model=config.model or "(default)",
         effort=config.effort or "(default)",
     )
-    # Audio transcribe: PWA transcreve localmente via /api/transcribe-preview
-    # e posta so texto; agentes nao recebem mais audio diretamente.
+    # Audio transcription: the PWA transcribes locally via /api/transcribe-preview
+    # and posts only text; agents no longer receive audio directly.
     dispatcher = Dispatcher(
         pool=pool,
         session_mgr=session_mgr,
@@ -389,8 +389,8 @@ async def _run() -> None:
         idle_timeout_sec=config.idle_timeout_sec,
         audio_transcriber=None,
     )
-    # D-71: runner precisa do dispatcher pra register/unregister proc ativo
-    # (ciclo circular resolvido via setter pos-construcao).
+    # D-71: the runner needs the dispatcher to register/unregister the active proc
+    # (circular dependency resolved via a post-construction setter).
     runner.bind_dispatcher(dispatcher)
 
     await broker_client.start()
@@ -423,14 +423,14 @@ async def _run() -> None:
 
 
 def _recover_pending_questions(broker: McpBroker, broker_client: BrokerClient, log) -> None:
-    """Limpa perguntas pendentes de runs anteriores. Nao reabre Futures —
-    agente vai ter que reperguntar se precisar.
+    """Clean up pending questions from previous runs. Does not reopen Futures —
+    the agent will have to ask again if needed.
     """
     try:
         for f in broker.pending_dir.glob("*.json"):
             log.warning("agent.pending_question_from_previous_run", file=str(f))
-            # Nao reconstroimos o Future; o claude do run anterior morreu.
-            # Apagamos o arquivo pra nao ficar fantasma.
+            # We don't rebuild the Future; the previous run's claude is dead.
+            # Delete the file so it doesn't linger as a ghost.
             try:
                 f.unlink()
             except OSError:

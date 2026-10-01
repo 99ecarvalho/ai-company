@@ -8,7 +8,7 @@ function initial(): Theme {
   if (typeof window === 'undefined') return 'dark';
   const saved = window.localStorage.getItem(KEY);
   if (saved === 'light' || saved === 'dark') return saved;
-  // Default: respeita preferencia do SO; se nao tiver sinal, dark.
+  // Default: respect the OS preference; if there is no signal, dark.
   if (window.matchMedia?.('(prefers-color-scheme: light)').matches) return 'light';
   return 'dark';
 }
@@ -23,7 +23,7 @@ export function applyTheme(t: Theme): void {
     try {
       window.localStorage.setItem(KEY, t);
     } catch {
-      /* ignora quota/disabled */
+      /* ignore quota/disabled */
     }
   }
 }

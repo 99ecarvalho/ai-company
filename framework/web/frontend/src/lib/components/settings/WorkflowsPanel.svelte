@@ -36,13 +36,13 @@
     artifact: string;
     next: string[];
     instructions: string;
-    /** Runtime overrides aplicados pelo claude_runner quando o agente esta
-     *  executando este step. Strings vazias / undefined = herda agente. */
+    /** Runtime overrides applied by claude_runner while the agent is
+     *  running this step. Empty strings / undefined = inherit from agent. */
     overrideModel: string;
     overrideEffort: StepEffort;
-    /** tri-state: '' = herda, 'on' = enable, 'off' = disable */
+    /** tri-state: '' = inherit, 'on' = enable, 'off' = disable */
     overrideMemoryEnabled: '' | 'on' | 'off';
-    /** string mantida pra preservar input vazio sem confundir com 0 */
+    /** kept as a string to preserve empty input without confusing it with 0 */
     overrideMemoryLimit: string;
   };
 
@@ -52,7 +52,7 @@
   type Draft = {
     name: string;
     initial_step: string;
-    /** D-110: agente que orquestra o workflow. Vazio = fallback pro
+    /** D-110: agent that orchestrates the workflow. Empty = falls back to
      *  initial_step.agent. */
     orchestrator: string;
     steps: DraftStep[];
@@ -194,7 +194,7 @@
     const last = draft.steps.find((s) => s.name === previewSteps[previewSteps.length - 1]);
     if (!last) return null;
     const terminalSet = new Set(terminals);
-    // Preferir 'done' sobre outros terminais (happy path).
+    // Prefer 'done' over other terminals (happy path).
     if (last.next.includes('done')) return 'done';
     for (const n of last.next) {
       if (terminalSet.has(n)) return n;
@@ -753,31 +753,31 @@
               </div>
             </div>
 
-            <!-- Step instructions (markdown injetado no system prompt do agente) -->
+            <!-- Step instructions (markdown injected into the agent's system prompt) -->
             <details class="mt-3 group" open={!!step.instructions}>
               <summary class="cursor-pointer select-none text-xs text-muted hover:text-fg">
                 <span class="inline-flex items-center gap-2">
                   <span class="font-semibold uppercase tracking-wide text-[10px]">Instructions</span>
                   {#if step.instructions.trim()}
                     <span class="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
-                      {step.instructions.trim().split('\n').length} linhas
+                      {step.instructions.trim().split('\n').length} lines
                     </span>
                   {:else}
-                    <span class="rounded bg-panel px-1.5 py-0.5 text-[10px] text-muted">vazio</span>
+                    <span class="rounded bg-panel px-1.5 py-0.5 text-[10px] text-muted">empty</span>
                   {/if}
-                  <span class="text-muted">— markdown injetado no system prompt quando o agente entra neste step.</span>
+                  <span class="text-muted">— markdown injected into the system prompt when the agent enters this step.</span>
                 </span>
               </summary>
               <textarea
                 value={step.instructions}
                 oninput={(e) => updateStep(idx, { instructions: (e.currentTarget as HTMLTextAreaElement).value })}
                 rows="10"
-                placeholder="Markdown opcional. Ex: 'Você é o executor designado. Não edita código nesta fase. Sequência: 1. memory_recall... 2. ...'"
+                placeholder="Optional markdown. E.g. 'You are the assigned executor. Do not edit code in this phase. Sequence: 1. memory_recall... 2. ...'"
                 class="mt-2 w-full rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs leading-relaxed"
               ></textarea>
             </details>
 
-            <!-- Runtime overrides: model/effort/memory por step. Vazio = herda agente. -->
+            <!-- Runtime overrides: model/effort/memory per step. Empty = inherit from agent. -->
             <details
               class="mt-3 group"
               open={
@@ -795,7 +795,7 @@
                   {:else}
                     <span class="rounded bg-panel px-1.5 py-0.5 text-[10px] text-muted">inherits agent</span>
                   {/if}
-                  <span class="text-muted">— sobrescrevem `model`/`effort`/`memory` do agente nesta fase. Usa as creds do agente.</span>
+                  <span class="text-muted">— override the agent's `model`/`effort`/`memory` in this phase. Uses the agent's creds.</span>
                 </span>
               </summary>
               <div class="mt-2 grid gap-2 sm:grid-cols-2">

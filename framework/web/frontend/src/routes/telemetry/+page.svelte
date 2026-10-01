@@ -56,8 +56,8 @@
     }
   }
 
-  // Options for filters: derivadas do unfiltered summary (carregado separadamente)
-  // pra nao zerar o dropdown quando um filtro reduz o resultado pra nada.
+  // Options for filters: derived from the unfiltered summary (loaded separately)
+  // so the dropdown isn't emptied when a filter reduces the result to nothing.
   let agentOptions = $state<string[]>([]);
   let modelOptions = $state<string[]>([]);
 
@@ -120,8 +120,8 @@
     {/snippet}
   </PageHeader>
 
-  <!-- Toolbar de filtros separada do header. Permite wrap em mobile (3
-       selects nao cabem inline com Refresh num PageHeader shrink-0). -->
+  <!-- Filter toolbar separate from the header. Allows wrapping on mobile (3
+       selects don't fit inline with Refresh in a shrink-0 PageHeader). -->
   <div class="flex flex-wrap items-center gap-2 border-b border-border bg-panel2/50 px-3 py-2 md:px-4">
     <select
       class="min-h-tap rounded-md border border-border bg-panel2 px-2 py-1.5 text-sm"

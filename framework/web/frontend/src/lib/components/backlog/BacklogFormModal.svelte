@@ -10,7 +10,7 @@
     item?: BacklogItem | null;
     open: boolean;
     onOpenChange: (v: boolean) => void;
-    /** Return true se salvou com sucesso (modal fecha); false/throw mantem aberto. */
+    /** Return true if saved successfully (modal closes); false/throw keeps it open. */
     onSave: (payload: { slug: string; patch: BacklogCreateInput }) => Promise<void>;
   }
 
@@ -25,7 +25,7 @@
   let saving = $state(false);
   let error = $state<string | null>(null);
 
-  // Seed/reset quando abre (edit) ou troca de item.
+  // Seed/reset when opening (edit) or switching items.
   $effect(() => {
     if (!open) return;
     if (mode === 'edit' && item) {

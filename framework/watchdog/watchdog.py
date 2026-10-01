@@ -1,9 +1,9 @@
-"""Watchdog dos agentes.
+"""Agent watchdog.
 
-Periodicamente (a cada POLL_INTERVAL_SEC), lista arquivos de heartbeat em
-/heartbeats/*.txt e verifica se estao stale (ultima modificacao > STALE_THRESHOLD_SEC).
+Periodically (every POLL_INTERVAL_SEC), lists heartbeat files in
+/heartbeats/*.txt and checks whether they are stale (last modified > STALE_THRESHOLD_SEC).
 
-Se stale E nao esta em cooldown, restarta o container correspondente via
+If stale AND not in cooldown, restarts the matching container via the
 Docker SDK (/var/run/docker.sock).
 
 Container name convention: ai-company-agent-<name>-1
@@ -12,10 +12,10 @@ Env vars:
   HEARTBEAT_DIR          default /heartbeats
   POLL_INTERVAL_SEC      default 60
   STALE_THRESHOLD_SEC    default 180
-  RESTART_COOLDOWN_SEC   default 600   (nao restarta mesmo agent por X segundos depois de restart)
+  RESTART_COOLDOWN_SEC   default 600   (don't restart the same agent again for X seconds after a restart)
   CONTAINER_PREFIX       default ai-company-agent-
   CONTAINER_SUFFIX       default -1
-  DRY_RUN                default ""    (setar a "1" pra so logar, nao restartar)
+  DRY_RUN                default ""    (set to "1" to only log, not restart)
 """
 from __future__ import annotations
 
@@ -41,8 +41,8 @@ _stats = {"started_at": time.time(), "checks": 0, "restarts": 0, "last_check_at"
 
 
 def _start_health_server() -> None:
-    """Mini /health server em thread daemon. Mesma forma que orchestrator/health.py
-    (duplicado pra watchdog nao depender de orchestrator/)."""
+    """Tiny /health server in a daemon thread. Same shape as orchestrator/health.py
+    (duplicated so the watchdog doesn't depend on orchestrator/)."""
     import json as _json
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -122,7 +122,7 @@ def main() -> int:
                     age = now - ts
                     if age < STALE_THRESHOLD_SEC:
                         continue
-                    # Stale. Esta em cooldown?
+                    # Stale. In cooldown?
                     cooldown_until = last_restart.get(agent, 0) + RESTART_COOLDOWN_SEC
                     if now < cooldown_until:
                         log.info(

@@ -1,5 +1,5 @@
-"""Logging estruturado JSON via structlog.
-Agentes emitem um JSON por linha em stdout; `docker compose logs` eh o transporte.
+"""Structured JSON logging via structlog.
+Agents emit one JSON object per line on stdout; `docker compose logs` is the transport.
 """
 from __future__ import annotations
 

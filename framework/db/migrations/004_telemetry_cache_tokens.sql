@@ -1,19 +1,19 @@
 -- 004_telemetry_cache_tokens.sql
--- Adiciona colunas dedicadas pra cache tokens em telemetry.events e backfill
--- a partir do JSONB metadata (onde claude_runner hoje enfia cache_*).
--- Contexto: a coluna `input_tokens` histórica carrega só tokens NAO-cacheados
--- (o que o Claude CLI chama de `input_tokens` no usage). Cache creation/read
--- ficavam só em `metadata.cache_creation_tokens` / `metadata.cache_read_tokens`
--- e nunca entravam no summary — PWA mostrava IN fake (muito menor que real).
--- Daqui pra frente claude_runner envia os 3 campos separados; summary soma
--- tudo pra coluna IN e exibe cache breakdown dedicado.
+-- Adds dedicated columns for cache tokens in telemetry.events and backfills
+-- from the JSONB metadata (where claude_runner currently stuffs cache_*).
+-- Context: the historical `input_tokens` column holds only NON-cached tokens
+-- (what the Claude CLI calls `input_tokens` in usage). Cache creation/read
+-- lived only in `metadata.cache_creation_tokens` / `metadata.cache_read_tokens`
+-- and never made it into the summary — PWA showed a fake IN (much lower than real).
+-- From now on claude_runner sends the 3 fields separately; summary adds
+-- everything into the IN column and shows a dedicated cache breakdown.
 
 ALTER TABLE telemetry.events
     ADD COLUMN IF NOT EXISTS cache_creation_tokens INTEGER,
     ADD COLUMN IF NOT EXISTS cache_read_tokens     INTEGER;
 
--- Backfill: extrai dos registros existentes (onde metadata->>'cache_*' existe).
--- Seguro: NULL stays NULL pra linhas que nao tinham essa info.
+-- Backfill: extract from existing records (where metadata->>'cache_*' exists).
+-- Safe: NULL stays NULL for rows that lacked this info.
 UPDATE telemetry.events
    SET cache_creation_tokens = NULLIF(metadata->>'cache_creation_tokens','')::int,
        cache_read_tokens     = NULLIF(metadata->>'cache_read_tokens','')::int

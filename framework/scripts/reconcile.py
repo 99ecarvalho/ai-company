@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Reconcile de instance/agents/agents.yaml -> estado real.
+"""Reconcile instance/agents/agents.yaml -> actual state.
 
-Idempotente:
-  1. Parse + validacao de schema
-  2. Pra cada agente:
-     a. Cria user (kind=bot) no broker interno → recebe api_token → salva no .env
-     b. Cria stream(s) + subscreve o bot
-     c. Garante instance/agents/<name>/ (CLAUDE.md do template se faltar; knowledge/, pending_questions/)
-     d. Escreve instance/agents/<name>/agent.yaml derivado
-  3. Gera docker-compose.override.yml (um service por agente)
+Idempotent:
+  1. Parse + schema validation
+  2. For each agent:
+     a. Create user (kind=bot) in the internal broker → get api_token → save to .env
+     b. Create stream(s) + subscribe the bot
+     c. Ensure instance/agents/<name>/ (CLAUDE.md from the template if missing; knowledge/, pending_questions/)
+     d. Write the derived instance/agents/<name>/agent.yaml
+  3. Generate docker-compose.override.yml (one service per agent)
 
 Run:
-  framework/scripts/reconcile.sh                # aplica + docker compose up -d
+  framework/scripts/reconcile.sh                # apply + docker compose up -d
   framework/scripts/reconcile.sh --dry-run
-  framework/scripts/reconcile.sh --no-broker    # pula criacao de users/streams (so FS + override)
+  framework/scripts/reconcile.sh --no-broker    # skip creating users/streams (FS + override only)
   framework/scripts/reconcile.sh --no-up
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ import requests
 import yaml
 
 
-# ---------- Constantes ----------
+# ---------- Constants ----------
 
 PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", ".")).resolve()
 INSTANCE_DIR = PROJECT_ROOT / "instance"
@@ -41,9 +41,9 @@ OVERRIDE_FILE = PROJECT_ROOT / "docker-compose.override.yml"
 
 
 def _env_path(var: str, default_rel: str) -> Path:
-    """Resolve path de um env var (em .env ou ambiente), caindo em
-    PROJECT_ROOT/<default_rel> se ausente. Paths relativos sao ancorados
-    em PROJECT_ROOT (matches docker-compose semantics)."""
+    """Resolve a path from an env var (in .env or the environment), falling
+    back to PROJECT_ROOT/<default_rel> if absent. Relative paths are anchored
+    at PROJECT_ROOT (matches docker-compose semantics)."""
     val = os.environ.get(var, "")
     if not val and ENV_FILE.exists():
         for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
@@ -63,7 +63,7 @@ BACKUPS_DIR = _env_path("BACKUPS_DIR", "instance/backups")
 SESSIONS_DIR = _env_path("SESSIONS_DIR", "instance/sessions")
 WORKTREES_DIR = _env_path("WORKTREES_DIR", "instance/worktrees")
 HOOKS_DIR = _env_path("HOOKS_DIR", "instance/hooks")
-REPOS_DIR = _env_path("REPOS_DIR", "instance/repos")  # D-115: enumerar subdirs com .git/ pra split mount
+REPOS_DIR = _env_path("REPOS_DIR", "instance/repos")  # D-115: enumerate subdirs with .git/ for the split mount
 AGENTS_YAML = AGENTS_DIR / "agents.yaml"
 
 VALID_MOUNTS = {"company", "orchestrator", "repos"}
@@ -71,30 +71,30 @@ MCP_PREFIX = "mcp__ai_company__"
 LEGACY_MCP_PREFIX = "mcp__agent_framework__"
 AGENT_IMAGE = "ai-company/agent:0.1.0"
 
-NAME_MAX_LEN = 31  # 1 inicial + ate 30 subsequentes. Cap generoso pra DNS/stream.
+NAME_MAX_LEN = 31  # 1 leading + up to 30 more. Generous cap for DNS/stream.
 NAME_RE = re.compile(rf"^[a-z][a-z0-9-]{{0,{NAME_MAX_LEN - 1}}}$")
 
-# Capabilities MCP em duas categorias (D-119):
+# MCP capabilities come in two categories (D-119):
 #
-# (1) MCP_CAPABILITIES — singletons pre-definidos no framework. Usados por
-#     nome direto em `agent.capabilities`. Pra capabilities que naturalmente
-#     nao tem multiplas instancias por instalacao (ex: token Sentry por org,
-#     pool Playwright unico). Dois shapes:
-#       - HTTP sidecar: `service` (Compose service) + `server` apontando pra
-#         URL do sidecar. Reconcile injeta o service no override e adiciona
-#         depends_on nos agentes que declaram a capability.
-#       - In-process stdio: so `server` com type: stdio (sem `service`).
-#         Claude Code spawna no container do agente.
-#     `agent_env` (opcional) lista env vars injetadas no container do agente.
+# (1) MCP_CAPABILITIES — singletons predefined in the framework. Used by
+#     name directly in `agent.capabilities`. For capabilities that naturally
+#     don't have multiple instances per installation (e.g. Sentry token per
+#     org, single Playwright pool). Two shapes:
+#       - HTTP sidecar: `service` (Compose service) + `server` pointing at the
+#         sidecar URL. Reconcile injects the service into the override and
+#         adds depends_on to the agents that declare the capability.
+#       - In-process stdio: just `server` with type: stdio (no `service`).
+#         Claude Code spawns it in the agent's container.
+#     `agent_env` (optional) lists env vars injected into the agent container.
 #
-# (2) CAPABILITY_TEMPLATES — templates parametrizaveis. A instancia declara
-#     em `agents.yaml` -> `capability_instances` o nome + env values.
-#     Permite ter `mysql-producao` + `mysql-staging` com creds diferentes,
-#     sem leak de vocabulario da instancia pro framework. Stdio-only por
-#     enquanto (HTTP sidecar parametrizavel = v2 quando necessario).
+# (2) CAPABILITY_TEMPLATES — parameterizable templates. The instance declares
+#     the name + env values in `agents.yaml` -> `capability_instances`.
+#     Allows `mysql-production` + `mysql-staging` with different creds,
+#     without leaking instance vocabulary into the framework. Stdio-only for
+#     now (parameterizable HTTP sidecar = v2 when needed).
 #
-# Resolucao via `resolve_capability(name, instances)` — instances ganha
-# precedencia sobre singletons em caso de colisao de nome.
+# Resolved via `resolve_capability(name, instances)` — instances take
+# precedence over singletons on a name collision.
 
 MCP_CAPABILITIES: dict[str, dict] = {
     "playwright": {
@@ -112,23 +112,23 @@ MCP_CAPABILITIES: dict[str, dict] = {
 
 CAPABILITY_TEMPLATES: dict[str, dict] = {
     "mysql": {
-        # @benborla29/mcp-server-mysql: stdio nativo, le creds via env.
-        # Read-only por default (ALLOW_*_OPERATION unset).
+        # @benborla29/mcp-server-mysql: native stdio, reads creds from env.
+        # Read-only by default (ALLOW_*_OPERATION unset).
         "server": {
             "type": "stdio",
             "command": "npx",
             "args": ["-y", "@benborla29/mcp-server-mysql"],
         },
-        # Env vars que o MCP server le. Validador rejeita keys fora desta
-        # lista na instance (cata typo). Instances usam template-string
-        # Compose-style (`${DB_FOO:-}`) que reconcile passa pro container
-        # do agente em build_agent_service; Compose interpola em up-time.
+        # Env vars the MCP server reads. The validator rejects instance keys
+        # outside this list (catches typos). Instances use Compose-style
+        # template strings (`${DB_FOO:-}`) that reconcile passes to the agent
+        # container in build_agent_service; Compose interpolates at up time.
         "env_keys": ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASS", "MYSQL_DB"],
     },
     "sentry": {
-        # @sentry/mcp-server: stdio nativo. Roda no proprio container do
-        # agente via npx — sem sidecar. Token escopado por org Sentry; host
-        # vazio = SaaS sentry.io, preenchido = self-hosted.
+        # @sentry/mcp-server: native stdio. Runs in the agent's own container
+        # via npx — no sidecar. Token scoped per Sentry org; empty host =
+        # SaaS sentry.io, set = self-hosted.
         "server": {
             "type": "stdio",
             "command": "npx",
@@ -144,10 +144,10 @@ def known_capabilities(instances: dict) -> set[str]:
 
 
 def resolve_capability(name: str, instances: dict) -> dict | None:
-    """Retorna spec unificada da capability ou None se desconhecida.
+    """Return the unified capability spec, or None if unknown.
 
-    Shape: {server, service|None, agent_env}. Instances tem precedencia
-    sobre singletons em caso de colisao de nome.
+    Shape: {server, service|None, agent_env}. Instances take precedence
+    over singletons on a name collision.
     """
     inst = (instances or {}).get(name)
     if inst is not None:
@@ -212,7 +212,7 @@ def upsert_env(path: Path, kv: dict[str, str]) -> None:
     if new_keys:
         if out and out[-1] != "":
             out.append("")
-        out.append("# Agents (gerado por reconcile)")
+        out.append("# Agents (generated by reconcile)")
         for k in new_keys:
             out.append(f"{k}={kv[k]}")
     path.write_text("\n".join(out) + "\n", encoding="utf-8")
@@ -221,43 +221,43 @@ def upsert_env(path: Path, kv: dict[str, str]) -> None:
 # ---------- Schema validation ----------
 
 def _validate_hooks_block(value: Any, ctx: str) -> None:
-    """Valida estrutura de um bloco `hooks` (defaults ou per-agent).
+    """Validate the structure of a `hooks` block (defaults or per-agent).
 
-    Passthrough pra settings.json do Claude Code — ver
-    https://code.claude.com/docs/en/hooks-guide. Validamos a FORMA (mapping
-    de event->list de groups com `hooks: [...]`), nao o conteudo semantico
-    (nomes de eventos, tipos de hook, matchers) — o CLI valida ao carregar
-    e o conjunto de eventos evolui.
+    Passed through to Claude Code's settings.json — see
+    https://code.claude.com/docs/en/hooks-guide. We validate the SHAPE
+    (mapping of event->list of groups with `hooks: [...]`), not the semantic
+    content (event names, hook types, matchers) — the CLI validates on load
+    and the set of events keeps evolving.
     """
     if value is None:
         return
     if not isinstance(value, dict):
-        die(f"{ctx}: `hooks` deve ser mapping event->list")
+        die(f"{ctx}: `hooks` must be a mapping event->list")
     for event, groups in value.items():
         if not isinstance(event, str) or not event:
-            die(f"{ctx}: chave de `hooks` deve ser nome de evento (string nao-vazia), got {event!r}")
+            die(f"{ctx}: `hooks` key must be an event name (non-empty string), got {event!r}")
         if not isinstance(groups, list):
-            die(f"{ctx}.hooks.{event}: deve ser lista de groups")
+            die(f"{ctx}.hooks.{event}: must be a list of groups")
         for j, g in enumerate(groups):
             gctx = f"{ctx}.hooks.{event}[{j}]"
             if not isinstance(g, dict):
-                die(f"{gctx}: deve ser mapping")
+                die(f"{gctx}: must be a mapping")
             inner = g.get("hooks")
             if not isinstance(inner, list) or not inner:
-                die(f"{gctx}: campo `hooks` (lista de commands) obrigatorio e nao-vazio")
+                die(f"{gctx}: `hooks` field (list of commands) is required and must be non-empty")
             for k, h in enumerate(inner):
                 hctx = f"{gctx}.hooks[{k}]"
                 if not isinstance(h, dict) or not isinstance(h.get("type"), str):
-                    die(f"{hctx}: precisa ter `type` (string)")
+                    die(f"{hctx}: must have `type` (string)")
 
 
 def merge_hooks(defaults: dict | None, per_agent: dict | None) -> dict:
-    """Merge hooks_defaults + agent.hooks concatenando por evento.
+    """Merge hooks_defaults + agent.hooks, concatenating per event.
 
-    Semantica: lista de groups de defaults vem primeiro, agent depois. Cada
-    group e preservado intacto (Claude Code trata cada group independentemente
-    — matchers nao se sobrepoem). Eventos soh em um dos lados aparecem como
-    estao no resultado.
+    Semantics: the defaults' list of groups comes first, the agent's after.
+    Each group is kept intact (Claude Code handles each group independently
+    — matchers don't overlap). Events present on only one side appear as
+    they are in the result.
     """
     out: dict[str, list] = {}
     for src in (defaults or {}, per_agent or {}):
@@ -267,7 +267,7 @@ def merge_hooks(defaults: dict | None, per_agent: dict | None) -> dict:
 
 
 def _validate_capability_instances(value: Any) -> dict:
-    """Valida bloco top-level `capability_instances` (D-119).
+    """Validate the top-level `capability_instances` block (D-119).
 
     Shape:
         capability_instances:
@@ -275,48 +275,48 @@ def _validate_capability_instances(value: Any) -> dict:
             template: <template-name in CAPABILITY_TEMPLATES>
             env: { KEY: VALUE-OR-COMPOSE-TEMPLATE-STRING, ... }
 
-    instance-name vira o namespace MCP (mcp__<name>__*) e tambem o nome do
-    server em mcp.extra.json. env keys sao validadas contra o template.
+    instance-name becomes the MCP namespace (mcp__<name>__*) and also the
+    server name in mcp.extra.json. env keys are validated against the template.
     """
     if value is None:
         return {}
     if not isinstance(value, dict):
-        die("`capability_instances` deve ser mapping name->spec")
+        die("`capability_instances` must be a mapping name->spec")
     out: dict[str, dict] = {}
     for name, spec in value.items():
         ctx = f"capability_instances.{name}"
         if not isinstance(name, str) or not NAME_RE.match(name):
-            die(f"{ctx}: nome invalido (deve casar /^[a-z][a-z0-9-]*$/)")
+            die(f"{ctx}: invalid name (must match /^[a-z][a-z0-9-]*$/)")
         if not isinstance(spec, dict):
-            die(f"{ctx}: deve ser mapping com `template` + `env`")
+            die(f"{ctx}: must be a mapping with `template` + `env`")
         tpl_name = spec.get("template")
         if not isinstance(tpl_name, str):
-            die(f"{ctx}.template: obrigatorio (string)")
+            die(f"{ctx}.template: required (string)")
         tpl = CAPABILITY_TEMPLATES.get(tpl_name)
         if tpl is None:
             die(
-                f"{ctx}.template: template desconhecido {tpl_name!r}. "
-                f"Conhecidos: {sorted(CAPABILITY_TEMPLATES)}"
+                f"{ctx}.template: unknown template {tpl_name!r}. "
+                f"Known: {sorted(CAPABILITY_TEMPLATES)}"
             )
         env = spec.get("env") or {}
         if not isinstance(env, dict):
-            die(f"{ctx}.env: deve ser mapping KEY->value")
+            die(f"{ctx}.env: must be a mapping KEY->value")
         valid_keys = set(tpl.get("env_keys") or [])
         for k, v in env.items():
             if not isinstance(k, str) or not k:
-                die(f"{ctx}.env: keys devem ser strings nao-vazias")
+                die(f"{ctx}.env: keys must be non-empty strings")
             if valid_keys and k not in valid_keys:
                 die(
-                    f"{ctx}.env.{k}: chave nao reconhecida pelo template "
-                    f"{tpl_name!r}. Aceitas: {sorted(valid_keys)}"
+                    f"{ctx}.env.{k}: key not recognized by template "
+                    f"{tpl_name!r}. Accepted: {sorted(valid_keys)}"
                 )
             if not isinstance(v, (str, int)):
-                die(f"{ctx}.env.{k}: deve ser string (suporta ${{VAR:-default}})")
-        # Colisao com singleton: instances vence (resolve_capability ja faz isso),
-        # mas avisa pra evitar surpresa.
+                die(f"{ctx}.env.{k}: must be a string (supports ${{VAR:-default}})")
+        # Collision with a singleton: the instance wins (resolve_capability already
+        # does that), but warn to avoid surprises.
         if name in MCP_CAPABILITIES:
             log(
-                f"{ctx}: instance overrides singleton de mesmo nome em MCP_CAPABILITIES",
+                f"{ctx}: instance overrides the same-named singleton in MCP_CAPABILITIES",
                 "warn",
             )
         out[name] = {"template": tpl_name, "env": {k: str(v) for k, v in env.items()}}
@@ -325,79 +325,79 @@ def _validate_capability_instances(value: Any) -> dict:
 
 def validate_schema(data: dict) -> tuple[list[dict], dict, dict]:
     if not isinstance(data, dict):
-        die("agents.yaml deve ser um mapping no topo")
+        die("agents.yaml must be a mapping at the top level")
     if data.get("schema_version") != 1:
-        die("schema_version precisa ser 1")
+        die("schema_version must be 1")
     hooks_defaults = data.get("hooks_defaults") or {}
     _validate_hooks_block(hooks_defaults, "hooks_defaults")
     capability_instances = _validate_capability_instances(data.get("capability_instances"))
     known_caps = known_capabilities(capability_instances)
     agents = data.get("agents") or []
     if not isinstance(agents, list):
-        die("`agents` deve ser lista")
+        die("`agents` must be a list")
     seen_names: set[str] = set()
     seen_streams: set[str] = set()
     for i, a in enumerate(agents):
         ctx = f"agents[{i}]"
         if not isinstance(a, dict):
-            die(f"{ctx}: deve ser um mapping")
+            die(f"{ctx}: must be a mapping")
         name = a.get("name")
         if not name:
-            die(f"{ctx}: `name` obrigatorio")
+            die(f"{ctx}: `name` is required")
         if not NAME_RE.match(name):
             if len(name) > NAME_MAX_LEN:
-                die(f"{ctx}: `name` invalido: {name!r} tem {len(name)} chars "
-                    f"(maximo {NAME_MAX_LEN}). Regex: ^[a-z][a-z0-9-]{{0,{NAME_MAX_LEN - 1}}}$")
-            die(f"{ctx}: `name` invalido: {name!r}. "
-                f"Deve comecar com [a-z] e conter apenas [a-z0-9-], ate {NAME_MAX_LEN} chars.")
+                die(f"{ctx}: invalid `name`: {name!r} has {len(name)} chars "
+                    f"(max {NAME_MAX_LEN}). Regex: ^[a-z][a-z0-9-]{{0,{NAME_MAX_LEN - 1}}}$")
+            die(f"{ctx}: invalid `name`: {name!r}. "
+                f"Must start with [a-z] and contain only [a-z0-9-], up to {NAME_MAX_LEN} chars.")
         if name in seen_names:
-            die(f"{ctx}: nome duplicado: {name!r}")
+            die(f"{ctx}: duplicate name: {name!r}")
         seen_names.add(name)
         if not a.get("display_name"):
-            die(f"{ctx}: `display_name` obrigatorio")
+            die(f"{ctx}: `display_name` is required")
         if not a.get("description"):
-            die(f"{ctx}: `description` obrigatorio")
+            die(f"{ctx}: `description` is required")
         streams = a.get("streams") or [name]
         if not isinstance(streams, list) or not streams:
-            die(f"{ctx}: `streams` deve ser lista nao-vazia")
+            die(f"{ctx}: `streams` must be a non-empty list")
         for s in streams:
             if s in seen_streams:
-                die(f"{ctx}: stream duplicada: {s!r}")
+                die(f"{ctx}: duplicate stream: {s!r}")
             seen_streams.add(s)
         for key in ("write_access", "read_access"):
             val = a.get(key) or []
             if not isinstance(val, list):
-                die(f"{ctx}: `{key}` deve ser lista")
+                die(f"{ctx}: `{key}` must be a list")
             for m in val:
                 if m not in VALID_MOUNTS:
-                    die(f"{ctx}: `{key}` mount desconhecido: {m!r}")
+                    die(f"{ctx}: `{key}` unknown mount: {m!r}")
         overlap = set(a.get("write_access") or []) & set(a.get("read_access") or [])
         if overlap:
             die(f"{ctx}: overlap write/read: {overlap}")
         pool = a.get("pool_size", 2)
         if not isinstance(pool, int) or pool < 1:
-            die(f"{ctx}: `pool_size` deve ser int >= 1")
+            die(f"{ctx}: `pool_size` must be an int >= 1")
         idle = a.get("idle_timeout_sec", 900)
         if not isinstance(idle, int) or idle < 1:
-            die(f"{ctx}: `idle_timeout_sec` deve ser int >= 1")
+            die(f"{ctx}: `idle_timeout_sec` must be an int >= 1")
         model = a.get("model")
         if model is not None and not isinstance(model, str):
-            die(f"{ctx}: `model` deve ser string")
+            die(f"{ctx}: `model` must be a string")
         effort = a.get("effort")
         if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
-            die(f"{ctx}: `effort` invalido: {effort!r}")
+            die(f"{ctx}: invalid `effort`: {effort!r}")
         caps = a.get("capabilities") or []
         if not isinstance(caps, list):
-            die(f"{ctx}: `capabilities` deve ser lista")
+            die(f"{ctx}: `capabilities` must be a list")
         for c in caps:
             if c not in known_caps:
                 die(
-                    f"{ctx}: capability desconhecida: {c!r}. "
-                    f"Conhecidas: {sorted(known_caps)}"
+                    f"{ctx}: unknown capability: {c!r}. "
+                    f"Known: {sorted(known_caps)}"
                 )
         image = a.get("image")
         if image is not None and not isinstance(image, str):
-            die(f"{ctx}: `image` deve ser string (ex: registry.gitlab.com/acme/my-agent:v1)")
+            die(f"{ctx}: `image` must be a string (e.g. registry.gitlab.com/acme/my-agent:v1)")
         _validate_hooks_block(a.get("hooks"), ctx)
     return agents, hooks_defaults, capability_instances
 
@@ -405,7 +405,7 @@ def validate_schema(data: dict) -> tuple[list[dict], dict, dict]:
 # ---------- Broker admin client ----------
 
 class BrokerAdmin:
-    """HTTP client pro broker interno."""
+    """HTTP client for the internal broker."""
 
     def __init__(self, url: str, admin_token: str):
         self.url = url.rstrip("/")
@@ -435,7 +435,7 @@ class BrokerAdmin:
 
     def list_streams(self) -> list[dict]:
         resp = self._get("/api/streams")
-        # Broker retorna {streams: [...], default: ...} pro PWA
+        # Broker returns {streams: [...], default: ...} for the PWA
         return resp.get("streams", []) if isinstance(resp, dict) else resp
 
     def upsert_user(self, email: str, username: str, full_name: str, kind: str, agent_name: str | None) -> dict:
@@ -466,8 +466,8 @@ class BrokerAdmin:
 # ---------- Template filesystem ----------
 
 AGENT_YAML_TEMPLATE = """\
-# Gerado por reconcile a partir de instance/agents/agents.yaml.
-# Edicoes manuais aqui sao sobrescritas no proximo reconcile.
+# Generated by reconcile from instance/agents/agents.yaml.
+# Manual edits here are overwritten on the next reconcile.
 name: {name}
 description: {description}
 
@@ -552,8 +552,8 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / "knowledge").mkdir(exist_ok=True)
     (d / "pending_questions").mkdir(exist_ok=True)
-    # Sessions (runtime cwds por topic) moram em ${SESSIONS_DIR}/<name>/ —
-    # fora de agent_home pra separar runtime efemero de config persistente (D-51).
+    # Sessions (runtime cwds per topic) live in ${SESSIONS_DIR}/<name>/ —
+    # outside agent_home to separate ephemeral runtime from persistent config (D-51).
     (SESSIONS_DIR / name).mkdir(parents=True, exist_ok=True)
 
     claude_md = d / "CLAUDE.md"
@@ -567,20 +567,20 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
             ),
             encoding="utf-8",
         )
-        log(f"  CLAUDE.md criado ({name})", "ok")
+        log(f"  CLAUDE.md created ({name})", "ok")
 
-    # .claude/settings.json — espelha allowed_tools em permissions.allow.
-    # Claude Code (CLI, -p mode) le isso ao iniciar a session. Sem isso, tools
-    # MCP nossas viram permission-prompt que morre em non-interactive.
+    # .claude/settings.json — mirrors allowed_tools into permissions.allow.
+    # Claude Code (CLI, -p mode) reads it when the session starts. Without it,
+    # our MCP tools hit a permission prompt that dies in non-interactive mode.
     claude_settings_dir = d / ".claude"
     claude_settings_dir.mkdir(exist_ok=True)
     allowed = list(agent.get("allowed_tools") or [])
     settings: dict = {"permissions": {"allow": allowed}}
-    # Hooks do Claude Code: merge de hooks_defaults (top-level) + agent.hooks,
-    # concatenados por evento. Passthrough pra settings.json — o CLI valida
-    # e executa. Hook scripts precisam usar paths absolutos internos ao
-    # container (ex: /app/agents/<name>/hooks/foo.sh). jq esta disponivel
-    # na imagem agent (framework/docker/agent.Dockerfile).
+    # Claude Code hooks: merge of hooks_defaults (top-level) + agent.hooks,
+    # concatenated per event. Passed through to settings.json — the CLI
+    # validates and runs them. Hook scripts must use absolute paths inside
+    # the container (e.g. /app/agents/<name>/hooks/foo.sh). jq is available
+    # in the agent image (framework/docker/agent.Dockerfile).
     merged_hooks = merge_hooks(hooks_defaults, agent.get("hooks"))
     if merged_hooks:
         settings["hooks"] = merged_hooks
@@ -601,10 +601,10 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
     effort_block = f"effort: {effort}\n" if effort else ""
     main_repo = agent.get("main_repo")
     main_repo_block = f"\nmain_repo: {main_repo}\n" if main_repo else ""
-    # description quotada com json.dumps: JSON string eh YAML valido e
-    # escapa aspas/caracteres especiais corretamente. Sem isso, descricoes
-    # com ":" (comum em PT-BR: "Fase 1:...", "Consultivo:...") quebram o
-    # parse YAML no bot (interpretado como mapping key).
+    # description quoted with json.dumps: a JSON string is valid YAML and
+    # escapes quotes/special characters correctly. Without it, descriptions
+    # containing ":" (e.g. "Phase 1:...", "Advisory:...") break YAML parsing
+    # in the bot (read as a mapping key).
     (d / "agent.yaml").write_text(
         AGENT_YAML_TEMPLATE.format(
             name=name, description=json.dumps(agent["description"], ensure_ascii=False),
@@ -625,8 +625,8 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
     capability_instances = capability_instances or {}
     upper = name.upper().replace("-", "_")
     mem_enabled, _ = _memory_cfg(agent)
-    # BYOI: agente pode apontar pra imagem propria (registry publico/privado).
-    # Nesse caso nao fazemos build — usuario e responsavel pela imagem.
+    # BYOI: an agent can point at its own image (public/private registry).
+    # In that case we don't build — the user is responsible for the image.
     image_override = agent.get("image")
     svc: dict = {
         "image": image_override or AGENT_IMAGE,
@@ -642,62 +642,62 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
             "TRANSCRIBER_LANGUAGE": "${TRANSCRIBER_LANGUAGE:-}",
             "TELEMETRY_URL": "http://web:8090/api/telemetry/event",
             "CLAUDE_MOCK": "${CLAUDE_MOCK:-}",
-            # Azure AI Foundry (Claude via Azure) — se preenchido, o CLI usa
-            # este provider em vez do Anthropic direto.
+            # Azure AI Foundry (Claude via Azure) — if set, the CLI uses this
+            # provider instead of Anthropic directly.
             "CLAUDE_CODE_USE_FOUNDRY": "${CLAUDE_CODE_USE_FOUNDRY:-}",
             "ANTHROPIC_FOUNDRY_RESOURCE": "${ANTHROPIC_FOUNDRY_RESOURCE:-}",
             "ANTHROPIC_FOUNDRY_API_KEY": "${ANTHROPIC_FOUNDRY_API_KEY:-}",
             "POOL_SIZE": "${POOL_SIZE:-}",
             "IDLE_TIMEOUT_SEC": "${IDLE_TIMEOUT_SEC:-}",
             "TZ": "${TZ:-America/Sao_Paulo}",
-            # Git push / MR-PR — usados por executores e revisor-testador.
-            # Ficam no env de todos os agentes; agentes consultivos/analistas
-            # simplesmente nao os invocam (CLAUDE.md define a disciplina).
+            # Git push / MR-PR — used by agents that push code.
+            # Present in every agent's env; agents that don't push simply
+            # never use them (CLAUDE.md defines the discipline).
             "GITLAB_TOKEN": "${GITLAB_TOKEN:-}",
             "GITLAB_HOST": "${GITLAB_HOST:-}",
             "GH_TOKEN": "${GH_TOKEN:-}",
             "GIT_AUTHOR_NAME": "${GIT_AUTHOR_NAME:-ai-company}",
             "GIT_AUTHOR_EMAIL": "${GIT_AUTHOR_EMAIL:-agents@local}",
-            # glab lê GITLAB_TOKEN por padrão, mas também aceita GLAB_TOKEN.
-            # gh aceita GH_TOKEN diretamente. Nada mais a configurar no runtime.
+            # glab reads GITLAB_TOKEN by default, but also accepts GLAB_TOKEN.
+            # gh accepts GH_TOKEN directly. Nothing else to configure at runtime.
         },
         "volumes": [
-            # D-90: dir bind do ~/.claude/ inteiro do host (read-only) num path
-            # de staging. Diretorios resolvem por path no kernel — quando o
-            # Claude CLI do host refresca .credentials.json (write-then-rename
-            # = novo inode), o container ve a versao nova na proxima leitura.
-            # Pre-spawn sync no claude_runner.py copia pro volume do agente.
-            # Bind de arquivo (anterior) congelava no inode antigo e gerava o
-            # 401 silencioso descrito em D-55.
+            # D-90: dir bind of the host's whole ~/.claude/ (read-only) at a
+            # staging path. Directories resolve by path in the kernel — when
+            # the host's Claude CLI refreshes .credentials.json (write-then-rename
+            # = new inode), the container sees the new version on the next read.
+            # Pre-spawn sync in claude_runner.py copies it to the agent volume.
+            # The previous file bind froze on the old inode and caused the
+            # silent 401 described in D-55.
             "${HOME}/.claude/:/tmp/host-claude/:ro",
-            # .claude.json segue file bind (caso menos critico, rotacao rara).
-            # Se virar problema, mesma solucao: mount de ~/ ou symlink no host.
+            # .claude.json stays a file bind (less critical, rarely rotated).
+            # If it becomes a problem, same fix: mount ~/ or symlink on the host.
             "${HOME}/.claude.json:/tmp/claude-auth/.claude.json:ro",
             f"agent-{name}-claude:/home/node/.claude",
             f"${{AGENTS_DIR:-./instance/agents}}/{name}:/app/agents/{name}",
-            # D-51: sessions (runtime cwds por topic) fora de AGENTS_DIR.
-            # Separa config persistente do agente (agent.yaml, CLAUDE.md,
-            # knowledge/) do state efemero (session_id, symlinks, GC 24h).
+            # D-51: sessions (runtime cwds per topic) outside AGENTS_DIR.
+            # Separates the agent's persistent config (agent.yaml, CLAUDE.md,
+            # knowledge/) from ephemeral state (session_id, symlinks, 24h GC).
             f"${{SESSIONS_DIR:-./instance/sessions}}/{name}:/workspace/sessions",
-            # Worktrees compartilhadas entre agentes (create_worktree MCP tool
-            # grava aqui). Fora de REPOS_DIR pra nao poluir status dos repos
-            # canonicos (que o VSCode/IDE do dev enxerga).
+            # Worktrees shared between agents (the create_worktree MCP tool
+            # writes here). Outside REPOS_DIR so as not to pollute the status
+            # of the canonical repos (which the dev's VSCode/IDE sees).
             "${WORKTREES_DIR:-./instance/worktrees}:/workspace/worktrees",
-            # D-60: hooks compartilhados (Claude Code) entre todos os agentes.
-            # Scripts referenciados por hooks_defaults em agents.yaml moram aqui
-            # e ficam acessiveis em /app/hooks/ dentro do container (ro).
+            # D-60: (Claude Code) hooks shared by all agents.
+            # Scripts referenced by hooks_defaults in agents.yaml live here
+            # and are available at /app/hooks/ inside the container (ro).
             "${HOOKS_DIR:-./instance/hooks}:/app/hooks:ro",
             "./instance/heartbeats:/heartbeats",
         ],
     }
     if mem_enabled:
-        # Memoria agora e Postgres (memory.facts) — nao precisa de bind mount.
-        # Env var DATABASE_URL ja setada acima.
+        # Memory is now Postgres (memory.facts) — no bind mount needed.
+        # DATABASE_URL env var is already set above.
         pass
-    # Mounts por pasta (company/repos). "orchestrator" agora so mantem company
-    # pra contexto; eventos vao pelo broker HTTP, nao por arquivo.
-    # Paths expandidos pelo docker compose a partir do .env na raiz — defaults
-    # preservados pra compat (instance/ tradicional).
+    # Per-folder mounts (company/repos). "orchestrator" now only keeps company
+    # for context; events go through the HTTP broker, not files.
+    # Paths expanded by docker compose from the root .env — defaults
+    # kept for compat (traditional instance/).
     write = set(agent.get("write_access") or [])
     read = set(agent.get("read_access") or [])
     _MOUNT_SRC = {
@@ -707,15 +707,15 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
     for mount in ["company", "repos"]:
         src = _MOUNT_SRC[mount]
         if mount == "repos" and "repos" in write:
-            # D-115: repos canonicos montados RO + .git/ de cada repo
-            # sobreposto RW. `git worktree add`/`fetch`/`prune`/`config`
-            # (subprocess dentro do container do agente — workflow.py)
-            # so escrevem em .git/refs, .git/FETCH_HEAD, .git/worktrees/,
-            # .git/modules/. Working tree (codigo, configs do projeto)
-            # fica RO no kernel: agente nao consegue editar codigo direto
-            # em /workspace/repos/<repo>/<src>, mesmo via Bash. Edicao
-            # legitima acontece em /workspace/worktrees/<repo>/<task>/
-            # (mount RW separado, criado pelo create_worktree MCP).
+            # D-115: canonical repos mounted RO + each repo's .git/
+            # overlaid RW. `git worktree add`/`fetch`/`prune`/`config`
+            # (subprocess inside the agent container — workflow.py)
+            # only write to .git/refs, .git/FETCH_HEAD, .git/worktrees/,
+            # .git/modules/. The working tree (code, project configs)
+            # stays RO in the kernel: the agent can't edit code directly
+            # in /workspace/repos/<repo>/<src>, not even via Bash. Legit
+            # edits happen in /workspace/worktrees/<repo>/<task>/
+            # (separate RW mount, created by the create_worktree MCP).
             svc["volumes"].append(f"{src}:/workspace/{mount}:ro")
             # Repos created by the init_repo tool (web/app/repos.py) keep
             # their git dir in <repos>/.gitdirs/<name>.git. One RW mount
@@ -728,9 +728,9 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
                     if entry.name.startswith("."):
                         continue
                     if not (entry / ".git").is_dir():
-                        # Pula entries sem .git/ dir: lixo, repos do
-                        # init_repo (.git eh arquivo -> .gitdirs acima) ou
-                        # submodulos.
+                        # Skip entries without a .git/ dir: junk, init_repo
+                        # repos (.git is a file -> .gitdirs above) or
+                        # submodules.
                         continue
                     svc["volumes"].append(
                         f"{src}/{entry.name}/.git:/workspace/{mount}/{entry.name}/.git"
@@ -739,15 +739,15 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
             svc["volumes"].append(f"{src}:/workspace/{mount}")
         elif mount in read:
             svc["volumes"].append(f"{src}:/workspace/{mount}:ro")
-    # Imagem default -> framework builda; imagem externa -> sem build.
+    # Default image -> framework builds it; external image -> no build.
     if not image_override:
         svc["build"] = {
             "context": ".",
             "dockerfile": "framework/docker/agent.Dockerfile",
         }
-    # Capabilities com MCP lateral entram como depends_on (garante ready) e
-    # podem injetar env vars no container do agente (`agent_env`) — necessário
-    # pra stdio servers que precisam de credenciais via env (tipo Sentry).
+    # Capabilities with a sidecar MCP become depends_on (ensures ready) and
+    # can inject env vars into the agent container (`agent_env`) — needed
+    # for stdio servers that take credentials via env (like Sentry).
     for c in agent.get("capabilities") or []:
         spec = resolve_capability(c, capability_instances)
         if spec is None:
@@ -760,9 +760,9 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
 
 
 def write_mcp_extra(agent: dict, capability_instances: dict | None = None) -> None:
-    """Escreve instance/agents/<name>/mcp.extra.json com servers das capabilities.
+    """Write instance/agents/<name>/mcp.extra.json with the capabilities' servers.
 
-    Claude_runner faz merge desse arquivo no mcp-config.json gerado pra cada run.
+    claude_runner merges this file into the mcp-config.json generated for each run.
     """
     name = agent["name"]
     caps = agent.get("capabilities") or []
@@ -787,8 +787,8 @@ def write_override(agents: list[dict], capability_instances: dict | None = None)
     capability_instances = capability_instances or {}
     services = {f"agent-{a['name']}": build_agent_service(a, capability_instances) for a in agents}
     volumes = {f"agent-{a['name']}-claude": None for a in agents}
-    # Agrupa capabilities MCP usadas por qualquer agente — uma instancia de
-    # cada server serve N agentes que pedirem a mesma capability.
+    # Collect MCP capabilities used by any agent — one instance of each
+    # server serves the N agents that ask for the same capability.
     used_caps: set[str] = set()
     for a in agents:
         used_caps.update(a.get("capabilities") or [])
@@ -798,8 +798,8 @@ def write_override(agents: list[dict], capability_instances: dict | None = None)
             services[f"{c}-mcp"] = spec["service"]
     content = {"services": services, "volumes": volumes}
     header = textwrap.dedent("""\
-        # GERADO POR framework/scripts/reconcile.py — NAO EDITE MANUALMENTE.
-        # Fonte: instance/agents/agents.yaml. Rode `./framework/scripts/reconcile.sh` pra regenerar.
+        # GENERATED BY framework/scripts/reconcile.py — DO NOT EDIT BY HAND.
+        # Source: instance/agents/agents.yaml. Run `./framework/scripts/reconcile.sh` to regenerate.
     """)
     yaml_text = yaml.safe_dump(content, default_flow_style=False, sort_keys=False, allow_unicode=True)
     OVERRIDE_FILE.write_text(header + yaml_text, encoding="utf-8")
@@ -812,7 +812,7 @@ def upper_env_prefix(name: str) -> str:
 
 
 def ensure_user_and_subs(client: BrokerAdmin, agent: dict, env: dict[str, str]) -> tuple[str, bool]:
-    """Cria/atualiza user (kind=bot) + subscriptions. Retorna (api_token, rotated)."""
+    """Create/update the user (kind=bot) + subscriptions. Returns (api_token, rotated)."""
     name = agent["name"]
     bot_email = f"{name}-bot@internal.ai-company"
     resp = client.upsert_user(
@@ -825,35 +825,35 @@ def ensure_user_and_subs(client: BrokerAdmin, agent: dict, env: dict[str, str]) 
     api_token = resp.get("api_token")
     user_id = resp["id"]
     if not api_token:
-        # Backend preservou token mas nao retornou (edge legacy) — usa .env
+        # Backend kept the token but didn't return it (legacy edge case) — use .env
         api_token = env.get(f"{upper_env_prefix(name)}_TOKEN", "")
         if not api_token:
-            die(f"{name}: user ja existe mas .env nao tem token. Delete user e recrie, ou popule {upper_env_prefix(name)}_TOKEN manualmente.")
-    # rotated = o .env nao tinha esse token (primeiro reconcile, ou DB recriado
-    # com token novo). Containers criados antes precisam ser recreados pra
-    # pegar o BROKER_TOKEN novo.
+            die(f"{name}: user already exists but .env has no token. Delete the user and recreate it, or set {upper_env_prefix(name)}_TOKEN manually.")
+    # rotated = .env didn't have this token (first reconcile, or DB recreated
+    # with a new token). Containers created earlier must be recreated to
+    # pick up the new BROKER_TOKEN.
     prev_token = env.get(f"{upper_env_prefix(name)}_TOKEN", "")
     rotated = api_token != prev_token
     for stream in agent.get("streams") or [name]:
-        client.upsert_stream(name=stream, description=f"Stream do agente {name}")
+        client.upsert_stream(name=stream, description=f"Stream for agent {name}")
         client.subscribe(user_id=user_id, stream=stream)
     log(f"  {name}: user#{user_id} + {len(agent.get('streams') or [name])} stream(s) ok", "ok")
     return api_token, rotated
 
 
-# Streams que o broker mantem por conta propria (nao vem de agents.yaml).
-# Editar quando adicionar novas streams "system-level" configuradas via env.
+# Streams the broker maintains on its own (not from agents.yaml).
+# Edit when adding new "system-level" streams configured via env.
 RESERVED_STREAMS = {"debug"}
 
 
 def prune_orphans(client: BrokerAdmin, agents: list[dict], env: dict[str, str]) -> None:
-    """Soft-delete de streams/bot-users do broker que nao estao mais em
+    """Soft-delete broker streams/bot users that are no longer in
     agents.yaml.
 
-    Estrategia: tenta hard-delete primeiro (DELETE). Se 409 (tem historico),
-    cai pra soft-delete (PATCH is_active=false). Soft-delete preserva o
-    historico mas remove de listagens da UI e do '## Equipe' do system
-    prompt — agente desativado nao reaparece como peer chamavel.
+    Strategy: try hard-delete first (DELETE). On 409 (has history), fall
+    back to soft-delete (PATCH is_active=false). Soft-delete keeps the
+    history but removes it from UI listings and from the system prompt's
+    team section — a deactivated agent doesn't reappear as a callable peer.
 
     Whitelist: TERMINAL_NOTIFY_STREAM (se setado) + RESERVED_STREAMS.
     """
@@ -871,7 +871,7 @@ def prune_orphans(client: BrokerAdmin, agents: list[dict], env: dict[str, str]) 
         broker_streams = client.list_streams()
         broker_users = client.list_users()
     except Exception as e:
-        log(f"  falha listando broker: {e}", "err")
+        log(f"  failed listing broker: {e}", "err")
         return
 
     orphan_streams = [s for s in broker_streams if s["name"] not in configured_streams]
@@ -879,19 +879,19 @@ def prune_orphans(client: BrokerAdmin, agents: list[dict], env: dict[str, str]) 
         name = s["name"]
         code, body = client.delete_stream(name)
         if code == 200:
-            log(f"  stream orfa removida (hard-delete): {name}", "ok")
+            log(f"  orphan stream removed (hard-delete): {name}", "ok")
         elif code == 409:
-            # Tem historico de convs. Soft-delete preserva e esconde.
+            # Has conversation history. Soft-delete keeps and hides it.
             if s.get("is_active") is False:
-                log(f"  stream {name!r} ja inativa", "ok")
+                log(f"  stream {name!r} already inactive", "ok")
             else:
                 pcode, pbody = client.set_stream_active(name, False)
                 if pcode == 200:
-                    log(f"  stream orfa desativada (soft-delete): {name}", "ok")
+                    log(f"  orphan stream deactivated (soft-delete): {name}", "ok")
                 else:
-                    log(f"  falha desativando stream {name!r}: HTTP {pcode} {pbody[:120]}", "err")
+                    log(f"  failed deactivating stream {name!r}: HTTP {pcode} {pbody[:120]}", "err")
         else:
-            log(f"  falha removendo stream {name!r}: HTTP {code} {body[:120]}", "err")
+            log(f"  failed removing stream {name!r}: HTTP {code} {body[:120]}", "err")
 
     orphan_bots = [u for u in broker_users
                    if u.get("kind") == "bot"
@@ -902,39 +902,39 @@ def prune_orphans(client: BrokerAdmin, agents: list[dict], env: dict[str, str]) 
         username = u["username"]
         code, body = client.delete_user(username)
         if code == 200:
-            log(f"  bot orfao removido (hard-delete): {username}", "ok")
+            log(f"  orphan bot removed (hard-delete): {username}", "ok")
         elif code == 409:
             if u.get("is_active") is False:
-                log(f"  user {username!r} ja inativo", "ok")
+                log(f"  user {username!r} already inactive", "ok")
             else:
                 pcode, pbody = client.set_user_active(username, False)
                 if pcode == 200:
-                    log(f"  bot orfao desativado (soft-delete): {username}", "ok")
+                    log(f"  orphan bot deactivated (soft-delete): {username}", "ok")
                 else:
-                    log(f"  falha desativando user {username!r}: HTTP {pcode} {pbody[:120]}", "err")
+                    log(f"  failed deactivating user {username!r}: HTTP {pcode} {pbody[:120]}", "err")
         else:
-            log(f"  falha removendo user {username!r}: HTTP {code} {body[:120]}", "err")
+            log(f"  failed removing user {username!r}: HTTP {code} {body[:120]}", "err")
 
     if not orphan_streams and not orphan_bots:
-        log("  nada a remover", "ok")
+        log("  nothing to remove", "ok")
 
 
 # ---------- Main ----------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Reconcile agents.yaml -> estado real")
-    parser.add_argument("--dry-run", action="store_true", help="so mostra o que faria")
-    parser.add_argument("--no-up", action="store_true", help="nao roda docker compose up ao fim")
-    parser.add_argument("--no-broker", action="store_true", help="pula users/streams no broker (so FS + override)")
+    parser = argparse.ArgumentParser(description="Reconcile agents.yaml -> actual state")
+    parser.add_argument("--dry-run", action="store_true", help="only show what it would do")
+    parser.add_argument("--no-up", action="store_true", help="don't run docker compose up at the end")
+    parser.add_argument("--no-broker", action="store_true", help="skip broker users/streams (FS + override only)")
     args = parser.parse_args()
 
     if not AGENTS_YAML.exists():
-        die(f"{AGENTS_YAML} nao existe. Crie a partir de framework/examples/agents.yaml.example.")
+        die(f"{AGENTS_YAML} does not exist. Create it from framework/examples/agents.yaml.example.")
 
-    log("Garantindo diretorios da instancia (evita Docker criar como root)", "step")
-    # Pastas customizaveis via env (AGENTS_DIR, COMPANY_DIR, BACKUPS_DIR, REPOS_DIR)
-    # ou default em instance/. Heartbeats continua em instance/ (ephemeral,
-    # sem caso de uso pra mover).
+    log("Ensuring instance directories (keeps Docker from creating them as root)", "step")
+    # Folders customizable via env (AGENTS_DIR, COMPANY_DIR, BACKUPS_DIR, REPOS_DIR)
+    # or default under instance/. Heartbeats stays in instance/ (ephemeral,
+    # no use case for moving it).
     AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     COMPANY_DIR.mkdir(parents=True, exist_ok=True)
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
@@ -943,18 +943,18 @@ def main() -> int:
     HOOKS_DIR.mkdir(parents=True, exist_ok=True)
     (INSTANCE_DIR / "repos").mkdir(parents=True, exist_ok=True)
     (INSTANCE_DIR / "heartbeats").mkdir(parents=True, exist_ok=True)
-    # Worktrees precisa ser escrita pelo container (UID node=1000) e lida pelo
-    # host (UID do dev). chmod 777 evita collision — mesmo problema que o
-    # mount repos/ teve antes (UID 1001 do host vs node do container).
+    # Worktrees must be writable by the container (UID node=1000) and readable
+    # by the host (the dev's UID). chmod 777 avoids the clash — same problem the
+    # repos/ mount had before (host UID 1001 vs the container's node).
     try:
         WORKTREES_DIR.chmod(0o777)
     except OSError:
         pass
 
-    # System prompts (D-63): pasta + seed do config.yaml. platform.md saiu
-    # daqui — virou invariante do framework e mora dentro das imagens
-    # (agent/web), via COPY framework/system_prompts. Instancia so seeda o
-    # config.yaml (toggles editaveis pelo PWA).
+    # System prompts (D-63): folder + config.yaml seed. platform.md moved out
+    # of here — it became a framework invariant and lives inside the images
+    # (agent/web), via COPY framework/system_prompts. The instance only seeds
+    # config.yaml (toggles editable from the PWA).
     sp_dir = COMPANY_DIR / "system_prompts"
     sp_dir.mkdir(parents=True, exist_ok=True)
     sp_examples = PROJECT_ROOT / "framework" / "examples" / "system_prompts"
@@ -966,11 +966,11 @@ def main() -> int:
             try:
                 shown = target.relative_to(PROJECT_ROOT)
             except ValueError:
-                shown = target  # COMPANY_DIR fora do PROJECT_ROOT
-            log(f"  seed: {shown} copiado do example", "ok")
-    # Migration cleanup: instancias antigas seedaram platform.md aqui. Agora
-    # o arquivo vive na imagem; remover o orfao evita confusao (PWA listava
-    # o tamanho do arquivo da instance, que estava sendo ignorado pelo runner).
+                shown = target  # COMPANY_DIR outside PROJECT_ROOT
+            log(f"  seed: {shown} copied from example", "ok")
+    # Migration cleanup: old instances seeded platform.md here. The file now
+    # lives in the image; removing the orphan avoids confusion (the PWA showed
+    # the size of the instance file, which the runner was ignoring).
     legacy_platform = sp_dir / "platform.md"
     if legacy_platform.exists():
         legacy_platform.unlink()
@@ -980,7 +980,7 @@ def main() -> int:
             shown = legacy_platform
         log(f"  removed legacy {shown} (platform.md is now framework-fixed)", "ok")
 
-    log("Parseando agents.yaml", "step")
+    log("Parsing agents.yaml", "step")
     agents_text = AGENTS_YAML.read_text(encoding="utf-8")
     if LEGACY_MCP_PREFIX in agents_text:
         # Pre-rename configs: the MCP server used to be called agent_framework.
@@ -992,7 +992,7 @@ def main() -> int:
         )
     data = yaml.safe_load(agents_text)
     agents, hooks_defaults, capability_instances = validate_schema(data)
-    log(f"{len(agents)} agente(s) na config: {[a['name'] for a in agents]}", "ok")
+    log(f"{len(agents)} agent(s) in config: {[a['name'] for a in agents]}", "ok")
     if hooks_defaults:
         log(f"hooks_defaults: {sorted(hooks_defaults.keys())}", "ok")
     if capability_instances:
@@ -1005,24 +1005,24 @@ def main() -> int:
     broker_url = os.environ.get("BROKER_URL") or env.get("BROKER_URL") or "http://web:8090"
     admin_token = os.environ.get("ORCHESTRATOR_TOKEN") or env.get("ORCHESTRATOR_TOKEN")
     if not admin_token:
-        die("ORCHESTRATOR_TOKEN ausente em env/.env — usado pro reconcile autenticar no broker.")
+        die("ORCHESTRATOR_TOKEN missing from env/.env — reconcile uses it to authenticate with the broker.")
 
     client = None
     if not args.no_broker:
-        log("Validando conectividade com broker", "step")
+        log("Checking broker connectivity", "step")
         client = BrokerAdmin(broker_url, admin_token)
         try:
             client._get("/api/users/me")
-            log(f"broker ok em {broker_url}", "ok")
+            log(f"broker ok at {broker_url}", "ok")
         except Exception as e:
-            die(f"Nao consegui falar com broker em {broker_url}: {e}")
+            die(f"Could not reach broker at {broker_url}: {e}")
 
     new_env: dict[str, str] = {}
     rotated_agents: list[str] = []
     for a in agents:
         log(f"\n== Agent: {a['name']} ({a['display_name']}) ==", "step")
         if args.dry_run:
-            log("  (dry-run, pulando acoes)", "info")
+            log("  (dry-run, skipping actions)", "info")
             continue
         ensure_agent_dir(a, hooks_defaults=hooks_defaults)
         write_mcp_extra(a, capability_instances)
@@ -1035,35 +1035,35 @@ def main() -> int:
                 if rotated:
                     rotated_agents.append(a["name"])
             except Exception as e:
-                log(f"  {a['name']}: falha no broker: {e}", "err")
+                log(f"  {a['name']}: broker failure: {e}", "err")
                 raise
 
     if client is not None and not args.dry_run:
-        log("\nPrune de streams/users orfaos no broker", "step")
+        log("\nPruning orphan streams/users in the broker", "step")
         prune_orphans(client, agents, env)
 
     if new_env and not args.dry_run:
-        log("\nAtualizando .env", "step")
+        log("\nUpdating .env", "step")
         upsert_env(ENV_FILE, new_env)
-        log(f"{len(new_env)} var(s) em .env", "ok")
+        log(f"{len(new_env)} var(s) in .env", "ok")
 
-    log("\nGerando docker-compose.override.yml", "step")
+    log("\nGenerating docker-compose.override.yml", "step")
     if args.dry_run:
-        log("(dry-run, nao escreve)", "info")
+        log("(dry-run, not writing)", "info")
     else:
         write_override(agents, capability_instances)
-        log(f"{OVERRIDE_FILE.name} escrito com {len(agents)} service(s)", "ok")
+        log(f"{OVERRIDE_FILE.name} written with {len(agents)} service(s)", "ok")
 
     if args.no_up:
         print("__RECONCILE_NO_UP__")
     elif not args.dry_run:
         print("__RECONCILE_DO_UP__")
         if rotated_agents:
-            # Sinaliza agentes cujo token foi recem-criado — wrapper recria
-            # os containers pra garantir que peguem o env atualizado.
+            # Flag agents whose token was just created — the wrapper recreates
+            # their containers so they pick up the updated env.
             print(f"__RECONCILE_ROTATED__ {' '.join(rotated_agents)}")
 
-    log("\nreconcile completo.", "step")
+    log("\nreconcile complete.", "step")
     return 0
 
 

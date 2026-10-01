@@ -1,15 +1,15 @@
 """Scheduler CRUD — custom jobs (DB-backed) + native overrides.
 
-Trilha complementar a broker.py (que expoe proxy pro scheduler_http em
-:8811 — health, jobs-list, pause/resume/run-now). Esta trilha eh sobre
-CONFIG: criar/editar/remover jobs sem restart, separando os jobs
-nativos do framework (cleanup/backup/cost) dos customs da instancia
-(post_message e futuras actions).
+Complements broker.py (which proxies scheduler_http on
+:8811 — health, jobs-list, pause/resume/run-now). This module is about
+CONFIG: create/edit/remove jobs without a restart, keeping the framework's
+native jobs (cleanup/backup/cost) separate from the instance's custom ones
+(post_message and future actions).
 
-Hot-reload: write endpoints emitem `pg_notify('scheduler_config_reload',
-{"scope":"custom"|"native", "id":...})`. O container scheduler tem um
-task async escutando esse canal — diff contra `_jobs_by_id` e
-add/replace/remove via APScheduler.
+Hot-reload: write endpoints emit `pg_notify('scheduler_config_reload',
+{"scope":"custom"|"native", "id":...})`. The scheduler container has an
+async task listening on that channel — diffs against `_jobs_by_id` and
+adds/replaces/removes via APScheduler.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from .auth import Principal, get_principal, require_admin
 router = APIRouter(prefix="/api/scheduler")
 
 
-# ---------- Native defaults carregados do YAML do framework ----------
+# ---------- Native defaults loaded from the framework YAML ----------
 
 _DEFAULTS_PATH = Path(
     os.environ.get(
@@ -43,13 +43,13 @@ _DEFAULTS_CACHE: dict[str, dict] | None = None
 
 
 def _load_native_defaults() -> dict[str, dict]:
-    """Le o YAML de defaults do framework. Cacheia em memoria — o arquivo
-    e imutavel no container (vem do build). Retorna {id: job_dict}."""
+    """Reads the framework defaults YAML. Cached in memory — the file
+    is immutable in the container (comes from the build). Returns {id: job_dict}."""
     global _DEFAULTS_CACHE
     if _DEFAULTS_CACHE is not None:
         return _DEFAULTS_CACHE
     if not _DEFAULTS_PATH.exists():
-        # Fallback pra dev local (sem /app prefix).
+        # Fallback for local dev (no /app prefix).
         alt = Path("framework/orchestrator/defaults/schedule.yaml")
         if alt.exists():
             path = alt
@@ -68,9 +68,9 @@ def _load_native_defaults() -> dict[str, dict]:
     return _DEFAULTS_CACHE
 
 
-# Descricao humana por action — exibida no PWA /settings/routines. Mantem
-# texto curto, factual, em ingles (invariante PWA). Se adicionar action
-# nova, acrescente aqui.
+# Human-readable description per action — shown in the PWA at /settings/routines.
+# Keep the text short, factual, in English (PWA invariant). If you add a new
+# action, add it here.
 _ACTION_DESCRIPTIONS: dict[str, str] = {
     "cleanup_live_events": (
         "Delete rows from telemetry.live_events older than `days`. Keeps "
@@ -110,11 +110,11 @@ _ACTION_DESCRIPTIONS: dict[str, str] = {
 
 _SLUG_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 
-# Actions que o PWA pode criar. Agents via MCP ficam restritos a
-# post_message — checagem separada no MCP handler. Humano pode criar
-# qualquer uma das nativas como custom job (raro, mas possivel), mas
-# nao vemos motivo forte hoje; restringimos a post_message aqui tambem
-# pra manter a distincao limpa entre custom e native.
+# Actions the PWA can create. Agents via MCP are restricted to
+# post_message — separate check in the MCP handler. A human could create
+# any of the native ones as a custom job (rare, but possible), but
+# we see no strong reason today; we restrict to post_message here too
+# to keep the custom/native distinction clean.
 _HUMAN_ACTION_WHITELIST = {"post_message"}
 
 
@@ -122,10 +122,10 @@ _CRON_FIELD_RE = re.compile(r"^[\d*/,\-A-Z]+$", re.IGNORECASE)
 
 
 def _validate_cron(cron: str) -> None:
-    """Validacao leve — checa shape de 5 fields com chars aceitaveis. O
-    parser completo roda no scheduler (CronTrigger.from_crontab) na hora
-    de registrar — aqui evitamos garbage obvio mas nao duplicamos o
-    engine inteiro (web nao precisa de apscheduler instalado).
+    """Light validation — checks the 5-field shape with acceptable chars. The
+    full parser runs in the scheduler (CronTrigger.from_crontab) at
+    registration time — here we reject obvious garbage without duplicating the
+    whole engine (web doesn't need apscheduler installed).
     """
     parts = cron.strip().split()
     if len(parts) != 5:
@@ -144,9 +144,9 @@ async def _notify_reload(scope: str, id_: str | None = None) -> None:
 
 
 async def _validate_post_message_params(params: dict) -> None:
-    """Valida shape de params pra action=post_message. Hoje so checa que
-    `sender` (opcional), se presente, eh username existente em
-    messaging.users — evita criar job que vai falhar 400 a cada fire."""
+    """Validates the params shape for action=post_message. Currently only checks
+    that `sender` (optional), if present, is an existing username in
+    messaging.users — avoids creating a job that will fail with 400 on every fire."""
     sender = params.get("sender")
     if sender is None or sender == "":
         return
@@ -163,10 +163,10 @@ async def _validate_post_message_params(params: dict) -> None:
 
 
 async def _attach_runs_info(item: dict) -> None:
-    """Anexa `runs: [...]` ao item de scheduler.custom_jobs quando
-    action=post_message — uma entrada por conv `<base-topic>-<unix-ts>`
-    criada pelo scheduler. Cada fire gera conv nova, entao isso vira o
-    historico de execucoes do job exposto pro drawer no PWA.
+    """Attaches `runs: [...]` to a scheduler.custom_jobs item when
+    action=post_message — one entry per `<base-topic>-<unix-ts>` conv
+    created by the scheduler. Each fire creates a new conv, so this becomes the
+    job's run history, exposed to the drawer in the PWA.
     """
     if item.get("action") != "post_message":
         return
@@ -175,9 +175,9 @@ async def _attach_runs_info(item: dict) -> None:
     base_topic = params.get("topic") if isinstance(params, dict) else None
     if not stream or not base_topic:
         return
-    # Match por regex pra evitar pegar topic com prefixo coincidente
-    # (ex: base="foo" nao deve casar "foobar-123"). Escape do base pra
-    # neutralizar regex chars que o user porventura coloque no topic.
+    # Regex match to avoid catching topics with a coincident prefix
+    # (e.g. base="foo" must not match "foobar-123"). Escape the base to
+    # neutralize regex chars the user may have put in the topic.
     escaped = re.escape(base_topic)
     pattern = f"^{escaped}-[0-9]+$"
     rows = await db.fetch_all(
@@ -306,8 +306,8 @@ async def update_custom_job(
         _validate_cron(patch.cron)
         sets.append(f"cron = ${idx}"); args.append(patch.cron); idx += 1
     if patch.params is not None:
-        # Re-valida params no PATCH (mesma logica do POST). action nao muda
-        # via PATCH, entao reusamos o action persistido do row existente.
+        # Re-validate params on PATCH (same logic as POST). action can't change
+        # via PATCH, so we reuse the action persisted on the existing row.
         existing_action_row = await db.fetch_one(
             "SELECT action FROM scheduler.custom_jobs WHERE slug = $1", slug,
         )
@@ -344,8 +344,8 @@ async def delete_custom_job(slug: str, _: Principal = Depends(require_admin)):
 
 @router.get("/routines")
 async def list_routines(_: Principal = Depends(get_principal)):
-    """Retorna os jobs native defaults do framework com overrides da
-    instancia mergeados. Ordem e determinada pelo YAML de defaults."""
+    """Returns the framework's native default jobs with the instance
+    overrides merged in. Order is set by the defaults YAML."""
     defaults = _load_native_defaults()
     overrides = {
         r["id"]: dict(r)
@@ -380,8 +380,8 @@ async def update_routine(
         raise HTTPException(status_code=404, detail=f"native job {job_id!r} does not exist")
     if patch.cron_override is not None and patch.cron_override.strip():
         _validate_cron(patch.cron_override)
-    # Upsert: se nao tem linha, cria com patches; se tem, atualiza so os
-    # campos passados (NULL fica).
+    # Upsert: if there's no row, create it with the patches; if there is, update only
+    # the fields passed (NULL stays).
     existing = await db.fetch_one(
         "SELECT id FROM scheduler.native_overrides WHERE id = $1", job_id
     )
@@ -414,7 +414,7 @@ async def update_routine(
 
 @router.delete("/routines/{job_id}")
 async def reset_routine(job_id: str, _: Principal = Depends(require_admin)):
-    """Remove override — native volta ao default do framework."""
+    """Removes the override — the native job goes back to the framework default."""
     defaults = _load_native_defaults()
     if job_id not in defaults:
         raise HTTPException(status_code=404, detail=f"native job {job_id!r} does not exist")

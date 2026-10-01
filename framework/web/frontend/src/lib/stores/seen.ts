@@ -1,9 +1,9 @@
 import { writable } from 'svelte/store';
 
 /**
- * Mapa convId → unix-epoch (segundos) da ultima atividade vista pelo humano.
- * Persiste em localStorage. Usado pro badge "unread" discreto na sidebar
- * (complemento leve do badge forte de has_pending_ask).
+ * Map convId → unix-epoch (seconds) of the last activity seen by the human.
+ * Persisted in localStorage. Used for the subtle "unread" badge in the sidebar
+ * (a light complement to the strong has_pending_ask badge).
  */
 const KEY = 'agf-seen';
 
@@ -22,13 +22,13 @@ function persist(map: Record<string, number>) {
   try {
     window.localStorage.setItem(KEY, JSON.stringify(map));
   } catch {
-    /* quota/disabled — ignora */
+    /* quota/disabled — ignore */
   }
 }
 
 export const seen = writable<Record<string, number>>(load());
 
-/** Marca conv como lida ate o timestamp informado (segundos). */
+/** Marks the conv as read up to the given timestamp (seconds). */
 export function markSeen(id: string, lastActivity: number): void {
   seen.update((m) => {
     if ((m[id] ?? 0) >= lastActivity) return m;
@@ -38,7 +38,7 @@ export function markSeen(id: string, lastActivity: number): void {
   });
 }
 
-/** Remove do mapa — usado ao fechar conversa (limpa lixo). */
+/** Removes from the map — used when closing a conversation (cleans up garbage). */
 export function forgetSeen(id: string): void {
   seen.update((m) => {
     if (!(id in m)) return m;

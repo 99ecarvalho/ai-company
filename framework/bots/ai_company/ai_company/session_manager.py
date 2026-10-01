@@ -1,51 +1,51 @@
-"""Gerencia diretorios de sessao por topic.
+"""Manages per-topic session directories.
 
-Cada topic ativo ganha um cwd proprio sob `sessions_root`:
+Each active topic gets its own cwd under `sessions_root`:
 
     <sessions_root>/<topic_slug>/
-      repos/          -> <workspace_repos>   (ergonomia de path)
-      company/        -> <workspace_company> (ergonomia de path)
+      repos/          -> <workspace_repos>   (path ergonomics)
+      company/        -> <workspace_company> (path ergonomics)
       .claude/
         agents/       # per-item symlinks (merge agent + main_repo)
         commands/     # per-item symlinks (merge agent + main_repo)
-      .mcp-config.json  # escrito pelo ClaudeRunner a cada invocacao
+      .mcp-config.json  # written by ClaudeRunner on every invocation
 
-`sessions_root` e passado explicitamente (prod: /workspace/sessions, montado
-do host em ${SESSIONS_DIR}/<agent>/ — D-51). Default legacy `agent_home/sessions`
-preservado pra testes/compat.
+`sessions_root` is passed explicitly (prod: /workspace/sessions, mounted
+from the host at ${SESSIONS_DIR}/<agent>/ — D-51). The legacy default
+`agent_home/sessions` is kept for tests/compat.
 
-O `session_id` do claude (pra `claude --resume` apos restart) e mantido
-em `messaging.conversations.claude_session_id` no Postgres — migration 009.
-Sem dependencia de filesystem pra state persistente.
+Claude's `session_id` (for `claude --resume` after a restart) is kept
+in `messaging.conversations.claude_session_id` in Postgres — migration 009.
+No filesystem dependency for persistent state.
 
-Identidade do agente (CLAUDE.md, knowledge, permissions, hooks, MCP config)
-vai por outros canais cwd-independentes (system prompt, `--add-dir`, CLI
-flags) — ver D-61.
+The agent's identity (CLAUDE.md, knowledge, permissions, hooks, MCP config)
+goes through other cwd-independent channels (system prompt, `--add-dir`, CLI
+flags) — see D-61.
 
-Subagents/commands sao a exceção: o claude CLI so varre `.claude/{agents,
-commands}/` relativo ao CWD, sem flag pra redirecionar. Por isso fazemos
-**per-item symlink** dentro do session_dir (D-64):
-  - Agente: `<agent_home>/.claude/<subdir>/*`  (prioridade)
-  - main_repo (opcional): `<workspace_repos>/<main_repo>/.claude/<subdir>/*`
-    entra como fallback, sem sobrescrever items do agente.
+Subagents/commands are the exception: the claude CLI only scans `.claude/{agents,
+commands}/` relative to the CWD, with no flag to redirect it. That is why we do
+**per-item symlinks** inside the session_dir (D-64):
+  - Agent: `<agent_home>/.claude/<subdir>/*`  (priority)
+  - main_repo (optional): `<workspace_repos>/<main_repo>/.claude/<subdir>/*`
+    acts as a fallback, without overriding the agent's items.
 
-**Skills nao entram aqui** (D-105): tem caminho dedicado via symlink global
-`~/.claude/skills -> /app/agents/<name>/skills/` no entrypoint, cwd-independente.
-Fonte unica `agents/<name>/skills/` cobre tanto criacao via MCP `save_skill`
-(D-98) quanto skills committed pelo humano. `agents/`/`commands/` continuam
-nesse merge porque nao tem equivalente MCP.
+**Skills are not handled here** (D-105): they have a dedicated path via the global
+symlink `~/.claude/skills -> /app/agents/<name>/skills/` in the entrypoint, cwd-independent.
+The single source `agents/<name>/skills/` covers both creation via the MCP `save_skill`
+(D-98) and skills committed by the human. `agents/`/`commands/` stay
+in this merge because they have no MCP equivalent.
 
-**Caveat do CWD worktree:** quando um executor tem UMA worktree `in_progress`,
-o ClaudeRunner spawna com CWD = path da worktree (ver
-`ClaudeRunner._resolve_spawn_cwd`), nao o session_dir. Nesse caminho os
-symlinks daqui sao invisiveis — o claude CLI ve apenas o `.claude/` comitado
-no repo da worktree. Subagents/commands proprios do agente e de main_repo
-sao descobertos somente quando CWD = session_dir (não-executor, ou executor
-fora de worktree). Skills, por viverem no symlink global, sao visiveis em
-qualquer cwd.
+**Worktree CWD caveat:** when an agent has ONE `in_progress` worktree,
+ClaudeRunner spawns with CWD = the worktree path (see
+`ClaudeRunner._resolve_spawn_cwd`), not the session_dir. On that path the
+symlinks from here are invisible — the claude CLI only sees the `.claude/` committed
+in the worktree's repo. The agent's own and main_repo's subagents/commands
+are discovered only when CWD = session_dir (no worktree in progress).
+Skills, since they live in the global symlink, are visible from
+any cwd.
 
-GC remove diretorios com mtime mais velho que N horas (pra `.mcp-config.json`
-e `.claude/` que ficam em disco).
+GC removes directories with an mtime older than N hours (for the `.mcp-config.json`
+and `.claude/` left on disk).
 """
 from __future__ import annotations
 
@@ -61,10 +61,10 @@ log = get_logger(__name__)
 
 SESSIONS_SUBDIR = "sessions"
 
-# Subpastas do .claude/ que sao "plugin-style" — cada item e standalone e
-# pode ser mergeado per-item via symlink sem conflito estrutural. `skills`
-# saiu daqui em D-105 (caminho dedicado via symlink global no entrypoint,
-# cwd-independente). `agents`/`commands` ficam porque nao tem equivalente MCP.
+# .claude/ subfolders that are "plugin-style" — each item is standalone and
+# can be merged per-item via symlink without structural conflicts. `skills`
+# left this list in D-105 (dedicated path via a global symlink in the entrypoint,
+# cwd-independent). `agents`/`commands` stay because they have no MCP equivalent.
 CLAUDE_MERGE_SUBDIRS = ("agents", "commands")
 
 
@@ -75,7 +75,7 @@ class SessionManager:
         workspace_repos: Path,
         workspace_company: Path,
         sessions_root: Path | None = None,
-        db_pool=None,  # asyncpg.Pool | None — None aceito pra testes unitarios sem DB.
+        db_pool=None,  # asyncpg.Pool | None — None accepted for unit tests without a DB.
         main_repo_name: str | None = None,
     ):
         self.agent_home = agent_home
@@ -85,22 +85,22 @@ class SessionManager:
         self.sessions_root.mkdir(parents=True, exist_ok=True)
         self._pool = db_pool
         self.main_repo_name = main_repo_name
-        # Fallback em memoria quando nao ha pool (testes). Key = topic slug;
-        # valor = (claude_session_id, claude_session_cwd|None). Nao sobrevive
-        # a restart do processo — OK pra testes; em prod o pool sempre existe.
+        # In-memory fallback when there is no pool (tests). Key = topic slug;
+        # value = (claude_session_id, claude_session_cwd|None). Does not survive
+        # a process restart — fine for tests; in prod the pool always exists.
         self._inmem_session_refs: dict[str, tuple[str, str | None]] = {}
 
     def topic_workdir(self, key: TopicKey) -> Path:
         return self.sessions_root / key.slug()
 
     def setup(self, key: TopicKey) -> Path:
-        """Cria o cwd do topic com symlinks idempotentes pra repos/company."""
+        """Create the topic cwd with idempotent symlinks to repos/company."""
         wd = self.topic_workdir(key)
         wd.mkdir(parents=True, exist_ok=True)
 
-        # Symlinks de ergonomia: permitem agentes referenciarem "repos/<x>/..."
-        # e "company/..." com paths relativos. CLAUDE.md e knowledge NAO ficam
-        # aqui — vao pelo system prompt / --add-dir (D-61).
+        # Ergonomic symlinks: let agents reference "repos/<x>/..."
+        # and "company/..." with relative paths. CLAUDE.md and knowledge do NOT live
+        # here — they go through the system prompt / --add-dir (D-61).
         links = {
             "repos": self.workspace_repos,
             "company": self.workspace_company,
@@ -116,21 +116,21 @@ class SessionManager:
 
         self._merge_claude_subdirs(wd)
 
-        # atualiza mtime pra nao ser GC'd enquanto estiver em uso
+        # bump mtime so it isn't GC'd while in use
         os.utime(wd, None)
         return wd
 
     def _merge_claude_subdirs(self, wd: Path) -> None:
-        """Popula `<wd>/.claude/{agents,commands}/` via per-item symlinks.
+        """Populate `<wd>/.claude/{agents,commands}/` via per-item symlinks.
 
-        Fontes, em ordem de precedencia:
-          1. `<agent_home>/.claude/<subdir>/*`  (agente vence)
-          2. `<workspace_repos>/<main_repo>/.claude/<subdir>/*`  (opcional)
+        Sources, in order of precedence:
+          1. `<agent_home>/.claude/<subdir>/*`  (agent wins)
+          2. `<workspace_repos>/<main_repo>/.claude/<subdir>/*`  (optional)
 
-        Idempotente: symlinks existentes com target igual sao mantidos; divergentes
-        sao refeitos (agent_home muda, main_repo muda, ou um item foi removido na
-        fonte). Items que nao existem mais em nenhuma fonte sao removidos se forem
-        symlinks geridos.
+        Idempotent: existing symlinks with the same target are kept; divergent ones
+        are recreated (agent_home changes, main_repo changes, or an item was removed
+        at the source). Items that no longer exist in any source are removed if they
+        are managed symlinks.
         """
         claude_root = wd / ".claude"
         try:
@@ -149,7 +149,7 @@ class SessionManager:
                     "session.main_repo_missing",
                     main_repo=self.main_repo_name,
                     expected=str(candidate),
-                    hint="agents/commands do main_repo nao serao injetados",
+                    hint="main_repo agents/commands will not be injected",
                 )
 
         agent_claude = self.agent_home / ".claude"
@@ -164,25 +164,25 @@ class SessionManager:
                 continue
 
             desired: dict[str, Path] = {}
-            # 1. Agente vence: popular primeiro.
+            # 1. Agent wins: populate first.
             src_agent = agent_claude / subdir
             if src_agent.is_dir():
                 for item in src_agent.iterdir():
                     desired.setdefault(item.name, item)
-            # 2. main_repo preenche o que sobrou.
+            # 2. main_repo fills in the rest.
             if main_claude is not None:
                 src_main = main_claude / subdir
                 if src_main.is_dir():
                     for item in src_main.iterdir():
                         desired.setdefault(item.name, item)
 
-            # Reconcilia filesystem <-> desired.
+            # Reconcile filesystem <-> desired.
             existing_names: set[str] = set()
             for entry in target_dir.iterdir():
                 existing_names.add(entry.name)
                 if entry.name not in desired:
-                    # Item stale: so removemos se for symlink gerido (nunca um dir
-                    # escrito pelo claude CLI).
+                    # Stale item: only remove it if it is a managed symlink (never a dir
+                    # written by the claude CLI).
                     if entry.is_symlink():
                         try:
                             entry.unlink()
@@ -215,14 +215,14 @@ class SessionManager:
                                 link=str(link_path), target=str(source), err=str(e))
 
     async def session_ref_for(self, key: TopicKey) -> tuple[str, str | None] | None:
-        """Retorna `(session_id, cwd)` pra um topic, ou None se ausente.
+        """Return `(session_id, cwd)` for a topic, or None if absent.
 
-        `cwd` e o spawn_cwd que originou o session_id (migration 024). Pode ser
-        None pra ids gravados antes da migration — runner trata como "aceita
-        qualquer cwd" pra back-compat.
+        `cwd` is the spawn_cwd that produced the session_id (migration 024). It can be
+        None for ids stored before the migration — the runner treats that as "accept
+        any cwd" for back-compat.
 
-        Fonte de verdade: `messaging.conversations.claude_session_id` +
-        `claude_session_cwd`. Sem pool (testes), usa dict em memoria.
+        Source of truth: `messaging.conversations.claude_session_id` +
+        `claude_session_cwd`. Without a pool (tests), uses an in-memory dict.
         """
         if self._pool is None:
             return self._inmem_session_refs.get(key.slug())
@@ -245,18 +245,18 @@ class SessionManager:
         return (row["claude_session_id"], row["claude_session_cwd"])
 
     async def session_id_for(self, key: TopicKey) -> str | None:
-        """Compat: retorna so o session_id. Use `session_ref_for` quando quiser
-        validar cwd antes do `--resume`."""
+        """Compat: returns only the session_id. Use `session_ref_for` when you want
+        to validate the cwd before `--resume`."""
         ref = await self.session_ref_for(key)
         return ref[0] if ref else None
 
     async def clear_session_id(self, key: TopicKey) -> None:
-        """Zera `claude_session_id` + `claude_session_cwd` do topic (proxima run
-        spawna sem `--resume`).
+        """Clear the topic's `claude_session_id` + `claude_session_cwd` (the next run
+        spawns without `--resume`).
 
-        Usado pelo runner quando o CLI reclama que o session_id apontado nao
-        existe em disco (ghost session, D-70). Fresh start preserva continuidade
-        semantica via artefatos em disco; perde-se so o buffer da conversa CLI.
+        Used by the runner when the CLI complains that the referenced session_id does not
+        exist on disk (ghost session, D-70). A fresh start keeps semantic continuity
+        via artifacts on disk; only the CLI conversation buffer is lost.
         """
         if self._pool is None:
             self._inmem_session_refs.pop(key.slug(), None)
@@ -282,15 +282,15 @@ class SessionManager:
     async def save_session_id(
         self, key: TopicKey, session_id: str, cwd: str | None = None
     ) -> None:
-        """Persiste `(session_id, cwd)` pra um topic.
+        """Persist `(session_id, cwd)` for a topic.
 
-        `cwd` deve ser o spawn_cwd onde o claude rodou (path absoluto, str). O
-        Claude CLI guarda `<sid>.jsonl` em `~/.claude/projects/<encoded-cwd>/`,
-        entao retomar o id de outro cwd produz ghost session — o runner usa
-        esse campo pra checar match antes de `--resume` (D-97). None permitido
-        pra back-compat com call sites legados.
+        `cwd` must be the spawn_cwd where claude ran (absolute path, str). The
+        Claude CLI stores `<sid>.jsonl` in `~/.claude/projects/<encoded-cwd>/`,
+        so resuming the id from another cwd produces a ghost session — the runner uses
+        this field to check for a match before `--resume` (D-97). None is allowed
+        for back-compat with legacy call sites.
 
-        Sem pool (testes), usa dict em memoria.
+        Without a pool (tests), uses an in-memory dict.
         """
         if self._pool is None:
             self._inmem_session_refs[key.slug()] = (session_id, cwd)
@@ -310,12 +310,12 @@ class SessionManager:
                     """,
                     key.stream, key.topic, session_id, cwd,
                 )
-            # asyncpg retorna string tipo "UPDATE 1"
+            # asyncpg returns a string like "UPDATE 1"
             if updated.endswith(" 0"):
                 log.warning(
                     "session.save_no_row",
                     topic=key.slug(),
-                    hint="conversa nao existe; session_id perdido",
+                    hint="conversation does not exist; session_id lost",
                 )
         except Exception as e:
             log.warning("session.save_failed", err=str(e), topic=key.slug())
@@ -326,7 +326,7 @@ class SessionManager:
             os.utime(wd, None)
 
     def gc(self, max_age_hours: float = 24.0) -> int:
-        """Remove diretorios de sessao idle a mais de max_age_hours. Retorna qtd removida."""
+        """Remove session directories idle for more than max_age_hours. Returns the number removed."""
         if not self.sessions_root.exists():
             return 0
         cutoff = time.time() - (max_age_hours * 3600)

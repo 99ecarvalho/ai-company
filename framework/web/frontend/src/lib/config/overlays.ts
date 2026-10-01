@@ -1,6 +1,6 @@
 /**
- * Overlay registry — só os overlays que permanecem como modal (sub-interações,
- * não "destinos"). Destinos viraram rotas SvelteKit (R2): /backlog, /telemetry,
+ * Overlay registry — only the overlays that remain modals (sub-interactions,
+ * not "destinations"). Destinations became SvelteKit routes (R2): /backlog, /telemetry,
  * /memory, /settings, /files, /search, /log.
  */
 import type { Component } from 'svelte';

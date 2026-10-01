@@ -1,8 +1,8 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 import { closeConversation, postMessage } from './helpers/api';
 
-// Posta um live_event crua via /api/telemetry/live-event (mesma rota usada
-// pelo claude_runner). Nao exige agente rodando.
+// Posts a raw live_event via /api/telemetry/live-event (same route used
+// by claude_runner). Doesn't require a running agent.
 async function postLiveEvent(
   request: APIRequestContext,
   params: {
@@ -89,7 +89,7 @@ test.describe('LiveEventLine friendly names + sidebar hierarchy', () => {
     await page.goto('/');
     // Poll: parent comes back with a chevron for children after refresh (5s).
     // Since the child is an `__ask-from-*` conv without a pending_ask, it
-    // counts as "resolved" (ask concluído) — parent shows a chevron that
+    // counts as "resolved" (ask finished) — parent shows a chevron that
     // exposes a "1 resolved" bucket when expanded.
     const parentCard = page.locator(`[data-id="${parentConvId}"]`);
     await expect(parentCard).toBeVisible({ timeout: 10_000 });

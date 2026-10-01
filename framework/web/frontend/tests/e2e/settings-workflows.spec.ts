@@ -1,46 +1,46 @@
 import { expect, test } from '@playwright/test';
 
-// Nome unico por run pra evitar colisao com workflows existentes da instancia
-// (rapido/completo/analise-avulsa) e entre runs que rodem em paralelo.
+// Unique name per run to avoid colliding with the instance's existing workflows
+// and with runs executing in parallel.
 const TEST_WF = `e2e-test-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
 test.describe('Settings → Workflows', () => {
   test('CRUD: create, edit, validate, delete', async ({ page, request }) => {
-    // Defensive cleanup se algum run anterior deixou lixo.
+    // Defensive cleanup in case a previous run left garbage behind.
     await request.delete(`/api/workflows/${encodeURIComponent(TEST_WF)}`).catch(() => undefined);
 
     await page.goto('/settings?tab=workflows');
     await expect(page.getByRole('button', { name: /Workflows/ })).toBeVisible();
 
-    // Sanity: ja tem pelo menos um workflow (os que a instancia usa hoje).
+    // Sanity: there is already at least one workflow (the ones the instance uses today).
     const picker = page.getByLabel('Workflow:');
     await expect(picker).toBeVisible();
 
-    // ---------- Criar ----------
+    // ---------- Create ----------
     page.once('dialog', (d) => d.accept(TEST_WF));
     await page.getByRole('button', { name: /New workflow/ }).click();
 
-    // Espera seleção virar o workflow novo.
+    // Wait for the selection to switch to the new workflow.
     await expect(picker).toHaveValue(TEST_WF);
     // Template default: 1 step "start" -> done.
     await expect(page.getByRole('combobox', { name: 'Initial step' })).toHaveValue('start');
 
-    // ---------- Editar: adicionar step + trocar initial_step ----------
+    // ---------- Edit: add step + change initial_step ----------
     await page.getByRole('button', { name: /Add step/ }).click();
-    // Renomear step 2 de "step-2" pra "end" pra facilitar a asserção.
+    // Rename step 2 from "step-2" to "end" to make the assertion easier.
     const step2Name = page.locator('input').filter({ hasText: '' }).nth(0); // fallback
-    // Acha pelo valor inicial exato:
+    // Find it by its exact initial value:
     const step2 = page.locator('input[value="step-2"]');
     await expect(step2).toBeVisible();
     await step2.fill('end');
 
-    // start.next: remove "done", adiciona "end"
-    // O chip de "done" tem um botão "Remove done" por aria-label.
+    // start.next: remove "done", add "end"
+    // The "done" chip has a "Remove done" button via aria-label.
     await page
       .getByRole('button', { name: 'Remove done' })
       .first()
       .click();
-    // Adicionar "end" no next do step start via select "+ add…"
+    // Add "end" to the start step's next via the "+ add…" select
     const firstAdd = page.locator('select').filter({ hasText: '+ add…' }).first();
     await firstAdd.selectOption({ label: 'end' });
 
@@ -48,7 +48,7 @@ test.describe('Settings → Workflows', () => {
     await page.getByRole('button', { name: /^Save$/ }).click();
     await expect(page.getByText('Up to date.')).toBeVisible();
 
-    // Verifica persistencia via API.
+    // Verify persistence via API.
     const r1 = await request.get(`/api/workflows/${encodeURIComponent(TEST_WF)}`);
     expect(r1.ok()).toBeTruthy();
     const wf = await r1.json();
@@ -57,7 +57,7 @@ test.describe('Settings → Workflows', () => {
     expect(wf.steps.start.next).toContain('end');
     expect(wf.steps.end.next).toContain('done');
 
-    // ---------- Validação server-side: next apontando pra step inexistente ----------
+    // ---------- Server-side validation: next pointing to a nonexistent step ----------
     const r2 = await request.put(`/api/workflows/${encodeURIComponent(TEST_WF)}`, {
       data: {
         initial_step: 'start',
@@ -74,7 +74,7 @@ test.describe('Settings → Workflows', () => {
     page.once('dialog', (d) => d.accept());
     await page.getByRole('button', { name: /^Delete$/ }).click();
 
-    // Sumiu do dropdown.
+    // Gone from the dropdown.
     await expect(picker).not.toHaveValue(TEST_WF);
     const r3 = await request.get(`/api/workflows/${encodeURIComponent(TEST_WF)}`);
     expect(r3.status()).toBe(404);

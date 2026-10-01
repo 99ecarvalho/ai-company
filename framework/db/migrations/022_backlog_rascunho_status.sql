@@ -1,26 +1,26 @@
 -- 022_backlog_rascunho_status.sql
--- Adiciona 'rascunho' ao vocabulario de status de tasks.backlog.
+-- Adds 'rascunho' to the tasks.backlog status vocabulary.
 --
--- Semantica: item criado em modo captura crua (brain-dump). O humano
--- jogou uma ideia sem classificar; product-owner registra literal sem
--- entrevistar. Especificacao fica pendente ate o humano (ou a curadoria
--- diaria) voltar ao item.
+-- Semantics: item created in raw capture mode (brain-dump). The human
+-- dropped an idea without classifying it; product-owner records it verbatim without
+-- interviewing. Specification stays pending until the human (or the daily
+-- curation) returns to the item.
 --
--- Nao entra em backlog_list default (status='aberto') — so aparece
--- quando o caller pede explicitamente status='rascunho' ou status='all'.
--- Daily briefing do product-owner deve querar rascunho WHERE age>7d.
+-- Not included in the default backlog_list (status='aberto') — only shows up
+-- when the caller explicitly asks for status='rascunho' or status='all'.
+-- The product-owner's daily briefing should query rascunho WHERE age>7d.
 --
--- Conjunto completo apos esta migration: aberto | rascunho |
--- em_execucao | promovido | descartado. CHECK constraint formaliza o
--- enum — previne typo silencioso (coluna era TEXT livre).
+-- Full set after this migration: aberto | rascunho |
+-- em_execucao | promovido | descartado. The CHECK constraint formalizes the
+-- enum — prevents silent typos (the column was free TEXT).
 
 ALTER TABLE tasks.backlog
     ADD CONSTRAINT tasks_backlog_status_chk
     CHECK (status IN ('aberto', 'rascunho', 'em_execucao', 'promovido', 'descartado'));
 
 COMMENT ON COLUMN tasks.backlog.status IS
-    'aberto = triado e aguardando priorizacao; '
-    'rascunho = brain-dump sem classificacao, aguardando especificacao humana; '
-    'em_execucao = convertido em task ativa (legacy/manual); '
-    'promovido = virou task via backlog_promote (linkado via promoted_task_slug); '
-    'descartado = arquivado sem promover.';
+    'aberto = triaged, waiting for prioritization; '
+    'rascunho = unclassified brain dump, waiting for a human to specify it; '
+    'em_execucao = turned into an active task (legacy/manual); '
+    'promovido = became a task through backlog_promote (linked via promoted_task_slug); '
+    'descartado = archived without being promoted.';

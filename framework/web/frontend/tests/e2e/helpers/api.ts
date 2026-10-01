@@ -1,6 +1,6 @@
 /**
- * Helpers HTTP pra preparar/limpar estado durante testes E2E.
- * Tudo same-origin via baseURL — assume `WEB_AUTH_DEV_BYPASS=1`.
+ * HTTP helpers to prepare/clean up state during E2E tests.
+ * Everything same-origin via baseURL — assumes `WEB_AUTH_DEV_BYPASS=1`.
  */
 import { type APIRequestContext, expect } from '@playwright/test';
 
@@ -57,10 +57,10 @@ export async function getMessages(
 }
 
 /**
- * Aguarda o agente responder (msg de bot real, ignorando acks/queue
- * notifications). Polling de 500ms ate timeout. Pre-condicao: agente
- * roda com CLAUDE_MOCK=1 + POOL_SIZE/IDLE_TIMEOUT_SEC adequados pra
- * nao acumular workers (test-e2e exporta POOL_SIZE=10 IDLE_TIMEOUT_SEC=15).
+ * Waits for the agent to reply (a real bot msg, ignoring acks/queue
+ * notifications). Polls every 500ms until timeout. Precondition: the agent
+ * runs with CLAUDE_MOCK=1 + suitable POOL_SIZE/IDLE_TIMEOUT_SEC so it
+ * doesn't pile up workers (test-e2e exports POOL_SIZE=10 IDLE_TIMEOUT_SEC=15).
  */
 function isAckOrQueueMsg(content: string): boolean {
   return (
@@ -85,12 +85,12 @@ export async function waitForBotReply(
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(
-    `Timeout waiting for bot reply em ${convId} (${timeoutMs}ms). ` +
-    `Stack precisa CLAUDE_MOCK=1 + POOL_SIZE/IDLE_TIMEOUT_SEC adequados.`
+    `Timeout waiting for bot reply in ${convId} (${timeoutMs}ms). ` +
+    `Stack needs CLAUDE_MOCK=1 + suitable POOL_SIZE/IDLE_TIMEOUT_SEC.`
   );
 }
 
-/** Faz o seed completo: posta msg + aguarda reply do bot mock. */
+/** Does the full seed: posts a msg + waits for the mock bot reply. */
 export async function seedRun(
   request: APIRequestContext,
   stream: string,
@@ -115,8 +115,8 @@ export async function listStreams(
   return r.json();
 }
 
-/** Retorna true se ha algum agente capaz de rodar com mock (basta
- * existir streams). */
+/** Returns true if there is any agent able to run with mock (it's enough
+ * for streams to exist). */
 export async function hasAnyAgent(request: APIRequestContext): Promise<boolean> {
   const { streams } = await listStreams(request);
   return streams.length > 0;

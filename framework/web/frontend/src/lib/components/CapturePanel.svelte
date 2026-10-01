@@ -42,12 +42,12 @@
       topic = '';
       clearAttachments('capture');
       status.set('ready');
-      // Conv nova é sempre 'active' — força filtro pra que ela apareça na
-      // sidebar mesmo quando o usuário estava em 'closed'. Sem isso, ele
-      // acharia que a captura nem foi enviada (sidebar igual + sem switch).
+      // A new conv is always 'active' — force the filter so it shows up in
+      // the sidebar even when the user was on 'closed'. Without this, they
+      // would think the capture was never sent (same sidebar + no switch).
       convFilter.set('active');
-      // Navega imediatamente — a página /c/<id> carrega a conv direto via
-      // API. Refresh assíncrono em background popula a sidebar.
+      // Navigate immediately — the /c/<id> page loads the conv directly via
+      // the API. An async background refresh populates the sidebar.
       showConvPanel(newId);
       refreshConversations();
     } catch (e) {

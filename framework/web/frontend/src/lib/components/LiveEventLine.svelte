@@ -22,8 +22,8 @@
 
   const isResult = $derived(event.kind === 'tool_result');
   const isError = $derived(isResult && event.data?.is_error === true);
-  // Tool_result sem erro e ruido quando renderizado solto — ja esta pareado
-  // com o tool_use e mostrado no painel OUT. Omite.
+  // A tool_result without an error is noise when rendered on its own — it's
+  // already paired with the tool_use and shown in the OUT panel. Omit it.
   const hide = $derived(isResult && !isError);
 
   // ---- Friendly name dispatch ----
@@ -378,9 +378,9 @@
 
   function copyOut(e: MouseEvent) {
     e.stopPropagation();
-    // Copia o raw completo (nao o truncado). Se "view full" ja foi
-    // carregado, copia o full do banco (~200KB cap); senao copia o
-    // outputRaw (capado em 5KB pelo SSE).
+    // Copies the full raw (not the truncated one). If "view full" was already
+    // loaded, copies the full output from the DB (~200KB cap); otherwise copies
+    // outputRaw (capped at 5KB by SSE).
     void copyText(
       fullOutput ?? outputRaw,
       (v) => (copiedOut = v),
@@ -399,8 +399,8 @@
 
   const resultIsError = $derived(result?.data?.is_error === true);
 
-  // Backend (claude_runner) capa output em ~5KB no payload SSE; full
-  // (ate ~200KB) fica no JSONB do banco e eh fetched on-demand.
+  // Backend (claude_runner) caps output at ~5KB in the SSE payload; the full
+  // output (up to ~200KB) lives in the DB JSONB and is fetched on demand.
   const outputBackendTruncated = $derived(
     result?.data?.output_truncated === true
   );
@@ -424,7 +424,7 @@
       if (typeof f === 'string') {
         fullOutput = prettifyJsonIfAny(f);
       } else {
-        // Fallback: backend antigo que nao tem output_full ainda — re-extrai.
+        // Fallback: older backend without output_full yet — re-extract.
         fullOutput = prettifyJsonIfAny(prettyOutput(r as unknown as LiveEvent));
       }
     } catch (e) {
@@ -434,14 +434,14 @@
     }
   }
 
-  // Texto efetivamente exibido no OUT: full quando carregado, senao inline cap.
+  // Text actually shown in OUT: full when loaded, otherwise the inline cap.
   const outputDisplay = $derived(fullOutput ?? outputBlock);
 
-  // Tools que operam num arquivo unico ganham botao "open" no header pra
-  // abrir o arquivo no FileViewer sem sair da conversa (regra: nunca
-  // redirect). O OUT panel mostra o conteudo cru que o Claude recebeu;
-  // o "open" mostra o estado atual do FS (pode divergir se houve edit
-  // posterior). Os dois coexistem.
+  // Tools that operate on a single file get an "open" button in the header to
+  // open the file in the FileViewer without leaving the conversation (rule:
+  // never redirect). The OUT panel shows the raw content Claude received;
+  // "open" shows the current FS state (may differ if there was a later
+  // edit). The two coexist.
   function extractFileOpenPath(ev: LiveEvent): string | null {
     if (ev.kind !== 'tool_use') return null;
     const tool = typeof ev.data?.tool === 'string' ? (ev.data.tool as string) : '';
@@ -461,14 +461,14 @@
   function openReadFile(e: MouseEvent) {
     e.stopPropagation();
     if (!readFilePath) return;
-    // Claude Code usa paths absolutos (`/workspace/company/...`); o file
-    // viewer backend so aceita relativos (`company/`, `repos/`, `agents/`).
-    // `normalizeFilePath` strip o prefixo /workspace/ ou /app/.
+    // Claude Code uses absolute paths (`/workspace/company/...`); the file
+    // viewer backend only accepts relative ones (`company/`, `repos/`, `agents/`).
+    // `normalizeFilePath` strips the /workspace/ or /app/ prefix.
     const path = normalizeFilePath(readFilePath);
-    // Regra: nunca redirect que tire o humano da conversa.
-    // Diretorio → nova aba pra /files (sem sair da aba atual).
-    // File viewable → FileViewer overlay inline.
-    // File nao-viewable → download via anchor (fica na aba atual).
+    // Rule: never redirect in a way that takes the human out of the conversation.
+    // Directory → new tab to /files (without leaving the current tab).
+    // Viewable file → inline FileViewer overlay.
+    // Non-viewable file → download via anchor (stays on the current tab).
     if (path.endsWith('/') || path === '') {
       const cleaned = path.replace(/\/+$/, '');
       window.open(`/files?path=${encodeURIComponent(cleaned)}`, '_blank', 'noopener');
@@ -486,8 +486,8 @@
     }
   }
 
-  // Expand/collapse dos painéis IN/OUT — max-h-[400px] default; click no
-  // botao toggle remove o cap pra ver tudo sem scrollar internamente.
+  // Expand/collapse of the IN/OUT panels — max-h-[400px] default; clicking the
+  // toggle button removes the cap to see everything without inner scrolling.
   let inputExpanded = $state(false);
   let outputExpanded = $state(false);
   function toggleInputExpanded(e: MouseEvent) {
@@ -531,9 +531,9 @@
         </span>
       {/if}
       {#if readFilePath}
-        <!-- Tools com file_path (Read/Write/Edit/MultiEdit/NotebookEdit):
-             link no header abre o arquivo no overlay FileViewer sem sair
-             da conversa. stopPropagation pra o click nao toggle o expand. -->
+        <!-- Tools with file_path (Read/Write/Edit/MultiEdit/NotebookEdit):
+             a header link opens the file in the FileViewer overlay without
+             leaving the conversation. stopPropagation so the click doesn't toggle expand. -->
         <button
           type="button"
           onclick={openReadFile}
@@ -598,7 +598,7 @@
             <span class="flex items-center gap-1">
               {resultIsError ? 'OUT · error' : 'OUT'}
               {#if outputBackendTruncated && outputFullLen}
-                <span class="rounded bg-warn/20 px-1 py-0.5 text-warn normal-case tracking-normal" title="Output truncado pelo backend ({fmtBytes(outputFullLen)} total) — clique em View full pra ver tudo">
+                <span class="rounded bg-warn/20 px-1 py-0.5 text-warn normal-case tracking-normal" title="Output truncated by the backend ({fmtBytes(outputFullLen)} total) — click View full to see everything">
                   truncated · {fmtBytes(outputFullLen)}
                 </span>
               {/if}

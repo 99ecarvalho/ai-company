@@ -1,23 +1,23 @@
-"""Broker HTTP — API de messaging (messages/events/subscriptions/users/asks/conversations).
+"""HTTP broker — messaging API (messages/events/subscriptions/users/asks/conversations).
 
-Rotas (prefixadas em /api):
-  POST   /messages                   posta mensagem num (stream, topic)
-  GET    /messages                   lista mensagens (filtros: stream, topic, since_id)
-  GET    /events                     SSE stream de mensagens novas
-  POST   /streams                    cria stream (admin)
-  GET    /streams                    lista streams
-  DELETE /streams/{name}             remove stream (admin; 409 se tem conv)
-  POST   /subscriptions              subscreve user/bot em stream (admin)
-  GET    /subscriptions              lista subs do principal atual
-  POST   /users                      cria user/bot (admin)
-  GET    /users                      lista users
-  GET    /users/me                   retorna principal atual
-  DELETE /users/{username}           remove user (admin; 409 se tem mensagem)
-  POST   /asks                       registra pending ask (usado por agente)
-  GET    /asks                       lista pending asks (do principal/admin)
-  GET    /conversations              lista conversas com metadata + last message
+Routes (prefixed with /api):
+  POST   /messages                   posts a message to a (stream, topic)
+  GET    /messages                   lists messages (filters: stream, topic, since_id)
+  GET    /events                     SSE stream of new messages
+  POST   /streams                    creates a stream (admin)
+  GET    /streams                    lists streams
+  DELETE /streams/{name}             removes a stream (admin; 409 if it has convs)
+  POST   /subscriptions              subscribes a user/bot to a stream (admin)
+  GET    /subscriptions              lists the current principal's subs
+  POST   /users                      creates a user/bot (admin)
+  GET    /users                      lists users
+  GET    /users/me                   returns the current principal
+  DELETE /users/{username}           removes a user (admin; 409 if it has messages)
+  POST   /asks                       registers a pending ask (used by agents)
+  GET    /asks                       lists pending asks (of the principal/admin)
+  GET    /conversations              lists conversations with metadata + last message
 
-Autenticacao: Bearer token via header Authorization. Ver auth.py.
+Authentication: Bearer token via the Authorization header. See auth.py.
 """
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
-# D-84: limiar de "stuck" — turno aberto sem run_end ha mais que isso e
-# considerado travado. Ler do mesmo env de main.py (par; documentado la);
-# se divergir no futuro, mover pra modulo compartilhado.
+# D-84: "stuck" threshold — a turn open without run_end for longer than this is
+# considered stuck. Read from the same env as main.py (its pair; documented there);
+# if they diverge in the future, move it to a shared module.
 RUNNER_STUCK_SEC = int(os.environ.get("RUNNER_STUCK_SEC", "600"))
 
 import aiohttp
@@ -55,19 +55,19 @@ class MessageIn(BaseModel):
     topic: str
     content: str
     client_id: str | None = None
-    # Migration 026: 'regular' (default) dispara turn no listener; 'echo'
-    # eh forward visual de reply de conv-filha (D-100), pula dispatch mas
-    # continua visivel pro humano via SSE. Validado por CHECK no banco.
+    # Migration 026: 'regular' (default) triggers a turn in the listener; 'echo'
+    # is a visual forward of a child-conv reply (D-100), skips dispatch but
+    # stays visible to the human via SSE. Validated by a CHECK in the DB.
     kind: str = "regular"
-    # D-87: quando msg cria conv nova (primeira em (stream, topic)), persiste
-    # parent_conv_id na coluna homonima. Ignorado se conv ja existe (invariante:
-    # parent nao muda depois de criada). Agente passa no ask_agent; reactor
-    # passa em complete_phase. Hierarquia vira lookup O(1) via FK, sem heuristica.
+    # D-87: when the msg creates a new conv (first in (stream, topic)), persists
+    # parent_conv_id in the column of the same name. Ignored if the conv already exists
+    # (invariant: parent doesn't change after creation). Agents pass it in ask_agent; the reactor
+    # passes it in complete_phase. Hierarchy becomes an O(1) FK lookup, no heuristics.
     parent_conv_id: int | None = None
-    # Override de sender. So tem efeito quando o caller eh service token
-    # (principal sem user_id — scheduler/reactor). Tokens de humano ignoram
-    # (impede impersonation). Username precisa existir em messaging.users.
-    # Default (None) mantem comportamento legado: service token cai em
+    # Sender override. Only takes effect when the caller is a service token
+    # (principal without user_id — scheduler/reactor). Ignored for human tokens
+    # (prevents impersonation). The username must exist in messaging.users.
+    # Default (None) keeps the legacy behavior: a service token falls back to
     # `system-bot`.
     as_username: str | None = None
 
@@ -113,8 +113,8 @@ class AskIn(BaseModel):
     question: str
     context: str | None = None
     blocking: bool = True
-    # D-111: kind distingue ask_human (push humano + badge Mine) vs
-    # ask_agent (agente target responde, silencioso pra humano).
+    # D-111: kind distinguishes ask_human (human push + Mine badge) from
+    # ask_agent (target agent answers, silent for the human).
     kind: str = "ask_human"
     target_agent: str | None = None
 
@@ -130,20 +130,20 @@ async def _get_or_create_conversation(
     topic: str,
     parent_conv_id: int | None = None,
 ) -> tuple[int, int]:
-    """Retorna (conversation_id, stream_id). Cria se nao existe.
+    """Returns (conversation_id, stream_id). Creates it if it doesn't exist.
 
-    Bloqueia re-criacao se `(stream, topic)` esta na tombstone
-    `messaging.deleted_topics` ha menos de TOMBSTONE_TTL_SEC (default 5min).
-    Motivo: quando o humano DELETA uma conv via PWA, o backend dispara
-    cancel nos runners ativos; o dispatcher posta msg de confirmacao do
-    cancel que passaria por aqui e re-criaria a conv. O tombstone corta
-    esse loop — dispatcher recebe 410 Gone, loga e descarta.
+    Blocks re-creation if `(stream, topic)` has been in the
+    `messaging.deleted_topics` tombstone for less than TOMBSTONE_TTL_SEC (default 5min).
+    Reason: when the human DELETEs a conv via the PWA, the backend fires
+    cancel on the active runners; the dispatcher posts a cancel confirmation
+    msg that would come through here and re-create the conv. The tombstone breaks
+    that loop — the dispatcher gets 410 Gone, logs and discards.
 
-    D-87: `parent_conv_id` persiste na coluna homonima quando a conv eh
-    criada agora (INSERT succeeded). Ignorado se conv ja existia (ON CONFLICT
-    DO UPDATE caminho) — invariante: parent nao muda apos criacao. Ciclo
-    e FK invalido sao validados antes; falha silenciosa (log warning) em
-    vez de exceção pra nao quebrar fluxo de msg que ja foi aceita.
+    D-87: `parent_conv_id` is persisted in the column of the same name when the conv is
+    created now (INSERT succeeded). Ignored if the conv already existed (ON CONFLICT
+    DO UPDATE path) — invariant: parent doesn't change after creation. Cycles
+    and invalid FKs are validated first; fails silently (log warning) instead
+    of raising, so as not to break the flow of a msg that was already accepted.
     """
     ts_row = await conn.fetchrow(
         """SELECT dt.deleted_at
@@ -159,11 +159,11 @@ async def _get_or_create_conversation(
             status_code=410,
             detail=f"topic {topic!r} was deleted recently; posts are blocked",
         )
-    # Validacao defensiva do parent_conv_id: precisa existir, nao criar ciclo,
-    # E (D-96) o pai precisa ele mesmo ser raiz. Profundidade maxima da arvore
-    # eh 1: raiz -> filha. Tentativa de criar neta retorna 409 — agente que
-    # virou filho via ask_agent nao deve delegar mais; deve responder ao pai
-    # que decide. Erro explicito ajuda detectar prompts/codigo errados.
+    # Defensive validation of parent_conv_id: it must exist, not create a cycle,
+    # AND (D-96) the parent must itself be a root. Max tree depth
+    # is 1: root -> child. Trying to create a grandchild returns 409 — an agent that
+    # became a child via ask_agent must not delegate further; it should reply to the parent,
+    # which decides. An explicit error helps catch wrong prompts/code.
     safe_parent: int | None = None
     if parent_conv_id is not None:
         parent_row = await conn.fetchrow(
@@ -213,13 +213,13 @@ async def _get_or_create_conversation(
 
 @router.post("/messages", response_model=MessageOut)
 async def post_message(msg: MessageIn, principal: Principal = Depends(get_principal)) -> MessageOut:
-    """Envia mensagem. Cria conversation se nao existe.
-    Auto-resolve pending_ask se mensagem vem de quem nao eh o asker.
+    """Sends a message. Creates the conversation if it doesn't exist.
+    Auto-resolves pending_ask if the message comes from someone other than the asker.
     """
     if principal.user_id is None:
-        # Service tokens (reactor/scheduler) postam como system-bot por default,
-        # ou como `as_username` se especificado (scheduler usa pra postar em
-        # nome de um humano/bot e fazer a conv aparecer pra esse user).
+        # Service tokens (reactor/scheduler) post as system-bot by default,
+        # or as `as_username` if given (the scheduler uses it to post on
+        # behalf of a human/bot and make the conv show up for that user).
         if msg.as_username:
             row = await db.fetch_one(
                 "SELECT id, username FROM messaging.users WHERE username = $1",
@@ -250,17 +250,17 @@ async def post_message(msg: MessageIn, principal: Principal = Depends(get_princi
                 conn, msg.stream, msg.topic,
                 parent_conv_id=msg.parent_conv_id,
             )
-            # D-93 (generaliza D-76/D-77): conv filha completed vira read-only
-            # pro humano. Filha = `parent_conv_id IS NOT NULL`. Completed =
-            # ultimo run do agente terminou (run_end com subtype ok), sem
-            # ask_human aberto, e ultima msg eh do bot da stream e nao eh uma
-            # pergunta. Caso classico: ask_agent reply (D-76), task-<slug>
-            # filha pos-complete_phase, notify_human terminal.
+            # D-93 (generalizes D-76/D-77): a completed child conv becomes read-only
+            # for the human. Child = `parent_conv_id IS NOT NULL`. Completed =
+            # the agent's last run finished (run_end with subtype ok), no
+            # open ask_human, and the last msg is from the stream's bot and is not a
+            # question. Classic case: ask_agent reply (D-76), task-<slug>
+            # child after complete_phase, notify_human terminal.
             #
-            # Quem ainda pode postar: o proprio `<stream>-bot` (output
-            # legitimo pos-reply, raro mas existe) e qualquer service token
-            # (reactor postando handoff de volta na conv). Bloqueio mira
-            # humano que poderia responder no lugar errado.
+            # Who can still post: the `<stream>-bot` itself (legitimate
+            # post-reply output, rare but it happens) and any service token
+            # (reactor posting a handoff back into the conv). The block targets
+            # a human who might reply in the wrong place.
             conv_meta = await conn.fetchrow(
                 """SELECT c.parent_conv_id,
                           (SELECT u.username FROM messaging.messages m
@@ -286,11 +286,11 @@ async def post_message(msg: MessageIn, principal: Principal = Depends(get_princi
                     WHERE c.id = $1""",
                 conv_id,
             )
-            # D-96: qualquer conv filha eh read-only pro humano. Antes (D-93)
-            # so filha completed era; agora generaliza — humano so responde
-            # na raiz, agente da raiz decide se delega/escala. Bots (service
-            # tokens, agentes via broker token) continuam podendo postar —
-            # bloqueio mira o humano que escolheria conv errada.
+            # D-96: any child conv is read-only for the human. Before (D-93)
+            # only a completed child was; now it's generalized — the human only replies
+            # at the root, and the root agent decides whether to delegate/escalate. Bots (service
+            # tokens, agents via broker token) can still post —
+            # the block targets a human who would pick the wrong conv.
             if (
                 conv_meta
                 and conv_meta["parent_conv_id"] is not None
@@ -314,7 +314,7 @@ async def post_message(msg: MessageIn, principal: Principal = Depends(get_princi
                     conv_id, sender_id, msg.content, msg.client_id, msg.kind,
                 )
             except asyncpg.UniqueViolationError:
-                # idempotency: client_id ja existe -> devolve a msg existente
+                # idempotency: client_id already exists -> return the existing msg
                 m_row = await conn.fetchrow(
                     """
                     SELECT id, sent_at FROM messaging.messages
@@ -322,10 +322,10 @@ async def post_message(msg: MessageIn, principal: Principal = Depends(get_princi
                     """,
                     conv_id, msg.client_id,
                 )
-            # auto-resolve pending_ask (se existe e sender != asker).
-            # Migration 026: kind='echo' eh forward visual, nao eh resposta —
-            # pular auto-resolve pra nao fechar ask_human aberto na conv pai
-            # com base num eco que veio de outra conv.
+            # auto-resolve pending_ask (if it exists and sender != asker).
+            # Migration 026: kind='echo' is a visual forward, not an answer —
+            # skip auto-resolve so we don't close an open ask_human in the parent conv
+            # based on an echo that came from another conv.
             if msg.kind == "regular":
                 await conn.execute(
                     """
@@ -359,7 +359,7 @@ async def list_messages(
     limit: int = Query(default=100, le=500),
     principal: Principal = Depends(get_principal),
 ):
-    """Lista mensagens, mais recentes por ultimo. Filtros acumulativos."""
+    """Lists messages, most recent last. Filters are cumulative."""
     where = ["m.id > $1"]
     params: list[Any] = [since_id]
     if conversation_id is not None:
@@ -402,32 +402,32 @@ async def events_sse(
     streams: str | None = Query(default=None, description="comma-separated stream names; omit = all"),
     principal: Principal = Depends(get_principal),
 ):
-    """SSE stream: emite cada mensagem nova como `data: {...}\\n\\n`.
-    Clients devem reconectar em caso de queda (browser EventSource faz auto).
+    """SSE stream: emits each new message as `data: {...}\\n\\n`.
+    Clients must reconnect if it drops (browser EventSource does it automatically).
     """
     filter_names = [s.strip() for s in streams.split(",")] if streams else None
 
     async def event_gen() -> AsyncIterator[str]:
         import os
-        # Conexao dedicada fora do pool pro LISTEN (LISTEN mantem conn idle).
+        # Dedicated connection outside the pool for LISTEN (LISTEN keeps the conn idle).
         conn = await asyncpg.connect(os.environ["DATABASE_URL"])
-        # Tuple (channel, payload) pra discriminar origem.
+        # Tuple (channel, payload) to tell the source apart.
         queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
         def _cb(_conn, _pid, channel, payload):
             queue.put_nowait((channel, payload))
         try:
-            # msg_all: evento principal (nova msg) — enrich via SELECT.
-            # ask_new: pending_ask INSERT — corrige race D-77 (msg commita
-            # antes do pending_ask; sem esse listen o frontend re-fetcha
-            # /api/conversations antes do has_pending_ask virar true).
-            # conv_activity: run_start/run_end em telemetry — corrige stale
-            # is_queued D-81 (pool libera, runner spawna, mas sidebar
-            # continuava mostrando QUEUED ate proxima msg).
+            # msg_all: main event (new msg) — enriched via SELECT.
+            # ask_new: pending_ask INSERT — fixes race D-77 (the msg commits
+            # before the pending_ask; without this listen the frontend re-fetches
+            # /api/conversations before has_pending_ask turns true).
+            # conv_activity: run_start/run_end in telemetry — fixes stale
+            # is_queued D-81 (pool frees up, runner spawns, but the sidebar
+            # kept showing QUEUED until the next msg).
             await conn.add_listener("msg_all", _cb)
             await conn.add_listener("ask_new", _cb)
             await conn.add_listener("conv_activity", _cb)
-            # Heartbeat para manter a conexao viva
+            # Heartbeat to keep the connection alive
             while True:
                 if await request.is_disconnected():
                     break
@@ -435,20 +435,20 @@ async def events_sse(
                     channel, payload = await asyncio.wait_for(queue.get(), timeout=15)
                     data = json.loads(payload)
                     if channel == "ask_new":
-                        # Slim; frontend so precisa do trigger pra re-fetch.
-                        # Nao passa por filter_names (ask e global).
+                        # Slim; the frontend only needs the trigger to re-fetch.
+                        # Doesn't go through filter_names (asks are global).
                         yield f"data: {json.dumps(data)}\n\n"
                         continue
                     if channel == "conv_activity":
-                        # Frontend so precisa saber que mudou algo na conv
-                        # (run_start/run_end) pra re-fetchar /api/conversations.
-                        # payload ja tem conversation_id + kind + ts.
+                        # The frontend only needs to know something changed in the conv
+                        # (run_start/run_end) to re-fetch /api/conversations.
+                        # payload already has conversation_id + kind + ts.
                         data["_channel"] = "conv_activity"
                         yield f"data: {json.dumps(data)}\n\n"
                         continue
-                    # channel == "msg_all": payload do pg_notify eh slim
-                    # (id + conversation_id + sender_id) — limite de 8000
-                    # bytes impede inlinear content. Busca o resto por id.
+                    # channel == "msg_all": the pg_notify payload is slim
+                    # (id + conversation_id + sender_id) — the 8000-byte
+                    # limit prevents inlining content. Fetch the rest by id.
                     row = await db.fetch_one(
                         """SELECT s.name AS stream, c.topic_name AS topic,
                                   u.username AS sender_username,
@@ -485,8 +485,8 @@ async def events_sse(
 
 @router.post("/streams")
 async def create_stream(data: StreamIn, _: Principal = Depends(require_admin)):
-    # is_active = true no UPSERT — se stream foi soft-deleted antes
-    # (agente saiu do agents.yaml e voltou), reativa ao recriar.
+    # is_active = true in the UPSERT — if the stream was soft-deleted before
+    # (agent left agents.yaml and came back), re-creating it reactivates it.
     row = await db.fetch_one(
         """INSERT INTO messaging.streams (name, description, is_active)
            VALUES ($1, $2, true)
@@ -503,8 +503,8 @@ async def create_stream(data: StreamIn, _: Principal = Depends(require_admin)):
 @router.get("/streams")
 async def list_streams(principal: Principal = Depends(get_principal)):
     from . import app_settings as _s
-    # Inclui is_active pra UI poder esconder inativas. Por default lista
-    # ativas+inativas (preservar acesso ao historico); UI filtra.
+    # Includes is_active so the UI can hide inactive ones. By default lists
+    # active+inactive (keeps access to history); the UI filters.
     rows = await db.fetch_all(
         "SELECT id, name, description, is_active FROM messaging.streams ORDER BY name"
     )
@@ -518,12 +518,12 @@ async def list_streams(principal: Principal = Depends(get_principal)):
 async def set_stream_active(
     name: str, payload: dict, _: Principal = Depends(require_admin),
 ):
-    """Soft-delete/reativacao. Body: {"is_active": bool}.
+    """Soft-delete/reactivation. Body: {"is_active": bool}.
 
-    Soft-delete preserva historico mas remove a stream de listagens da UI
-    e do '## Equipe' do system prompt. Usado pelo reconcile quando agente
-    sai do agents.yaml — alternativa segura ao hard-delete que falha com
-    409 se houver convs.
+    Soft-delete keeps history but removes the stream from UI listings
+    and from the system prompt's team section. Used by reconcile when an agent
+    leaves agents.yaml — a safe alternative to the hard delete, which fails with
+    409 if there are convs.
     """
     if "is_active" not in payload or not isinstance(payload["is_active"], bool):
         raise HTTPException(status_code=400, detail="body requires {'is_active': bool}")
@@ -539,10 +539,10 @@ async def set_stream_active(
 
 @router.delete("/streams/{name}")
 async def delete_stream(name: str, _: Principal = Depends(require_admin)):
-    """Remove stream do broker. Falha 409 se houver conversations (preservar
-    historico). Subscriptions sem conversations caem via CASCADE.
+    """Removes a stream from the broker. Fails with 409 if there are conversations (keeps
+    history). Subscriptions without conversations go via CASCADE.
 
-    Usado por reconcile pra prune de streams que sairam do agents.yaml.
+    Used by reconcile to prune streams that left agents.yaml.
     """
     row = await db.fetch_one("SELECT id FROM messaging.streams WHERE name = $1", name)
     if row is None:
@@ -574,7 +574,7 @@ async def create_subscription(data: SubscriptionIn, _: Principal = Depends(requi
         data.user_id, data.stream,
     )
     if row is None:
-        # pode ter falhado por stream inexistente ou ja subscrito
+        # may have failed because the stream doesn't exist or is already subscribed
         exists = await db.fetch_one("SELECT 1 FROM messaging.streams WHERE name = $1", data.stream)
         if exists is None:
             raise HTTPException(status_code=404, detail=f"stream {data.stream!r} does not exist")
@@ -596,10 +596,10 @@ async def list_subscriptions(principal: Principal = Depends(get_principal)):
     return [dict(id=r["id"], name=r["name"], description=r["description"]) for r in rows]
 
 
-# ---------- Cursor persistido (catch-up de unread — D-52) ----------
-# pg_notify eh fire-and-forget; sem cursor, msgs que chegam enquanto o bot
-# esta down viram fantasmas. InternalClient.start() busca cursor antes do
-# LISTEN; ao processar msg, avisa o broker pra avancar cursor.
+# ---------- Persisted cursor (unread catch-up — D-52) ----------
+# pg_notify is fire-and-forget; without a cursor, msgs that arrive while the bot
+# is down become ghosts. InternalClient.start() fetches the cursor before
+# LISTEN; after processing a msg, it tells the broker to advance the cursor.
 
 @router.get("/subscriptions/cursor")
 async def get_subscription_cursor(stream: str, principal: Principal = Depends(get_principal)):
@@ -619,8 +619,8 @@ async def get_subscription_cursor(stream: str, principal: Principal = Depends(ge
 
 @router.post("/subscriptions/cursor")
 async def set_subscription_cursor(data: CursorIn, principal: Principal = Depends(get_principal)):
-    """Avanca cursor monotonicamente — UPDATE so se o novo id for maior que
-    o atual (evita regressao por race entre catch-up e LISTEN quase simultaneo).
+    """Advances the cursor monotonically — UPDATE only if the new id is greater than
+    the current one (avoids regression from a race between catch-up and a near-simultaneous LISTEN).
     """
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="missing user_id")
@@ -648,8 +648,8 @@ async def create_user(data: UserIn, _: Principal = Depends(require_admin)):
     api_token = None
     if data.kind == "bot":
         api_token = secrets.token_hex(32)
-    # is_active = true no UPSERT — reativa user soft-deletado (agente que
-    # saiu e voltou ao agents.yaml).
+    # is_active = true in the UPSERT — reactivates a soft-deleted user (agent that
+    # left and came back to agents.yaml).
     row = await db.fetch_one(
         """INSERT INTO messaging.users (email, username, full_name, kind, agent_name, api_token, is_admin, is_active)
            VALUES ($1, $2, $3, $4, $5, $6, $7, true)
@@ -658,7 +658,7 @@ async def create_user(data: UserIn, _: Principal = Depends(require_admin)):
               kind = EXCLUDED.kind, agent_name = EXCLUDED.agent_name,
               is_admin = EXCLUDED.is_admin,
               is_active = true,
-              -- preserva api_token existente se nao rotacionou
+              -- keep the existing api_token unless it was rotated
               api_token = COALESCE(messaging.users.api_token, EXCLUDED.api_token)
            RETURNING id, email, username, full_name, kind, agent_name, api_token, is_admin, is_active""",
         data.email, data.username, data.full_name, data.kind, data.agent_name, api_token, data.is_admin,
@@ -683,11 +683,11 @@ async def list_users(_: Principal = Depends(require_admin)):
 async def set_user_active(
     username: str, payload: dict, _: Principal = Depends(require_admin),
 ):
-    """Soft-delete/reativacao de user. Body: {"is_active": bool}.
+    """User soft-delete/reactivation. Body: {"is_active": bool}.
 
-    Usado pelo reconcile pra desativar bots de agentes que sairam do
-    agents.yaml. Preserva historico (messages.sender_id), mas remove o
-    user de listings da UI e do '## Equipe' do system prompt dos peers.
+    Used by reconcile to deactivate bots of agents that left
+    agents.yaml. Keeps history (messages.sender_id), but removes the
+    user from UI listings and from the peers' system prompt team section.
     """
     if "is_active" not in payload or not isinstance(payload["is_active"], bool):
         raise HTTPException(status_code=400, detail="body requires {'is_active': bool}")
@@ -708,11 +708,11 @@ async def whoami(principal: Principal = Depends(get_principal)):
 
 @router.delete("/users/{username}")
 async def delete_user(username: str, _: Principal = Depends(require_admin)):
-    """Remove user do broker. Falha 409 se user ja enviou mensagens (preservar
-    historico — messages.sender_id tem FK sem CASCADE). Subscriptions caem via
+    """Removes a user from the broker. Fails with 409 if the user has sent messages (keeps
+    history — messages.sender_id has an FK without CASCADE). Subscriptions go via
     CASCADE.
 
-    Usado por reconcile pra prune de bots que sairam do agents.yaml.
+    Used by reconcile to prune bots that left agents.yaml.
     """
     row = await db.fetch_one("SELECT id, kind FROM messaging.users WHERE username = $1", username)
     if row is None:
@@ -733,15 +733,15 @@ async def delete_user(username: str, _: Principal = Depends(require_admin)):
 
 @router.post("/asks")
 async def create_ask(data: AskIn, principal: Principal = Depends(get_principal)):
-    """Registra pending_ask. Chamado pelo agente dentro de ask_human/ask_agent.
-    A conversation precisa existir (post_message deveria ter sido chamado antes
-    com a pergunta em si pra historico); se nao, cria.
+    """Registers a pending_ask. Called by the agent inside ask_human/ask_agent.
+    The conversation should exist (post_message should have been called first
+    with the question itself, for history); if not, it is created.
 
-    D-111: `kind` distingue 'ask_human' (default — humano deve responder, push
-    + Mine badge) de 'ask_agent' (target_agent deve responder, silencioso).
-    Se ja existe pending_ask resolvido pra mesma conv (idempotencia em
-    restart-recovery), retorna o estado atual com `resolved=true` e
-    `answer_message_id` — caller usa pra detectar que ask ja foi respondido.
+    D-111: `kind` distinguishes 'ask_human' (default — the human must answer, push
+    + Mine badge) from 'ask_agent' (target_agent must answer, silent).
+    If a resolved pending_ask already exists for the same conv (idempotency on
+    restart-recovery), returns the current state with `resolved=true` and
+    `answer_message_id` — the caller uses it to detect the ask was already answered.
     """
     if principal.user_id is None:
         raise HTTPException(status_code=400, detail="pending_ask requires valid user_id (service tokens cannot ask)")
@@ -750,10 +750,10 @@ async def create_ask(data: AskIn, principal: Principal = Depends(get_principal))
     async with db.connection() as conn:
         async with conn.transaction():
             conv_id, _ = await _get_or_create_conversation(conn, data.stream, data.topic)
-            # Detecta idempotencia: se ja existe pending_ask pra essa conv
-            # e ja foi resolvido (target respondeu), retorna o estado atual
-            # sem sobrescrever — caller (ask_agent_via_callback apos restart)
-            # le `resolved=true` e busca a resposta direto.
+            # Idempotency check: if a pending_ask already exists for this conv
+            # and was already resolved (target answered), return the current state
+            # without overwriting — the caller (ask_agent_via_callback after a restart)
+            # reads `resolved=true` and fetches the answer directly.
             existing = await conn.fetchrow(
                 """SELECT conversation_id, asked_at, resolved_at, answer_message_id, kind
                      FROM messaging.pending_asks
@@ -791,9 +791,9 @@ async def create_ask(data: AskIn, principal: Principal = Depends(get_principal))
 
 @router.get("/asks")
 async def list_asks(principal: Principal = Depends(get_principal)):
-    """Lista pending_asks direcionados ao humano (kind='ask_human').
-    ask_agent (cross-agent) eh deliberadamente excluido — eh trafego
-    silencioso pro humano (target agente responde, nao humano).
+    """Lists pending_asks directed at the human (kind='ask_human').
+    ask_agent (cross-agent) is deliberately excluded — it's traffic that is
+    silent for the human (the target agent answers, not the human).
     """
     if principal.is_admin:
         rows = await db.fetch_all(
@@ -820,33 +820,33 @@ async def list_asks(principal: Principal = Depends(get_principal)):
     ]
 
 
-# ---------- Conversations (helpers internos — aliases public no main.py) ----------
+# ---------- Conversations (internal helpers — public aliases in main.py) ----------
 #
-# Lista unica de threads, filtrada por `archived_at` na conversation (aditivo em
-# migration 008). Active = IS NULL; Closed = IS NOT NULL. Filtro manual,
-# controlado sempre pelo humano. Task metadata (workflow, current_step,
-# current_agent, status) vem junto via LEFT JOIN em `tasks.tasks` por origin_stream/
-# origin_topic — quando a conversa e origem de uma task, o frontend renderiza
-# progress bar no header; senao e chat livre.
+# Single list of threads, filtered by `archived_at` on the conversation (added in
+# migration 008). Active = IS NULL; Closed = IS NOT NULL. Manual filter,
+# always controlled by the human. Task metadata (workflow, current_step,
+# current_agent, status) comes along via LEFT JOIN on `tasks.tasks` by origin_stream/
+# origin_topic — when the conversation is a task's origin, the frontend renders a
+# progress bar in the header; otherwise it's free chat.
 
 async def list_unified_conversations(
     principal: Principal,
     filter_: str = "active",
 ) -> list[dict]:
-    """Lista conversations onde o humano esta envolvido, com task metadata opcional.
-    filter_: 'active' (archived_at IS NULL) ou 'closed' (IS NOT NULL).
+    """Lists conversations the human is involved in, with optional task metadata.
+    filter_: 'active' (archived_at IS NULL) or 'closed' (IS NOT NULL).
 
-    Inclui:
-      - conversations onde o humano ja postou (participating=true), OU
-      - conversations com pending_ask nao resolvido (algum agente pediu
-        atencao do humano — aparece mesmo se o humano ainda nao postou), OU
-      - conversations `__ask-from-*` (sub-conversas ask_agent) — puxadas pra
-        poder aninhar na sidebar sob a conv pai (vide _compute_hierarchy).
+    Includes:
+      - conversations where the human has posted (participating=true), OR
+      - conversations with an unresolved pending_ask (some agent asked for the
+        human's attention — shows up even if the human hasn't posted yet), OR
+      - `__ask-from-*` conversations (ask_agent sub-conversations) — pulled in so
+        they can be nested in the sidebar under the parent conv (see _compute_hierarchy).
 
-    Cada item sai com `parent_conv_id` (None se eh root) + `children_stats`
-    agregado recursivamente (active, awaiting_human, resolved,
-    deepest_pending_path). Convs `__ask-from-*` que nao tem pai inferivel
-    ficam como root (comportamento legado: so aparecem se tiverem pending_ask).
+    Each item comes with `parent_conv_id` (None if root) + `children_stats`
+    aggregated recursively (active, awaiting_human, resolved,
+    deepest_pending_path). `__ask-from-*` convs with no inferable parent
+    stay as root (legacy behavior: they only show up if they have a pending_ask).
     """
     if filter_ not in ("active", "closed"):
         raise HTTPException(status_code=400, detail="filter must be 'active' or 'closed'")
@@ -867,19 +867,19 @@ async def list_unified_conversations(
                          AND pa.kind = 'ask_human') AS awaiting_human,
                EXISTS(SELECT 1 FROM messaging.messages m2
                        WHERE m2.conversation_id = c.id AND m2.sender_id = $1) AS participating,
-               -- D-84: modelo unificado de estado. Migration 030 introduziu
-               -- messaging.runs como single source of truth — 1 row por
-               -- execucao do CLI, atualizada transacionalmente pelo broker
-               -- quando ingere live_events. Substituiu 3 subqueries em
-               -- telemetry.live_events por um LATERAL com 1 lookup.
+               -- D-84: unified state model. Migration 030 introduced
+               -- messaging.runs as the single source of truth — 1 row per
+               -- CLI execution, updated transactionally by the broker
+               -- when it ingests live_events. Replaced 3 subqueries on
+               -- telemetry.live_events with one LATERAL with 1 lookup.
                r.status            AS run_status,
                r.last_heartbeat_at AS run_last_heartbeat_at,
                r.exit_reason       AS run_exit_reason,
-               -- Task metadata: primeiro tenta match pela origem (conv que
-               -- criou a task via primeiro complete_phase); senao tenta match
-               -- por topic = 'task-<slug>' (convs intermediárias em streams
-               -- de agentes que processaram alguma fase). COALESCE pra ter
-               -- 1 task so, prioridade pra origem quando ambos batem.
+               -- Task metadata: first tries to match by origin (the conv that
+               -- created the task via the first complete_phase); otherwise matches
+               -- by topic = 'task-<slug>' (intermediate convs in the streams
+               -- of agents that processed some phase). COALESCE to get
+               -- a single task, origin takes priority when both match.
                COALESCE(t.slug,          t_topic.slug)          AS task_slug,
                COALESCE(t.title,         t_topic.title)         AS task_title,
                COALESCE(t.workflow,      t_topic.workflow)      AS task_workflow,
@@ -887,17 +887,17 @@ async def list_unified_conversations(
                COALESCE(t.current_step,  t_topic.current_step)  AS task_current_step,
                COALESCE(t.current_agent, t_topic.current_agent) AS task_current_agent,
                COALESCE(t.complexity,    t_topic.complexity)    AS task_complexity,
-               -- true quando esta conv eh a ORIGEM da task (match via
-               -- origin_stream/origin_topic). Usado em _compute_hierarchy
-               -- pra escolher o pai de convs irmas task-<slug> de forma
-               -- deterministica — sem isso, a ordem DESC por last_message_at
-               -- pode fazer uma conv filha sobrescrever a origem.
+               -- true when this conv is the task's ORIGIN (match via
+               -- origin_stream/origin_topic). Used in _compute_hierarchy
+               -- to pick the parent of sibling task-<slug> convs
+               -- deterministically — without it, the DESC order by last_message_at
+               -- can make a child conv override the origin.
                (t.slug IS NOT NULL)                              AS is_task_origin,
-               -- Quando a task task_current_agent != this.stream, esta conv
-               -- (filha intermediaria task-<slug> em stream diferente do
-               -- agente atual da fase) ja concluiu sua parte — o frontend
-               -- usa isso pra considerar a filha como resolved e nao
-               -- contar em children_stats.active (evita "RUNNING" fantasma).
+               -- When the task's task_current_agent != this.stream, this conv
+               -- (intermediate task-<slug> child in a stream other than the
+               -- phase's current agent) has finished its part — the frontend
+               -- uses this to treat the child as resolved and not
+               -- count it in children_stats.active (avoids a ghost "RUNNING").
                CASE
                  WHEN COALESCE(t.current_agent, t_topic.current_agent) IS NOT NULL
                   AND COALESCE(t.current_agent, t_topic.current_agent) != s.name
@@ -926,19 +926,19 @@ async def list_unified_conversations(
                     WHERE m3.conversation_id = c.id AND m3.sender_id = $1
                  )
               OR EXISTS (
-                   -- D-111: ask_agent (kind='ask_agent') nao puxa conv pra
-                   -- lista do humano — eh agente-pra-agente, silencioso.
+                   -- D-111: ask_agent (kind='ask_agent') doesn't pull the conv into
+                   -- the human's list — it's agent-to-agent, silent.
                    SELECT 1 FROM messaging.pending_asks pa2
                     WHERE pa2.conversation_id = c.id AND pa2.resolved_at IS NULL
                       AND pa2.kind = 'ask_human'
                  )
               OR c.topic_name LIKE '\\_\\_ask-from-%' ESCAPE '\\'
               OR c.topic_name LIKE '\\_\\_child-%' ESCAPE '\\'
-              -- Convs de handoff entre agentes (topic = 'task-<slug>'
-              -- em streams secundarias) precisam entrar aqui pra servirem
-              -- de "elo do meio" na arvore — caso contrario filhos ask_agent
-              -- do target apontam pra um parent_conv_id que nao esta em
-              -- byId e viram root na sidebar. Ver D-77 followup.
+              -- Handoff convs between agents (topic = 'task-<slug>'
+              -- in secondary streams) must be included here to serve
+              -- as the "middle link" in the tree — otherwise the target's ask_agent
+              -- children point to a parent_conv_id that isn't in
+              -- byId and become roots in the sidebar. See D-77 followup.
               OR EXISTS (
                    SELECT 1 FROM tasks.tasks t2
                     WHERE c.topic_name = 'task-' || t2.slug
@@ -952,20 +952,20 @@ async def list_unified_conversations(
     )
     out = []
     for r in rows:
-        # D-96 cleanup: `ask_replied` (D-76) e `is_completed_child` (D-93)
-        # foram removidos. Toda filha (parent_conv_id != null) eh read-only
-        # pro humano. Frontend deriva read-only direto de parent_conv_id.
-        # _compute_hierarchy usa is_running/is_stuck/awaiting_human pra
-        # decidir bucket active/resolved.
+        # D-96 cleanup: `ask_replied` (D-76) and `is_completed_child` (D-93)
+        # were removed. Every child (parent_conv_id != null) is read-only
+        # for the human. The frontend derives read-only directly from parent_conv_id.
+        # _compute_hierarchy uses is_running/is_stuck/awaiting_human to
+        # pick the active/resolved bucket.
 
-        # D-84: modelo unificado de estado — 4 sinais flat, mutuamente
-        # exclusivos por construcao via precedencia:
+        # D-84: unified state model — 4 flat signals, mutually
+        # exclusive by construction via precedence:
         #   awaiting_human > is_stuck > is_running > is_errored > idle
-        # Fonte (migration 030): messaging.runs.status. Reaper transiciona
-        # running -> stale quando heartbeat fica obsoleto, entao stuck
-        # vira automatico quando elapsed > RUNNER_STUCK_SEC mesmo antes
-        # do reaper rodar (cobre janela entre heartbeat antigo e proxima
-        # passada do scheduler).
+        # Source (migration 030): messaging.runs.status. The reaper moves
+        # running -> stale when the heartbeat goes stale, so stuck
+        # kicks in automatically when elapsed > RUNNER_STUCK_SEC even before
+        # the reaper runs (covers the window between an old heartbeat and the next
+        # scheduler pass).
         awaiting_human = bool(r["awaiting_human"])
         run_status = r["run_status"]
         heartbeat_at = r["run_last_heartbeat_at"]
@@ -1010,25 +1010,25 @@ async def list_unified_conversations(
                 current_agent=r["task_current_agent"],
                 complexity=r["task_complexity"],
             )
-        # D-79: sinal de "filha intermediaria ja concluida" — usado pelo
-        # isResolvedSelf do store pra nao contar convs `task-<slug>` de
-        # fases antigas como children_active do pai (o agente atual esta
-        # em outro stream, esta filha nao vai rodar mais nessa task).
+        # D-79: "intermediate child already finished" signal — used by the
+        # store's isResolvedSelf so `task-<slug>` convs from
+        # old phases don't count as the parent's children_active (the current agent is
+        # in another stream, this child won't run again for this task).
         item["task_not_current_agent"] = bool(r["task_not_current_agent"])
-        # D-87: parent_conv_id persistido no schema — pre-preenche item.
-        # `_compute_hierarchy` usa diretamente se presente; heuristica antiga
-        # vira fallback so pra convs legacy (pre-migration) com NULL.
+        # D-87: parent_conv_id persisted in the schema — pre-fills the item.
+        # `_compute_hierarchy` uses it directly if present; the old heuristic
+        # is only a fallback for legacy (pre-migration) convs with NULL.
         item["_persisted_parent_conv_id"] = r["persisted_parent_conv_id"]
-        # Usado em _compute_hierarchy pra ancorar o pai certo quando varias
-        # convs compartilham topic = 'task-<slug>'. So uma delas eh a origem
-        # real (JOIN via origin_stream/origin_topic no SQL acima).
+        # Used in _compute_hierarchy to anchor the right parent when several
+        # convs share topic = 'task-<slug>'. Only one of them is the real
+        # origin (JOIN via origin_stream/origin_topic in the SQL above).
         item["_is_task_origin"] = bool(r["is_task_origin"])
         out.append(item)
 
-    # Calcula pai-filha + stats agregados. Sem schema novo: deduzido de
-    # topic patterns + telemetry.live_events + tasks.tasks. Ver helper.
+    # Computes parent-child + aggregated stats. No new schema: derived from
+    # topic patterns + telemetry.live_events + tasks.tasks. See helper.
     await _compute_hierarchy(out)
-    # Campos internos consumidos so por _compute_hierarchy — nao vazam pro JSON.
+    # Internal fields used only by _compute_hierarchy — they don't leak into the JSON.
     for it in out:
         it.pop("_is_task_origin", None)
         it.pop("_persisted_parent_conv_id", None)
@@ -1036,43 +1036,43 @@ async def list_unified_conversations(
 
 
 async def _compute_hierarchy(items: list[dict]) -> None:
-    """Anota cada item com `parent_conv_id` e `children_stats`.
+    """Annotates each item with `parent_conv_id` and `children_stats`.
 
-    D-96 cleanup: heuristica antiga (Fase 1 ask_agent tool_use parsing,
-    Fase 2 task.slug siblings inference, deteccao de ciclos) removida —
-    fonte unica eh `messaging.conversations.parent_conv_id` persistido
-    via SQL (D-87 + reactor handoffs). Convs legacy pre-D-87 sem o
-    campo viram root visualmente — aceitavel.
+    D-96 cleanup: the old heuristic (Phase 1 ask_agent tool_use parsing,
+    Phase 2 task.slug siblings inference, cycle detection) was removed —
+    the single source is `messaging.conversations.parent_conv_id`, persisted
+    via SQL (D-87 + reactor handoffs). Legacy pre-D-87 convs without the
+    field show up as roots — acceptable.
 
-    Profundidade maxima eh 1 por construcao (D-96 broker rejeita 409
-    em depth violation), entao o agregado eh trivial: 1 nivel de filhos
-    por raiz, sem recursao.
+    Max depth is 1 by construction (D-96: the broker rejects with 409
+    on a depth violation), so the aggregate is trivial: 1 level of children
+    per root, no recursion.
 
     children_stats:
-      - active: filhas ativas (running/stuck/awaiting_human, ou
-        task nao-terminal sem completed_child)
-      - stuck: filhas com is_stuck
-      - resolved: filhas que ja terminaram seu turno
+      - active: active children (running/stuck/awaiting_human, or
+        a non-terminal task without completed_child)
+      - stuck: children with is_stuck
+      - resolved: children that have finished their turn
     """
     if not items:
         return
     by_id: dict[int, dict] = {it["id"]: it for it in items}
 
-    # Anota parent_conv_id direto do schema. Convs cujo pai nao esta nos
-    # items carregados ficam orfas (parent_conv_id None na resposta) —
-    # listagem nao mostra hierarquia entre raizes ja arquivadas.
+    # Annotate parent_conv_id straight from the schema. Convs whose parent isn't among
+    # the loaded items are orphaned (parent_conv_id None in the response) —
+    # the listing doesn't show hierarchy across already-archived roots.
     for it in items:
         pid = it.get("_persisted_parent_conv_id")
         it["parent_conv_id"] = pid if (pid is not None and pid != it["id"] and pid in by_id) else None
         it["children_stats"] = {"active": 0, "stuck": 0, "resolved": 0}
 
     def _is_resolved(it: dict) -> bool:
-        # Resolvida = filha que ja terminou seu turno e nao esta fazendo
-        # nada agora. Criterios:
-        #   - awaiting_human / is_running / is_stuck → ainda ativa
-        #   - task em status terminal (done/halt/human_review) → resolvida
-        #   - task_not_current_agent (D-79) → fase concluida, resolvida
-        #   - filha (parent_conv_id != null) ociosa → resolvida
+        # Resolved = a child that has finished its turn and isn't doing
+        # anything now. Criteria:
+        #   - awaiting_human / is_running / is_stuck → still active
+        #   - task in a terminal status (done/halt/human_review) → resolved
+        #   - task_not_current_agent (D-79) → phase finished, resolved
+        #   - idle child (parent_conv_id != null) → resolved
         if it.get("awaiting_human"): return False
         if it.get("is_running"): return False
         if it.get("is_stuck"): return False
@@ -1085,7 +1085,7 @@ async def _compute_hierarchy(items: list[dict]) -> None:
             return True
         return False
 
-    # Agregado de 1 nivel: pra cada filha, contribui no children_stats do pai.
+    # 1-level aggregate: each child contributes to its parent's children_stats.
     for child in items:
         pid = child["parent_conv_id"]
         if pid is None:
@@ -1103,11 +1103,11 @@ async def _compute_hierarchy(items: list[dict]) -> None:
 
 
 async def delete_conversation(conv_id: int, principal: Principal = Depends(get_principal)):
-    """Delete permanente. Cascade cuida de messages/attachments/pending_asks/
-    closed_conversations/read_cursors (ver 001_init.sql FKs ON DELETE CASCADE).
+    """Permanent delete. Cascade takes care of messages/attachments/pending_asks/
+    closed_conversations/read_cursors (see 001_init.sql FKs ON DELETE CASCADE).
 
-    Sem gate admin: hoje todo usuario logado eh admin de fato. Registrado em
-    QUESTIONS como melhoria futura (flag/coluna admin)."""
+    No admin gate: today every logged-in user is effectively an admin. Logged in
+    QUESTIONS as a future improvement (admin flag/column)."""
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="not authenticated")
     result = await db.execute(
@@ -1120,9 +1120,9 @@ async def delete_conversation(conv_id: int, principal: Principal = Depends(get_p
 async def close_conversation(conv_id: int, principal: Principal = Depends(get_principal)):
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="not authenticated")
-    # DO UPDATE pra renovar `closed_at` em closes repetidos. Combinado com a
-    # regra de `closed_at >= last_message_at` (D-28), garante que fechar uma
-    # conv previamente fechada + reaberta por msg nova volta a escondela.
+    # DO UPDATE to refresh `closed_at` on repeated closes. Combined with the
+    # `closed_at >= last_message_at` rule (D-28), ensures that closing a
+    # conv that was closed before + reopened by a new msg hides it again.
     await db.execute(
         """INSERT INTO web.closed_conversations (conversation_id, user_id, closed_at)
            VALUES ($1, $2, now())
@@ -1144,18 +1144,18 @@ async def reopen_conversation(conv_id: int, principal: Principal = Depends(get_p
 
 
 async def close_all_conversations(principal: Principal = Depends(get_principal)):
-    """Marca como fechadas TODAS as conversas visiveis do usuario exceto as com ask pendente."""
+    """Marks ALL of the user's visible conversations as closed, except those with a pending ask."""
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="not authenticated")
-    # DO UPDATE renova `closed_at` (ver close_conversation) pra respeitar
-    # regra `closed_at >= last_message_at`.
+    # DO UPDATE refreshes `closed_at` (see close_conversation) to honor the
+    # `closed_at >= last_message_at` rule.
     result = await db.execute(
         """
         INSERT INTO web.closed_conversations (conversation_id, user_id, closed_at)
         SELECT c.id, $1, now() FROM messaging.conversations c
          WHERE NOT EXISTS (
-                 -- D-111: humano so eh bloqueado de fechar por ask_human.
-                 -- ask_agent nao impede close (cross-agent, silencioso).
+                 -- D-111: the human is only blocked from closing by ask_human.
+                 -- ask_agent doesn't prevent close (cross-agent, silent).
                  SELECT 1 FROM messaging.pending_asks pa
                   WHERE pa.conversation_id = c.id AND pa.resolved_at IS NULL
                     AND pa.kind = 'ask_human'
@@ -1170,17 +1170,17 @@ async def close_all_conversations(principal: Principal = Depends(get_principal))
 
 # ---------- Scheduler proxy (PWA <-> scheduler container) ----------
 #
-# O scheduler expoe sua propria mini-API HTTP (orchestrator/scheduler_http.py)
-# na rede compose, sem auth — porta nao publicada no host. Aqui no broker
-# proxiamos com auth pra UI consumir. Read-only via session normal; acoes
-# (run/pause/resume) exigem admin.
+# The scheduler exposes its own mini HTTP API (orchestrator/scheduler_http.py)
+# on the compose network, without auth — the port isn't published on the host. Here in the broker
+# we proxy it with auth for the UI. Read-only via a normal session; actions
+# (run/pause/resume) require admin.
 
 SCHEDULER_URL = os.environ.get("SCHEDULER_URL", "http://scheduler:8811").rstrip("/")
 
 
 async def _scheduler_request(method: str, path: str, *, timeout: float = 10.0) -> tuple[int, Any]:
-    """Faz request ao scheduler e devolve (status, parsed_body). body pode ser
-    dict, list ou None (204)."""
+    """Makes a request to the scheduler and returns (status, parsed_body). body may be
+    dict, list or None (204)."""
     url = f"{SCHEDULER_URL}{path}"
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as sess:
@@ -1199,7 +1199,7 @@ async def _scheduler_request(method: str, path: str, *, timeout: float = 10.0) -
 
 @router.get("/scheduler/health")
 async def scheduler_health(_: Principal = Depends(get_principal)):
-    """Estado agregado do scheduler (uptime, contadores). Proxy de :8811/health."""
+    """Aggregated scheduler state (uptime, counters). Proxy of :8811/health."""
     status, body = await _scheduler_request("GET", "/health")
     if status >= 500:
         raise HTTPException(status_code=status, detail=body)
@@ -1208,7 +1208,7 @@ async def scheduler_health(_: Principal = Depends(get_principal)):
 
 @router.get("/scheduler/jobs")
 async def scheduler_jobs(_: Principal = Depends(get_principal)):
-    """Lista jobs registrados com next_run_time, status pause, ultima execucao."""
+    """Lists registered jobs with next_run_time, pause status, last run."""
     status, body = await _scheduler_request("GET", "/jobs")
     if status >= 400:
         raise HTTPException(status_code=status, detail=body)
@@ -1217,8 +1217,8 @@ async def scheduler_jobs(_: Principal = Depends(get_principal)):
 
 @router.post("/scheduler/jobs/{job_id}/run")
 async def scheduler_run_job(job_id: str, _: Principal = Depends(require_admin)):
-    """Dispara dispatch_job(job) ad-hoc no scheduler. Retorna 202 imediato; o
-    job roda em background (backups demoram alguns minutos)."""
+    """Fires dispatch_job(job) ad hoc in the scheduler. Returns 202 immediately; the
+    job runs in the background (backups take a few minutes)."""
     status, body = await _scheduler_request("POST", f"/jobs/{job_id}/run", timeout=15.0)
     if status >= 400:
         raise HTTPException(status_code=status, detail=body)
@@ -1227,7 +1227,7 @@ async def scheduler_run_job(job_id: str, _: Principal = Depends(require_admin)):
 
 @router.post("/scheduler/jobs/{job_id}/pause")
 async def scheduler_pause_job(job_id: str, _: Principal = Depends(require_admin)):
-    """Pausa job — runtime-only, some em restart do scheduler."""
+    """Pauses a job — runtime-only, lost when the scheduler restarts."""
     status, body = await _scheduler_request("POST", f"/jobs/{job_id}/pause")
     if status >= 400:
         raise HTTPException(status_code=status, detail=body or "pause failed")
@@ -1236,7 +1236,7 @@ async def scheduler_pause_job(job_id: str, _: Principal = Depends(require_admin)
 
 @router.post("/scheduler/jobs/{job_id}/resume")
 async def scheduler_resume_job(job_id: str, _: Principal = Depends(require_admin)):
-    """Resume job pausado."""
+    """Resumes a paused job."""
     status, body = await _scheduler_request("POST", f"/jobs/{job_id}/resume")
     if status >= 400:
         raise HTTPException(status_code=status, detail=body or "resume failed")

@@ -1,9 +1,9 @@
-"""Tests do `ClaudeRunner._resolve_spawn_cwd` — escopo por topic da task (D-97).
+"""Tests for `ClaudeRunner._resolve_spawn_cwd` — scoped by the task's topic (D-97).
 
-Antes (D-61), o lookup era global por agent+in_progress: agente com 1 task
-in_progress numa conv X via cwd da worktree vazar pra outras conversas
-simultaneas. Agora s├│ usa worktree quando o topic eh `task-<slug>` E o slug
-casa com a task in_progress do agente.
+Before (D-61), the lookup was global per agent+in_progress: an agent with 1 task
+in_progress in conv X saw the worktree cwd leak into other concurrent
+conversations. Now the worktree is only used when the topic is `task-<slug>` AND the slug
+matches the agent's in_progress task.
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from ai_company.internal_client import TopicKey
 
 class _FakeConn:
     def __init__(self, rows: list[dict[str, Any]]):
-        # asyncpg Records aceitam subscript (`row["col"]`) e attr access; dicts
-        # cobrem o caso de uso real do runner (`rows[0]["path"]`).
+        # asyncpg Records support subscript (`row["col"]`) and attr access; dicts
+        # cover the runner's real use case (`rows[0]["path"]`).
         self._rows = rows
         self.captured: tuple[str, tuple[Any, ...]] | None = None
 
@@ -43,8 +43,8 @@ class _FakePool:
 
 
 def _make_runner(agent_name: str | None, pool: Any) -> ClaudeRunner:
-    # SessionManager + BrokerClient exigidos pelo construtor mas nao usados
-    # por `_resolve_spawn_cwd`. SimpleNamespace serve como stub trivial.
+    # SessionManager + BrokerClient are required by the constructor but not used
+    # by `_resolve_spawn_cwd`. SimpleNamespace works as a trivial stub.
     return ClaudeRunner(
         session_mgr=SimpleNamespace(),  # type: ignore[arg-type]
         broker_client=SimpleNamespace(),  # type: ignore[arg-type]
@@ -54,11 +54,11 @@ def _make_runner(agent_name: str | None, pool: Any) -> ClaudeRunner:
 
 
 @pytest.mark.asyncio
-async def test_topic_nao_eh_task_devolve_default(tmp_path: Path):
-    """Topic ad-hoc (chat livre, ask, label-de-data) — sempre default_cwd,
-    mesmo se o agente tem task in_progress com worktree."""
-    # Pool retornaria worktree se fosse consultado — mas nao deve ser.
-    pool = _FakePool([{"path": str(tmp_path / "worktree-da-outra-task")}])
+async def test_non_task_topic_returns_default(tmp_path: Path):
+    """Ad-hoc topic (free chat, ask, date label) — always default_cwd,
+    even if the agent has an in_progress task with a worktree."""
+    # The pool would return a worktree if queried — but it must not be.
+    pool = _FakePool([{"path": str(tmp_path / "worktree-of-other-task")}])
     runner = _make_runner("product-owner", pool)
 
     default = tmp_path / "session-dir"
@@ -66,13 +66,13 @@ async def test_topic_nao_eh_task_devolve_default(tmp_path: Path):
 
     cwd = await runner._resolve_spawn_cwd(default, TopicKey("product-owner", "2026-04-27 16:23"))
     assert cwd == default
-    # Confirma que nem chegou a consultar o DB.
+    # Confirm it did not even query the DB.
     assert pool.conn.captured is None
 
 
 @pytest.mark.asyncio
-async def test_topic_task_com_worktree_propria_usa_worktree(tmp_path: Path):
-    """`task-<slug>` + worktree linkada ao mesmo slug + agente como
+async def test_task_topic_with_own_worktree_uses_worktree(tmp_path: Path):
+    """`task-<slug>` + worktree linked to the same slug + agent as
     current_agent → cwd = worktree."""
     worktree = tmp_path / "wt"
     worktree.mkdir()
@@ -84,16 +84,16 @@ async def test_topic_task_com_worktree_propria_usa_worktree(tmp_path: Path):
 
     cwd = await runner._resolve_spawn_cwd(default, TopicKey("executor-core", "task-fix-bug-x"))
     assert cwd == worktree
-    # Query foi feita filtrando pelo slug + agent.
+    # The query filtered by slug + agent.
     _, args = pool.conn.captured  # type: ignore[misc]
     assert args == ("fix-bug-x", "executor-core")
 
 
 @pytest.mark.asyncio
-async def test_topic_task_sem_worktree_correspondente_devolve_default(tmp_path: Path):
-    """Topic `task-X` mas a task X nao tem worktree (ou nao eh do agente):
-    query devolve 0 rows → default_cwd. NAO usa worktree de outra task in_progress."""
-    pool = _FakePool([])  # task-fix-bug-x sem match (filtro slug+agent)
+async def test_task_topic_without_matching_worktree_returns_default(tmp_path: Path):
+    """Topic `task-X` but task X has no worktree (or does not belong to the agent):
+    the query returns 0 rows → default_cwd. Does NOT use another in_progress task's worktree."""
+    pool = _FakePool([])  # task-fix-bug-x has no match (slug+agent filter)
     runner = _make_runner("product-owner", pool)
 
     default = tmp_path / "default"
@@ -104,9 +104,9 @@ async def test_topic_task_sem_worktree_correspondente_devolve_default(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_topic_task_path_inexistente_devolve_default(tmp_path: Path):
-    """Worktree registrada no DB mas path sumiu do disco: defensivo, default."""
-    pool = _FakePool([{"path": str(tmp_path / "nao-existe")}])
+async def test_task_topic_missing_path_returns_default(tmp_path: Path):
+    """Worktree registered in the DB but its path is gone from disk: defensive, default."""
+    pool = _FakePool([{"path": str(tmp_path / "does-not-exist")}])
     runner = _make_runner("executor-core", pool)
 
     default = tmp_path / "default"
@@ -117,9 +117,9 @@ async def test_topic_task_path_inexistente_devolve_default(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_topic_task_multi_worktree_devolve_default(tmp_path: Path):
-    """Task multi-repo (>1 worktrees pra mesmo slug) → ambiguo, default. Agente
-    navega via paths absolutos com --add-dir."""
+async def test_task_topic_multi_worktree_returns_default(tmp_path: Path):
+    """Multi-repo task (>1 worktrees for the same slug) → ambiguous, default. The agent
+    navigates via absolute paths with --add-dir."""
     w1 = tmp_path / "w1"; w1.mkdir()
     w2 = tmp_path / "w2"; w2.mkdir()
     pool = _FakePool([{"path": str(w1)}, {"path": str(w2)}])
@@ -133,8 +133,8 @@ async def test_topic_task_multi_worktree_devolve_default(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_sem_agent_name_ou_pool_devolve_default(tmp_path: Path):
-    """Defensivo: agent_name None ou db_pool None → default sem consultar."""
+async def test_without_agent_name_or_pool_returns_default(tmp_path: Path):
+    """Defensive: agent_name None or db_pool None → default without querying."""
     default = tmp_path / "default"
     default.mkdir()
 
@@ -146,8 +146,8 @@ async def test_sem_agent_name_ou_pool_devolve_default(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_topic_task_slug_vazio_devolve_default(tmp_path: Path):
-    """`task-` literal sem slug → default sem consultar."""
+async def test_task_topic_empty_slug_returns_default(tmp_path: Path):
+    """Literal `task-` without a slug → default without querying."""
     pool = _FakePool([{"path": "/x"}])
     runner = _make_runner("agent", pool)
     default = tmp_path / "default"; default.mkdir()

@@ -1,17 +1,17 @@
--- 013: trigger em messaging.pending_asks AFTER INSERT emite pg_notify('ask_new').
+-- 013: AFTER INSERT trigger on messaging.pending_asks emits pg_notify('ask_new').
 --
--- Motivacao (D-77 follow-up): o fluxo de ask_human/ask_agent no bot insere
--- a msg primeiro (commit → msg_all dispara), e *so depois* via HTTP separada
--- cria-se o pending_ask. Isso deixa uma janela em que a SSE entregou o evento
--- de msg pro frontend, que re-fetchou /api/conversations, viu que has_pending_ask
--- ainda era falso, e renderizou sem o badge "NEEDS YOU". F5 mostrava o estado
--- certo porque dai o pending_ask ja existia.
+-- Motivation (D-77 follow-up): the ask_human/ask_agent flow in the bot inserts
+-- the msg first (commit → msg_all fires), and *only afterwards*, via a separate HTTP call,
+-- creates the pending_ask. That leaves a window where SSE delivered the msg
+-- event to the frontend, which re-fetched /api/conversations, saw has_pending_ask
+-- still false, and rendered without the "NEEDS YOU" badge. F5 showed the right
+-- state because by then the pending_ask existed.
 --
--- Com esse trigger, o pending_ask.INSERT dispara um evento proprio que o SSE
--- retransmite. Frontend (coalesceRefresh) deduplica o segundo refresh que
--- chega logo depois do primeiro — custo zero pra caso comum (msg normal sem
--- ask), e corrige o caso de ask_human. Complementa o trigger
--- trg_notify_ask_resolved (UPDATE, ja existente) pra resolve.
+-- With this trigger, pending_ask.INSERT fires its own event that SSE
+-- relays. The frontend (coalesceRefresh) dedups the second refresh that
+-- arrives right after the first — zero cost for the common case (normal msg without
+-- ask), and it fixes the ask_human case. Complements the
+-- trg_notify_ask_resolved trigger (UPDATE, already existing) for resolve.
 
 CREATE OR REPLACE FUNCTION messaging.notify_pending_ask_new() RETURNS TRIGGER AS $$
 DECLARE

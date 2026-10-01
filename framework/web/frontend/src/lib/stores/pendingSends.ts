@@ -1,20 +1,20 @@
 import { writable } from 'svelte/store';
 
 /**
- * Timestamp (segundos Unix) do último send bem-sucedido por convId. Usado
- * pela ConversationPanel pra renderizar um skeleton "agent is starting…"
- * no gap entre o send e a primeira atividade do agente.
+ * Timestamp (Unix seconds) of the last successful send per convId. Used
+ * by ConversationPanel to render an "agent is starting…" skeleton
+ * in the gap between the send and the agent's first activity.
  *
- * Unidade em segundos pra casar com `ts` de live events e `timestamp` de
- * mensagens (usados por `fmtClock`).
+ * Unit is seconds to match live events' `ts` and messages' `timestamp`
+ * (used by `fmtClock`).
  *
- * Escrita:
- *   - CapturePanel.send() depois de criar a conv (antes do navigate).
- *   - ConversationPanel.send() depois de postar reply.
- * Leitura + limpeza:
- *   - ConversationPanel observa o feed e limpa quando aparece atividade
- *     do bot (thinking, tool_use, ou mensagem com is_bot=true) com ts >=
- *     pendingTs, ou após 60s como fallback.
+ * Writes:
+ *   - CapturePanel.send() after creating the conv (before navigate).
+ *   - ConversationPanel.send() after posting a reply.
+ * Reads + cleanup:
+ *   - ConversationPanel watches the feed and clears it when bot activity
+ *     shows up (thinking, tool_use, or a message with is_bot=true) with ts >=
+ *     pendingTs, or after 60s as a fallback.
  */
 export const pendingSends = writable<Record<string, number>>({});
 

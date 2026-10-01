@@ -1,28 +1,28 @@
 -- 027_conversations_custom_title.sql
--- Titulo customizavel por conversa, independente do topic_name (que e o ID
--- estavel da conversa no broker e geralmente reflete um pattern operacional:
+-- Per-conversation customizable title, independent of topic_name (which is the
+-- stable ID of the conversation in the broker and usually reflects an operational pattern:
 -- 'task-<slug>', '__ask-from-X-Y', '__child-...', etc).
 --
--- Problema: o humano olha a sidebar pra entender quais conversas estao
--- ativas, mas o topic_name muitas vezes e tecnico/repetitivo (varios
--- 'task-fix-...' lado a lado). O `task.title` ja ajuda quando ha task
--- atrelada, mas pra conversas livres ou pra dar um apelido contextual,
--- o humano precisa de um campo proprio.
+-- Problem: the human looks at the sidebar to understand which conversations are
+-- active, but topic_name is often technical/repetitive (several
+-- 'task-fix-...' side by side). `task.title` already helps when there is a linked
+-- task, but for free-form conversations or to give a contextual nickname,
+-- the human needs a field of their own.
 --
--- Decisao: coluna `custom_title` nullable em messaging.conversations.
--- Display rule no frontend: `custom_title || task.title || topic`. Editavel
--- inline na sidebar. NULL = sem override (cai no fallback). Backfill inicial
--- copia topic_name pra todas as conversas existentes — assim quando o
--- humano clicar pra editar pela primeira vez ja ve o valor atual no input
--- (sem aparecer vazio). Conversas novas nascem com NULL e a regra de
--- fallback cobre.
+-- Decision: nullable `custom_title` column on messaging.conversations.
+-- Frontend display rule: `custom_title || task.title || topic`. Editable
+-- inline in the sidebar. NULL = no override (falls back). The initial backfill
+-- copies topic_name into all existing conversations — so when the
+-- human clicks to edit for the first time they already see the current value in the input
+-- (instead of an empty one). New conversations start as NULL and the
+-- fallback rule covers them.
 
 ALTER TABLE messaging.conversations
     ADD COLUMN custom_title TEXT;
 
 COMMENT ON COLUMN messaging.conversations.custom_title IS
-    'Titulo customizavel pelo humano via PWA. NULL = usa fallback '
-    '(task.title || topic_name). Editavel inline na sidebar.';
+    'Title the human can customize in the PWA. NULL = use the fallback '
+    '(task.title || topic_name). Editable inline in the sidebar.';
 
 UPDATE messaging.conversations
    SET custom_title = topic_name

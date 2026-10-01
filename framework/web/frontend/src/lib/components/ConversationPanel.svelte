@@ -76,7 +76,7 @@
   // Refresh whenever activeConvId changes.
   $effect(() => {
     const id = $activeConvId;
-    stickToBottom = true; // conv nova sempre comeca colada no fundo
+    stickToBottom = true; // a new conv always starts pinned to the bottom
     if (id) {
       refreshActiveConversation();
       openLiveTrace(id);
@@ -85,21 +85,21 @@
     }
   });
 
-  // Auto-scroll inteligente: captura se o usuario estava "no fundo" ANTES
-  // do update. Se sim, rola de novo pro fundo depois. Se estava scrolled up
-  // (lendo historico), preserva a posicao. Threshold apertado (4px) — cobre
-  // rounding sub-pixel do browser sem permitir que "scroll pequeno pra cima"
-  // mantenha stuck.
+  // Smart auto-scroll: captures whether the user was "at the bottom" BEFORE
+  // the update. If so, scrolls back to the bottom afterwards. If scrolled up
+  // (reading history), preserves the position. Tight threshold (4px) — covers
+  // browser sub-pixel rounding without letting a "small scroll up" keep it
+  // stuck.
   const SCROLL_BOTTOM_THRESHOLD_PX = 4;
 
   function isAtBottom(el: HTMLDivElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_BOTTOM_THRESHOLD_PX;
   }
 
-  let stickToBottom = $state(true); // default true: conv nova entra no fundo
-  // Flag pra ignorar scroll events causados pelo auto-scroll programatico.
-  // Sem isso, o auto-scroll disparava onscroll -> isAtBottom=true -> stick
-  // ficava preso em true mesmo quando a intencao era preservar posicao.
+  let stickToBottom = $state(true); // default true: a new conv opens at the bottom
+  // Flag to ignore scroll events caused by the programmatic auto-scroll.
+  // Without it, auto-scroll fired onscroll -> isAtBottom=true -> stick
+  // got stuck at true even when the intent was to preserve the position.
   let programmaticScroll = false;
 
   function onListScroll() {
@@ -108,8 +108,8 @@
   }
 
   $effect(() => {
-    // Reativo a mudanca em messages OU live events. Se stickToBottom,
-    // auto-rola; senao preserva a posicao que o usuario rolou.
+    // Reacts to changes in messages OR live events. If stickToBottom,
+    // auto-scrolls; otherwise preserves the position the user scrolled to.
     void $conversationDetail;
     void $liveEvents;
     if (listEl && stickToBottom) {
@@ -117,7 +117,7 @@
         if (listEl && stickToBottom) {
           programmaticScroll = true;
           listEl.scrollTop = listEl.scrollHeight;
-          // Desliga o flag apos o scroll event sintetico processar.
+          // Clear the flag after the synthetic scroll event is processed.
           requestAnimationFrame(() => {
             requestAnimationFrame(() => { programmaticScroll = false; });
           });
@@ -126,19 +126,19 @@
     }
   });
 
-  // Marca a conv ativa como "lida" ate seu last_activity. Dispara ao entrar
-  // na conv (effect inicial) e toda vez que o polling traz last_activity
-  // mais recente — assim mensagem nova enquanto o usuario olhando nao fica
-  // marcada como unread.
+  // Marks the active conv as "read" up to its last_activity. Fires on entering
+  // the conv (initial effect) and every time polling brings a newer
+  // last_activity — so a new message while the user is watching isn't
+  // marked as unread.
   $effect(() => {
     const active = $activeConversation;
     if (active) markSeen(active.id, active.last_activity);
   });
 
-  // D-71: invalida runner_state quando chega run_start/run_end via SSE —
-  // assim o badge e os botoes Retry/Cancel aparecem/desaparecem sem esperar
-  // o proximo ciclo de polling (REFRESH_MS). Idempotente: refresh e o mesmo
-  // fetch de /messages.
+  // D-71: invalidates runner_state when run_start/run_end arrives via SSE —
+  // so the badge and the Retry/Cancel buttons appear/disappear without waiting
+  // for the next polling cycle (REFRESH_MS). Idempotent: refresh is the same
+  // /messages fetch.
   let lastSeenRunEventIdx = $state(-1);
   $effect(() => {
     const events = $liveEvents;
@@ -309,9 +309,9 @@
   function openTaskArtifacts() {
     const slug = summary?.task?.slug;
     if (!slug) return;
-    // Artefatos = os .md gerados pelas fases. Abre no FileBrowser overlay
-    // (regra: nao tirar o humano da conversa). Clique em .md dentro do
-    // browser dispara o FileViewer overlay aninhado.
+    // Artifacts = the .md files produced by the phases. Opens in the FileBrowser
+    // overlay (rule: don't take the human out of the conversation). Clicking a
+    // .md inside the browser opens the nested FileViewer overlay.
     openFileBrowserAt(`company/tasks/${slug}`);
   }
 
@@ -340,7 +340,7 @@
   let mentionPicker = $state<MentionPicker | null>(null);
 
   function onKeydown(e: KeyboardEvent) {
-    // @-mention picker absorve setas/Enter/Tab/Esc quando ativo.
+    // @-mention picker swallows arrows/Enter/Tab/Esc when active.
     if (mentionPicker?.onTextareaKeydown(e)) return;
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -365,8 +365,8 @@
     (summary?.children_stats?.active ?? 0) + (summary?.children_stats?.resolved ?? 0)
   );
 
-  // D-71: runner state vem embutido em detail.runner_state (enriquecido no
-  // GET /messages). Tick a cada 10s pra atualizar "ha X min" sem refetch.
+  // D-71: runner state comes embedded in detail.runner_state (enriched in
+  // GET /messages). Ticks every 10s to update "X min ago" without refetching.
   const runnerState = $derived<RunnerStateInfo | null>(detail?.runner_state ?? null);
   let clockNow = $state(Date.now());
   onMount(() => {
@@ -407,9 +407,9 @@
       : ''
   );
 
-  // D-57: se a conversa tem task atrelada, carrega workflow definition pra
-  // renderizar progress bar dinamica. Fetch lazy — so quando aparece uma task
-  // com workflow declarado. Invalida quando workflow muda.
+  // D-57: if the conversation has a task attached, loads the workflow definition
+  // to render a dynamic progress bar. Lazy fetch — only when a task with a
+  // declared workflow shows up. Invalidated when the workflow changes.
   let workflowDef = $state<WorkflowDef | null>(null);
   let loadedWorkflowName = $state<string | null>(null);
 
@@ -424,7 +424,7 @@
     loadedWorkflowName = wfName;
     getWorkflow(wfName)
       .then((def) => {
-        // Race guard: outra task carregou nesse meio tempo.
+        // Race guard: another task loaded in the meantime.
         if (loadedWorkflowName === wfName) workflowDef = def;
       })
       .catch((e) => {
@@ -433,9 +433,9 @@
       });
   });
 
-  // Stats agregadas da task inteira (soma de todas as conversations da task,
-  // nao so desta thread). Fetch em polling leve — a API /api/tasks/{slug}/stats
-  // retorna apenas 5 numeros, payload desprezivel.
+  // Aggregated stats for the whole task (sum over all of the task's
+  // conversations, not just this thread). Light polling fetch — the
+  // /api/tasks/{slug}/stats API returns only 5 numbers, negligible payload.
   let taskStats = $state<TaskStats | null>(null);
   let lastStatsSlug = $state<string | null>(null);
   let statsTimer: ReturnType<typeof setInterval> | null = null;
@@ -474,7 +474,7 @@
     const current = summary.task.current_step;
     const status = summary.task.status;
     const ordered = workflowDef.steps_ordered;
-    // Terminal: tudo done.
+    // Terminal: everything done.
     if (status === 'done') {
       return ordered.map((n) => ({ name: n, state: 'done' }));
     }
@@ -485,13 +485,13 @@
     }));
   });
 
-  // Feed intercalado: mensagens + live events. Logica em $lib/services/feed
-  // pra reuso pelo ChildConvOverlay (read-only).
+  // Interleaved feed: messages + live events. Logic lives in $lib/services/feed
+  // for reuse by ChildConvOverlay (read-only).
   const feed = $derived<FeedItem[]>(buildFeed(detail?.messages ?? [], $liveEvents));
 
-  /** Pending-send indicator: mostra skeleton "agent is starting..." no gap
-   *  entre o send e o primeiro sinal do agente (thinking, tool_use, msg is_bot).
-   *  Limpa automaticamente ao detectar atividade nova. Timeout 60s como
+  /** Pending-send indicator: shows an "agent is starting..." skeleton in the gap
+   *  between the send and the agent's first signal (thinking, tool_use, is_bot msg).
+   *  Clears automatically when new activity is detected. 60s timeout as a
    *  fallback. */
   const pendingTs = $derived($activeConvId ? $pendingSends[$activeConvId] ?? null : null);
 
@@ -499,7 +499,7 @@
     const id = $activeConvId;
     const ts = pendingTs;
     if (!id || !ts) return;
-    // Procura atividade do bot com ts >= pendingTs.
+    // Look for bot activity with ts >= pendingTs.
     const hasBotActivity = feed.some((i) => {
       if (i.ts < ts) return false;
       if (
@@ -523,9 +523,9 @@
     return () => clearTimeout(timer);
   });
 
-  /** Tool usage stats por nome (stripNs) — pills no header da conv.
-   *  Conta tool_use eventos + erros pareados (tool_result is_error=true)
-   *  pra mostrar "12 reads · 4 bash · 1 error". */
+  /** Tool usage stats by name (stripNs) — pills in the conv header.
+   *  Counts tool_use events + paired errors (tool_result is_error=true)
+   *  to show "12 reads · 4 bash · 1 error". */
   const toolStats = $derived.by(() => {
     const counts = new Map<string, number>();
     let errors = 0;
@@ -564,8 +564,8 @@
     return { items, errors, total: items.reduce((s, i) => s + i.n, 0) };
   });
 
-  /** Toggle global pra esconder linhas de tool_use (e grupos/erros) do feed.
-   *  Persistido em localStorage; default ON. */
+  /** Global toggle to hide tool_use lines (and groups/errors) from the feed.
+   *  Persisted in localStorage; default ON. */
   let showToolCalls = $state(true);
   onMount(() => {
     try {
@@ -584,7 +584,7 @@
     }
   }
 
-  /** Feed efetivamente renderizado: aplica filtro do toggle. */
+  /** Feed actually rendered: applies the toggle filter. */
   const visibleFeed = $derived<FeedItem[]>(
     showToolCalls
       ? feed
@@ -596,8 +596,8 @@
         ),
   );
 
-  /** Agregacao do topic: soma cost/duration/turns dos run_end events
-   *  presentes em $liveEvents (fetch inicial via /live/recent + SSE). */
+  /** Topic aggregation: sums cost/duration/turns of the run_end events
+   *  present in $liveEvents (initial fetch via /live/recent + SSE). */
   const topicStats = $derived.by(() => {
     let cost = 0;
     let duration = 0;
@@ -624,10 +624,10 @@
   // the user isn't greeted by an error only after clicking Send. Both summary
   // (sidebar) and detail (active conv) carry the flag for the case where the
   // user navigates straight to a completed child without the summary loaded.
-  // D-96: qualquer conv filha (parent_conv_id != null) e read-only pro humano.
-  // Filha comunica com o pai via mensagem normal; humano so responde no pai.
-  // Antes (D-93) so filha "completed" era read-only; agora generaliza —
-  // multinesting some, fica claro onde responder.
+  // D-96: any child conv (parent_conv_id != null) is read-only for the human.
+  // The child talks to the parent via normal messages; the human replies only
+  // on the parent. Before (D-93) only "completed" children were read-only; now
+  // it's general — multi-nesting goes away, it's clear where to reply.
   const parentConvId = $derived(
     summary?.parent_conv_id ?? detail?.parent_conv_id ?? null
   );
@@ -641,10 +641,10 @@
     if (target) showConvPanel(target.id);
   }
 
-  // D-96: chips de filhas no header — usuario clica e navega pra conv filha
-  // (que aparece read-only). Filha sai da sidebar; chip eh o unico ponto
-  // de entrada visual. Estados refletem `is_running`/`is_stuck`/`is_errored`
-  // do summary (sinais flat ja calculados em broker.py).
+  // D-96: child chips in the header — the user clicks and navigates to the child
+  // conv (shown read-only). Children leave the sidebar; the chip is the only
+  // visual entry point. States reflect `is_running`/`is_stuck`/`is_errored`
+  // from the summary (flat signals already computed in broker.py).
   const directChildren = $derived.by(() => {
     if (!summary || summary.parent_conv_id != null) return [] as Array<{
       db_id: number; conv_id: string; agent: string;
@@ -669,10 +669,10 @@
     openChildConv(convId);
   }
 
-  // D-96 cleanup: removido `waitingOnDescendant` + "Jump to child" — filha
-  // nao tem ask_human (gateado no MCP), entao `children_stats.awaiting_human`
-  // e sempre 0 numa raiz. Fluxo simplificou: se ha pending_ask, eh na raiz
-  // mesmo, composer fica disponivel pra responder.
+  // D-96 cleanup: removed `waitingOnDescendant` + "Jump to child" — a child
+  // has no ask_human (gated in MCP), so `children_stats.awaiting_human`
+  // is always 0 on a root. Simpler flow: if there's a pending_ask, it's on the
+  // root itself, and the composer is available to reply.
 
   const canSend = $derived(
     (!!text.trim() || $replyAttachments.length > 0)
@@ -681,9 +681,9 @@
       && !isCompletedChild
   );
   const headerTitle = $derived(detail?.agent || summary?.agent || '?');
-  // Migration 027: header reflete o titulo customizavel quando presente.
-  // Fallback: topic. (Nao usamos task.title aqui — ja aparece em outro lugar
-  // do header pra tasks.)
+  // Migration 027: the header reflects the customizable title when present.
+  // Fallback: topic. (We don't use task.title here — it already shows up
+  // elsewhere in the header for tasks.)
   const headerMeta = $derived(
     detail
       ? `#${detail.stream} · ${detail.custom_title || detail.topic}`
@@ -711,10 +711,10 @@
     >
       <ArrowLeft class="h-6 w-6" />
     </button>
-    <!-- Header info: nome do agente + badges de estado/runner/stats. Sem
-         `truncate` no container flex-wrap (incompativel com white-space:
-         nowrap). Badges individuais cuidam do texto. Stats badge so em
-         sm+ (em mobile compete com os botoes a direita e fica cortado). -->
+    <!-- Header info: agent name + state/runner/stats badges. No
+         `truncate` on the flex-wrap container (incompatible with white-space:
+         nowrap). Individual badges handle their text. Stats badge only on
+         sm+ (on mobile it competes with the buttons on the right and gets cut). -->
     <div class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
       <strong class="min-w-0 truncate text-sm">{headerTitle}</strong>
       <span class="hidden truncate text-xs text-muted xs:inline">{headerMeta}</span>
@@ -744,14 +744,14 @@
       {#if taskStats && taskStats.runs > 0}
         <span
           class="hidden rounded-sm bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-muted sm:inline"
-          title={`task inteira: ${taskStats.runs} run(s) em ${taskStats.conversations} conversa(s)`}
+          title={`whole task: ${taskStats.runs} run(s) across ${taskStats.conversations} conversation(s)`}
         >
           {taskStats.runs} runs · {taskStats.turns} turns · {fmtCost(taskStats.cost_usd)} · {fmtMs(taskStats.duration_ms)}
         </span>
       {:else if !summary?.task && topicStats.runs > 0}
         <span
           class="hidden rounded-sm bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-muted sm:inline"
-          title={`${topicStats.runs} run(s) nesta conversa (janela das ultimas ~50 live events)`}
+          title={`${topicStats.runs} run(s) in this conversation (window of the last ~50 live events)`}
         >
           {topicStats.runs} runs · {topicStats.turns} turns · {fmtCost(topicStats.cost)} · {fmtMs(topicStats.duration)}
         </span>
@@ -804,11 +804,11 @@
   </header>
 
   {#if directChildren.length > 0}
-    <!-- D-96: chips de filhas (delegacoes via ask_agent). Substitui o
-         multi-nesting na sidebar. Click abre conv filha em modo read-only.
-         Icone reflete estado do agente filho:
+    <!-- D-96: child chips (delegations via ask_agent). Replaces the
+         multi-nesting in the sidebar. Click opens the child conv read-only.
+         Icon reflects the child agent's state:
            Loader2 spin = running, AlertTriangle = stuck, XCircle = errored,
-           Hourglass = awaiting_human (legacy convs pre-D-96), nada = idle. -->
+           Hourglass = awaiting_human (legacy convs pre-D-96), none = idle. -->
     <div class="flex flex-wrap items-center gap-1.5 border-b border-border bg-panel2/30 px-3 py-1.5 md:px-4">
       <span class="text-[10px] uppercase tracking-wider text-muted">Delegated:</span>
       {#each directChildren as ch (ch.db_id)}
@@ -845,9 +845,9 @@
   {/if}
 
   {#if progressSteps.length > 0}
-    <!-- D-57: progress bar dinamica. Renderiza o que vier de /api/workflows/{name}
-         (steps_ordered). Zero nome de step hardcoded — funciona pra qualquer
-         workflow declarado na instancia. -->
+    <!-- D-57: dynamic progress bar. Renders whatever /api/workflows/{name}
+         returns (steps_ordered). No hardcoded step names — works for any
+         workflow declared in the instance. -->
     <div class="flex items-center gap-2 overflow-x-auto border-b border-border bg-panel2/50 px-4 py-1.5 text-[10px] text-muted">
       {#each progressSteps as step, i (step.name)}
         {#if i > 0}<span class="text-muted/50">›</span>{/if}
@@ -872,7 +872,7 @@
   {/if}
 
   {#if toolStats.total > 0}
-    <!-- Pills de contagem por tool + toggle "show tool calls" (D-103). -->
+    <!-- Per-tool count pills + "show tool calls" toggle (D-103). -->
     <div class="flex items-center gap-1.5 overflow-x-auto border-b border-border bg-panel2/30 px-3 py-1 text-[10px]">
       <button
         type="button"
@@ -937,8 +937,8 @@
           {detail.agent} is processing<span class="dots">…</span>
         </div>
       {:else if pendingTs}
-        <!-- Gap entre user send e primeiro live event/bot msg. Some
-             automaticamente assim que chega atividade do agente. -->
+        <!-- Gap between the user send and the first live event/bot msg.
+             Disappears automatically once agent activity arrives. -->
         <div class="flex items-center gap-2 rounded-md border border-dashed border-accent/40 bg-accent/5 px-3 py-2 text-xs text-muted">
           <span class="inline-block h-2 w-2 animate-pulse rounded-full bg-accent"></span>
           <span>Message sent — waiting for agent…</span>

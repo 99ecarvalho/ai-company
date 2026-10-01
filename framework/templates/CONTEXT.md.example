@@ -1,35 +1,34 @@
-# Contexto da empresa
+# Company context
 
-> Este arquivo eh injetado no system prompt de TODO agente em toda invocacao.
-> Mantenha conciso (cap ~8KB). Edite via overlay "🏢 Empresa" no PWA ou
-> direto neste arquivo (`instance/company/CONTEXT.md`).
+> This file is injected into the system prompt of EVERY agent on every invocation.
+> Keep it concise (cap ~8KB). Edit it from the PWA file browser
+> (`company/CONTEXT.md`) or directly in this file (`instance/company/CONTEXT.md`).
 
-## Empresa
+## Company
 
-- **Nome:** _(preencher)_
-- **Setor:** _(preencher)_
-- **Missao:** _(preencher)_
+- **Name:** _(fill in)_
+- **Industry:** _(fill in)_
+- **Mission:** _(fill in)_
 
-## Onde consultar o que
+## Where to find what
 
-Mapa de paths que os agentes podem ler/escrever no workspace:
+Map of paths the agents can read/write in the workspace:
 
-- `company/ideas/` — captacoes brutas (humano joga ideia, inbox organiza)
-- `company/notes/` — notas livres por data (briefings, retros, decisoes)
-- `company/decisions/` — decisoes formais (1 arquivo por decisao, formato ADR)
-- `company/tasks/<slug>/` — tasks ativas em workflow multi-fase
-- `repos/` — codigo gerado durante tasks (RW so pelo executor; RO pros outros)
-- `agents/<nome>/knowledge/` — playbooks/conhecimento curado por agente
+- `company/ideas/` — raw captures (the human drops an idea, an agent organizes it)
+- `company/notes/` — free-form notes by date (briefings, retros, decisions)
+- `company/decisions/` — formal decisions (1 file per decision, ADR format)
+- `company/tasks/<slug>/` — active tasks in a multi-phase workflow
+- `repos/` — code produced during tasks (read-only for agents; edited only in worktrees)
+- `agents/<name>/knowledge/` — playbooks/knowledge curated per agent
 
-## Convencoes
+## Conventions
 
-- Datas em ISO (YYYY-MM-DD) salvo se contexto pedir formato BR.
-- Valores em BRL.
-- Idioma das mensagens: portugues (pt-BR).
-- Codigo + comentarios em ingles, salvo se for documentacao da empresa.
+- Dates in ISO (YYYY-MM-DD) unless the context calls for a local format.
+- Currency: _(fill in, e.g. USD)_.
+- Message language: _(fill in, e.g. English)_.
+- Code + comments in English, unless it's company documentation.
 
-## Filosofia
+## Philosophy
 
-Veja `instance/company/philosophy.md` (ou edite na aba "Philosophy" do
-overlay "🏢 Empresa"). Define modelo operacional (TDD, SDD, Context
-Management, mistura, etc).
+See `instance/company/philosophy.md`. It defines the operational model
+(TDD, SDD, Context Management, a mix, etc).

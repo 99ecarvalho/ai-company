@@ -30,8 +30,8 @@
     pathPrefix = '/workspace/',
   }: Props = $props();
 
-  // Estado do picker. `active` vira true quando detectamos `@xxx` na posicao
-  // do caret; `at` e `caret` delimitam o range a substituir no select.
+  // Picker state. `active` becomes true when we detect `@xxx` at the caret
+  // position; `at` and `caret` delimit the range to replace on select.
   let active = $state(false);
   let at = $state<number>(-1);
   let caret = $state<number>(-1);
@@ -40,8 +40,8 @@
   let highlighted = $state(0);
   let loading = $state(false);
 
-  // Token @... comeca em `@` precedido de inicio/whitespace e vai ate o
-  // proximo whitespace ou fim. Suporta todos os chars validos em paths.
+  // The @... token starts at an `@` preceded by start/whitespace and runs to
+  // the next whitespace or end. Supports all chars valid in paths.
   const AT_RE = /(^|\s)@([a-zA-Z0-9._/\-]*)$/;
 
   function detectMention() {
@@ -57,7 +57,7 @@
       return;
     }
     active = true;
-    at = pos - m[2].length - 1; // pos do `@`
+    at = pos - m[2].length - 1; // position of the `@`
     caret = pos;
     query = m[2];
     highlighted = 0;
@@ -70,7 +70,7 @@
     loading = true;
     try {
       const r = await searchFiles(query, { limit: 20 });
-      if (token !== searchToken) return; // search mais recente venceu
+      if (token !== searchToken) return; // a newer search won
       entries = r.entries;
       if (highlighted >= entries.length) highlighted = 0;
     } catch {
@@ -85,7 +85,7 @@
   }
 
   export function onTextareaKeydown(e: KeyboardEvent): boolean {
-    // Retorna true se consumiu o evento (parent deve parar propagacao).
+    // Returns true if it consumed the event (parent should stop propagation).
     if (!active) return false;
     if (e.key === 'Escape') {
       active = false;
@@ -117,7 +117,7 @@
     onUpdate(next);
     const newCaret = at + inserted.length;
     active = false;
-    // Re-posiciona o caret depois do insert (aguarda tick pra o DOM refletir).
+    // Re-position the caret after the insert (waits a tick for the DOM to update).
     queueMicrotask(() => {
       if (textarea) {
         textarea.focus();

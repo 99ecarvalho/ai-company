@@ -2,9 +2,9 @@ import { expect, test } from '@playwright/test';
 import { execSync } from 'node:child_process';
 import { closeConversation, seedRun } from './helpers/api';
 
-/** Seed de pending_ask direto no DB (nao ha API pra criar manualmente —
- * tabela e populada pelo broker quando agente chama ask_human). Feio mas
- * suficiente pra exercitar o badge visual sem precisar de ask_human real. */
+/** Seeds a pending_ask directly in the DB (there's no API to create one manually —
+ * the table is populated by the broker when an agent calls ask_human). Ugly but
+ * enough to exercise the visual badge without a real ask_human. */
 function seedPendingAsk(convDbId: number): void {
   const sql =
     `INSERT INTO messaging.pending_asks ` +
@@ -29,8 +29,8 @@ function clearPendingAsk(convDbId: number): void {
 }
 
 test.describe('Sidebar indicators', () => {
-  test('bolinha de unread aparece em conv com bot reply nao ativa', async ({ page, request }) => {
-    // Seed conv com bot reply (mock responde via CLAUDE_MOCK).
+  test('unread dot appears on a non-active conv with a bot reply', async ({ page, request }) => {
+    // Seed a conv with a bot reply (mock replies via CLAUDE_MOCK).
     const topic = `e2e-unread-${Date.now()}`;
     const { convId } = await seedRun(request, 'inbox', topic, 'unread seed');
 
@@ -38,30 +38,30 @@ test.describe('Sidebar indicators', () => {
     const card = page.locator(`[data-id="${convId}"]`);
     await expect(card).toBeVisible({ timeout: 10_000 });
 
-    // Se o auto-switch (store) jogou o usuario na conv, a conv fica "active"
-    // e o effect de markSeen apaga o unread. Forçamos voltar pro capture.
+    // If the auto-switch (store) dropped the user into the conv, the conv becomes "active"
+    // and the markSeen effect clears the unread. We force going back to capture.
     await page.getByRole('button', { name: 'New capture' }).click();
 
-    // Agora conv nao e ativa -> unread deve aparecer.
+    // Now the conv isn't active -> unread must appear.
     await expect(card).toHaveAttribute('data-unread', 'true', { timeout: 10_000 });
     await expect(card.locator('[aria-label="Unread"]')).toBeVisible();
 
-    // Clica na conv -> marcar como lida -> unread some.
+    // Click the conv -> mark as read -> unread disappears.
     await card.click();
     await expect(card).toHaveAttribute('data-unread', 'false', { timeout: 5_000 });
 
     await closeConversation(request, convId);
   });
 
-  test('badge "needs you" destaca conv com pending_ask', async ({ page, request }) => {
+  test('"needs you" badge highlights conv with pending_ask', async ({ page, request }) => {
     const topic = `e2e-needs-${Date.now()}`;
     const { convId } = await seedRun(request, 'inbox', topic, 'needs-you seed');
 
-    // Extrai conv_db_id via API /api/conversations (lista tras db_id).
+    // Extract conv_db_id via the /api/conversations API (the list includes db_id).
     const r = await request.get('/api/conversations');
     const data = await r.json();
     const conv = data.items.find((c: { id: string }) => c.id === convId);
-    expect(conv, 'conv aparece no listing').toBeTruthy();
+    expect(conv, 'conv appears in the listing').toBeTruthy();
 
     seedPendingAsk(conv.db_id);
 
@@ -70,10 +70,10 @@ test.describe('Sidebar indicators', () => {
       const card = page.locator(`[data-id="${convId}"]`);
       await expect(card).toBeVisible({ timeout: 10_000 });
 
-      // Espera polling (5s) trazer has_pending_ask=true.
+      // Wait for polling (5s) to bring has_pending_ask=true.
       await expect(card).toHaveAttribute('data-pending', 'true', { timeout: 10_000 });
 
-      // Badge visivel com texto "needs you".
+      // Badge visible with text "needs you".
       await expect(card.getByText(/needs you/i)).toBeVisible();
     } finally {
       clearPendingAsk(conv.db_id);

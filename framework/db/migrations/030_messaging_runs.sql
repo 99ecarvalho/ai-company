@@ -1,22 +1,22 @@
--- 030: messaging.runs como single source of truth do estado do CLI por
--- conversa. Substitui a derivacao on-the-fly de telemetry.live_events
--- (`is_running` / `runner_state`) que sofria de:
---   * crashes sem run_end deixando "running" pra sempre
---   * eventos perdidos no fire-and-forget POST do runner
---   * 3 fontes independentes (live_events / heartbeat file / pool counter)
---     respondendo a mesma pergunta de forma divergente.
+-- 030: messaging.runs as the single source of truth for CLI state per
+-- conversation. Replaces the on-the-fly derivation from telemetry.live_events
+-- (`is_running` / `runner_state`), which suffered from:
+--   * crashes without run_end leaving "running" forever
+--   * events lost in the runner's fire-and-forget POST
+--   * 3 independent sources (live_events / heartbeat file / pool counter)
+--     answering the same question inconsistently.
 --
--- Modelo: 1 row por execucao do CLI. Status flui:
+-- Model: 1 row per CLI run. Status flows:
 --   running -> done | error | stale (heartbeat timeout via reaper).
 --
--- Producer: o broker (telemetry_live_event handler) faz dual-write na
--- mesma transaction da insert em telemetry.live_events. Heartbeat eh
--- piggyback gratis em cada evento (qualquer kind bate last_heartbeat_at).
+-- Producer: the broker (telemetry_live_event handler) dual-writes in the
+-- same transaction as the insert into telemetry.live_events. Heartbeat is a
+-- free piggyback on every event (any kind bumps last_heartbeat_at).
 --
--- Idempotencia: partial unique index garante no maximo 1 row 'running'
--- por conversation. Re-emissao de run_start bate o heartbeat em vez de
--- duplicar. Se o runner crasha + recupera com --resume, o reaper
--- ja transicionou pra 'stale' antes do novo spawn → INSERT sem conflito.
+-- Idempotency: a partial unique index guarantees at most 1 'running' row
+-- per conversation. Re-emitting run_start bumps the heartbeat instead of
+-- duplicating. If the runner crashes + recovers with --resume, the reaper
+-- has already moved it to 'stale' before the new spawn → INSERT without conflict.
 
 CREATE TABLE messaging.runs (
     id                 BIGSERIAL PRIMARY KEY,
@@ -32,27 +32,27 @@ CREATE TABLE messaging.runs (
     metadata           JSONB
 );
 
--- Lookup principal: ultimo run por conversa (LATERAL join no broker).
+-- Main lookup: latest run per conversation (LATERAL join in the broker).
 CREATE INDEX runs_conv_started_idx
     ON messaging.runs (conversation_id, started_at DESC);
 
--- Reaper varre runs ativas com heartbeat antigo.
+-- The reaper scans active runs with an old heartbeat.
 CREATE INDEX runs_running_heartbeat_idx
     ON messaging.runs (last_heartbeat_at)
     WHERE status = 'running';
 
--- Idempotencia: re-INSERT de run_start pra mesma conv vira UPDATE de
--- heartbeat via ON CONFLICT. Predicate WHERE status='running' permite
--- multiplas rows historicas (done/error/stale) por conv.
+-- Idempotency: re-INSERT of run_start for the same conv becomes a heartbeat
+-- UPDATE via ON CONFLICT. The WHERE status='running' predicate allows
+-- multiple historical rows (done/error/stale) per conv.
 CREATE UNIQUE INDEX runs_one_running_per_conv_idx
     ON messaging.runs (conversation_id)
     WHERE status = 'running';
 
--- O trigger existente em 015_notify_conv_activity.sql ja emite
--- 'conv_activity' em todo INSERT em telemetry.live_events, o que cobre
--- as transicoes running → done/error (que sao acompanhadas de live_event
--- run_end). A unica transicao que NAO tem live_event correspondente eh
--- running → stale, feita pelo reaper. Trigger abaixo cobre esse caso.
+-- The existing trigger in 015_notify_conv_activity.sql already emits
+-- 'conv_activity' on every INSERT into telemetry.live_events, which covers
+-- the running → done/error transitions (which come with a run_end
+-- live_event). The only transition WITHOUT a matching live_event is
+-- running → stale, done by the reaper. The trigger below covers that case.
 CREATE OR REPLACE FUNCTION messaging.notify_runs_stale() RETURNS TRIGGER AS $$
 BEGIN
     IF OLD.status = 'running' AND NEW.status = 'stale' THEN

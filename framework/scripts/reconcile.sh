@@ -1,40 +1,40 @@
 #!/bin/bash
-# Wrapper que executa framework/scripts/reconcile.py num container efemero com
-# pyyaml+requests instalados. Depois executa `docker compose up -d` no host
-# (o container efemero nao tem docker CLI pra fazer isso sozinho).
+# Wrapper that runs framework/scripts/reconcile.py in an ephemeral container with
+# pyyaml+requests installed. Then runs `docker compose up -d` on the host
+# (the ephemeral container has no docker CLI to do it itself).
 set -euo pipefail
 
 PROJECT_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
-# Mount point precisa incluir o diretorio pai quando AGENTS_DIR/COMPANY_DIR
-# apontam pra fora do manager/ (ex: ../agents). Monta o pai e usa
-# PROJECT_ROOT=/work/<manager-dir> dentro do container.
+# The mount point must include the parent dir when AGENTS_DIR/COMPANY_DIR
+# point outside manager/ (e.g. ../agents). Mount the parent and use
+# PROJECT_ROOT=/work/<manager-dir> inside the container.
 PARENT_ROOT=$(dirname "$PROJECT_ROOT")
 MANAGER_NAME=$(basename "$PROJECT_ROOT")
 
 if [ ! -f .env ]; then
-  echo "ERRO: .env nao encontrado. Rode framework/scripts/bootstrap-env.sh antes." >&2
+  echo "ERROR: .env not found. Run framework/scripts/bootstrap-env.sh first." >&2
   exit 1
 fi
 
-# Reconcile precisa do broker (web) pra criar users/streams. Se nao esta up,
-# sobe postgres+web primeiro e espera ficar healthy.
+# Reconcile needs the broker (web) to create users/streams. If it is not up,
+# start postgres+web first and wait until healthy.
 BROKER_URL="${BROKER_URL:-http://localhost:9090}"
 if ! curl -fsS "${BROKER_URL}/health" >/dev/null 2>&1; then
-  echo "== Broker nao responde em ${BROKER_URL} — subindo postgres+web"
+  echo "== Broker not responding at ${BROKER_URL} — starting postgres+web"
   docker compose up -d postgres web >/dev/null
-  echo "== Aguardando web ficar healthy"
+  echo "== Waiting for web to become healthy"
   tries=0
   until curl -fsS "${BROKER_URL}/health" >/dev/null 2>&1; do
     tries=$((tries+1))
-    [ $tries -gt 60 ] && { echo "ERRO: web nao subiu em 120s"; exit 1; }
+    [ $tries -gt 60 ] && { echo "ERROR: web did not come up within 120s"; exit 1; }
     sleep 2
   done
   echo "✓ web ok"
 fi
 
-# Captura stdout pra detectar se devemos rodar compose up depois
+# Capture stdout to detect whether we should run compose up afterwards
 TMPOUT=$(mktemp)
 trap 'rm -f "$TMPOUT"' EXIT
 
@@ -54,17 +54,17 @@ docker run --rm \
   sh -c "pip install -q --user pyyaml requests >/dev/null 2>&1 && python framework/scripts/reconcile.py $*" \
   | tee "$TMPOUT"
 
-# Se o reconcile sinalizou pra subir, faz aqui no host
+# If reconcile signaled to bring things up, do it here on the host
 if grep -q "__RECONCILE_DO_UP__" "$TMPOUT"; then
   echo ""
-  echo "== Aplicando com docker compose up -d"
+  echo "== Applying with docker compose up -d"
   docker compose up -d
   echo "✓ stack up"
 
-  # Se algum token foi rotacionado, recria explicitamente os containers dos
-  # agentes afetados — garante que peguem o BROKER_TOKEN novo do .env. Sem
-  # isso, containers criados antes da rotacao ficam com token velho e batem
-  # 401 no broker.
+  # If any token was rotated, explicitly recreate the affected agents'
+  # containers — ensures they pick up the new BROKER_TOKEN from .env. Without
+  # this, containers created before the rotation keep the old token and get
+  # 401 from the broker.
   rotated_line=$(grep "^__RECONCILE_ROTATED__ " "$TMPOUT" || true)
   if [ -n "$rotated_line" ]; then
     rotated_names=${rotated_line#__RECONCILE_ROTATED__ }
@@ -73,8 +73,8 @@ if grep -q "__RECONCILE_DO_UP__" "$TMPOUT"; then
       services="$services agent-$name"
     done
     echo ""
-    echo "== Tokens rotacionados — force-recreate em:$services"
+    echo "== Tokens rotated — force-recreate on:$services"
     docker compose up -d --force-recreate --no-deps $services
-    echo "✓ agentes rotacionados recriados"
+    echo "✓ rotated agents recreated"
   fi
 fi

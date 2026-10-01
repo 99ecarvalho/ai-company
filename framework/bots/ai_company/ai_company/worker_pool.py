@@ -1,7 +1,7 @@
-"""Pool simples: limita concorrencia de topics ativos via asyncio.Semaphore.
+"""Simple pool: limits concurrency of active topics via asyncio.Semaphore.
 
-Nao temos "worker objects" — cada topic ativo adquire um slot enquanto
-trabalha e solta ao ficar idle. Mais simples, menos bugs.
+There are no "worker objects" — each active topic acquires a slot while
+it works and releases it when it goes idle. Simpler, fewer bugs.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ log = get_logger(__name__)
 class WorkerPool:
     def __init__(self, size: int):
         if size < 1:
-            raise ValueError("WorkerPool size deve ser >= 1")
+            raise ValueError("WorkerPool size must be >= 1")
         self._sem = asyncio.Semaphore(size)
         self._size = size
         self._in_use = 0
@@ -35,7 +35,7 @@ class WorkerPool:
 
     @asynccontextmanager
     async def acquire(self, label: str = ""):
-        """Contexto assincrono que adquire um slot, libera no exit."""
+        """Async context that acquires a slot and releases it on exit."""
         await self._sem.acquire()
         self._in_use += 1
         log.info("pool.acquired", label=label, in_use=self._in_use, free=self.free)

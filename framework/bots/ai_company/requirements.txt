@@ -1,5 +1,5 @@
 # Kept in sync with pyproject.toml [project.dependencies]
-# Use esse arquivo no Dockerfile pra cachear o pip install antes do codigo entrar.
+# The Dockerfile uses this file to cache pip install before the code is copied in.
 asyncpg>=0.30
 PyYAML>=6.0
 structlog>=24.1

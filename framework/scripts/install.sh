@@ -1,14 +1,14 @@
 #!/bin/bash
 # install.sh — fresh install zero-touch.
 #
-# Roda sanity checks, gera .env com secrets random, detecta GPU, builda
-# as imagens, sobe a stack e printa a URL do PWA. Tudo o que era prompt
-# antes (admin password, paths, project name, port) agora vive no PWA:
+# Runs sanity checks, generates .env with random secrets, detects a GPU, builds
+# the images, starts the stack and prints the PWA URL. Everything that used to
+# be a prompt (admin password, paths, project name, port) now lives in the PWA:
 #   - Settings -> System: VAPID, default stream, admin password
-#   - /onboard wizard: company context + agentes
+#   - /onboard wizard: company context + agents
 #
-# Multi-instancia / paths customizados / BYOI: edite .env *antes* de rodar
-# este script. Veja README.md "Advanced".
+# Multiple instances / custom paths / BYOI: edit .env *before* running
+# this script. See README.md "Advanced".
 set -euo pipefail
 
 PROJECT_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -19,15 +19,15 @@ ok()   { echo "✓ $*"; }
 info() { echo "→ $*"; }
 
 # ---------- sanity checks ----------
-info "Checando pre-requisitos..."
-command -v docker >/dev/null || err "docker nao encontrado no PATH"
-docker compose version >/dev/null 2>&1 || err "plugin 'docker compose' nao disponivel"
-docker info >/dev/null 2>&1 || err "docker daemon nao acessivel (parado? precisa sudo?)"
+info "Checking prerequisites..."
+command -v docker >/dev/null || err "docker not found in PATH"
+docker compose version >/dev/null 2>&1 || err "'docker compose' plugin not available"
+docker info >/dev/null 2>&1 || err "docker daemon not reachable (stopped? needs sudo?)"
 
 CLAUDE_CRED="$HOME/.claude/.credentials.json"
 CLAUDE_JSON="$HOME/.claude.json"
 if [ ! -f "$CLAUDE_CRED" ] || [ ! -f "$CLAUDE_JSON" ]; then
-  err "Credenciais Claude nao encontradas em ~/.claude/. Rode 'claude login' no host antes."
+  err "Claude credentials not found in ~/.claude/. Run 'claude login' on the host first."
 fi
 ok "docker + claude auth ok"
 
@@ -37,28 +37,28 @@ git submodule update --init --recursive
 ok "submodules ok"
 
 # ---------- bootstrap .env + instance/ ----------
-info "Bootstrap .env + pastas de instancia..."
+info "Bootstrapping .env + instance folders..."
 bash framework/scripts/bootstrap-env.sh
 
 # ---------- GPU auto-detect ----------
-# Se host tem nvidia-smi, layer docker-compose.gpu.yml por cima do principal —
-# transcriber sobe com cuda + large-v3. Sem GPU, defaults CPU/small/int8.
+# If the host has nvidia-smi, layer docker-compose.gpu.yml on top of the main
+# file — the transcriber starts with cuda + large-v3. Without a GPU, defaults CPU/small/int8.
 if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
   if ! grep -q "^COMPOSE_FILE=" .env; then
     echo "COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml" >> .env
-    ok "GPU detectada — transcriber GPU layer ativado"
+    ok "GPU detected — transcriber GPU layer enabled"
   else
-    info "GPU detectada mas COMPOSE_FILE ja setado — preservando override do user"
+    info "GPU detected but COMPOSE_FILE already set — keeping the user override"
   fi
 else
-  info "Sem GPU NVIDIA — transcriber roda em CPU (small/int8)"
+  info "No NVIDIA GPU — transcriber runs on CPU (small/int8)"
 fi
 
 # ---------- build + up ----------
-info "Buildando imagens (1a vez pode demorar)..."
+info "Building images (the first time can take a while)..."
 docker compose build
 
-info "Aplicando reconcile (cria bots no broker, gera override, sobe stack)..."
+info "Running reconcile (creates bots in the broker, generates override, starts stack)..."
 make reconcile
 
 # ---------- health wait ----------
@@ -66,16 +66,16 @@ WEB_PORT=$(grep -E "^WEB_PORT=" .env | cut -d= -f2 | head -1)
 WEB_PORT=${WEB_PORT:-9090}
 URL="http://localhost:${WEB_PORT}"
 
-info "Aguardando ${URL}/health..."
+info "Waiting for ${URL}/health..."
 for _ in $(seq 1 30); do
   if curl -fsS "${URL}/health" >/dev/null 2>&1; then
-    ok "PWA pronto em ${URL}"
+    ok "PWA ready at ${URL}"
     echo
-    echo "  Abra ${URL} no browser — o resto acontece la (wizard /onboard)."
+    echo "  Open ${URL} in the browser — the rest happens there (/onboard wizard)."
     echo
     exit 0
   fi
   sleep 2
 done
 
-err "web nao respondeu em ${URL}/health apos 60s — inspecione 'docker compose logs web'"
+err "web did not respond at ${URL}/health after 60s — inspect 'docker compose logs web'"

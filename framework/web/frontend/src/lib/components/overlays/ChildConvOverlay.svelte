@@ -22,10 +22,10 @@
   import { buildFeed } from '$lib/services/feed';
   import { fmtDateSeparator, sameDay } from '$lib/services/format';
 
-  // Snapshot do convId no momento de abrir. Se o store muda enquanto aberto,
-  // o overlay reseta tudo (load + SSE) pra nova conv. Quando fecha,
-  // childConvTarget vira null mas mantemos o ultimo carregado pro fade-out
-  // nao mostrar conteudo vazio.
+  // Snapshot of convId at open time. If the store changes while open,
+  // the overlay resets everything (load + SSE) for the new conv. When it closes,
+  // childConvTarget becomes null but we keep the last loaded one so the fade-out
+  // doesn't show empty content.
   let convId = $state<string | null>(null);
   let detail = $state<ConversationDetail | null>(null);
   let events = $state<LiveEvent[]>([]);

@@ -1,20 +1,20 @@
-"""Servidor MCP minimal sobre aiohttp.
+"""Minimal MCP server on top of aiohttp.
 
-Protocolo: JSON-RPC 2.0, transport HTTP streamable:
-  - Tools curtas (initialize, tools/list, memory_*, complete_phase, etc):
-    retornam Content-Type: application/json (request-response simples).
-  - Tools bloqueantes de longa duracao (ask_human, ask_agent): retornam
-    Content-Type: text/event-stream e emitem SSE keepalive comments
-    (": ping") a cada SSE_KEEPALIVE_SEC ate o resultado final. Isso evita
-    o timeout ~60s do MCP client do Claude Code CLI em tool calls que
-    bloqueiam por horas aguardando humano/agente. Ver D-47 em
+Protocol: JSON-RPC 2.0, streamable HTTP transport:
+  - Short tools (initialize, tools/list, memory_*, complete_phase, etc):
+    return Content-Type: application/json (simple request-response).
+  - Long-running blocking tools (ask_human, ask_agent): return
+    Content-Type: text/event-stream and emit SSE keepalive comments
+    (": ping") every SSE_KEEPALIVE_SEC until the final result. This avoids
+    the ~60s timeout of the Claude Code CLI MCP client on tool calls that
+    block for hours waiting for a human/agent. See D-47 in
     .dev/notes/DECISIONS.md.
 
 Endpoint: POST /mcp/<topic_slug>
 
-Cada subprocess `claude` spawneado pelo ClaudeRunner recebe um --mcp-config
-apontando pra http://localhost:<port>/mcp/<slug-do-topic>.
-O slug permite correlacionar tool calls com o topic correto.
+Each `claude` subprocess spawned by the ClaudeRunner gets an --mcp-config
+pointing to http://localhost:<port>/mcp/<topic-slug>.
+The slug correlates tool calls with the right topic.
 """
 from __future__ import annotations
 
@@ -40,10 +40,10 @@ PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "ai-company-mcp"
 SERVER_VERSION = "0.1.0"
 
-# Tools que bloqueiam >60s — entregues via SSE pra manter a conexao viva
-# enquanto a tool ainda nao resolveu. Outras tools seguem JSON simples.
+# Tools that block >60s — delivered via SSE to keep the connection alive
+# while the tool has not resolved yet. Other tools use plain JSON.
 LONG_RUNNING_TOOLS = frozenset({"ask_human", "ask_agent", "ask_agents_many"})
-SSE_KEEPALIVE_SEC = 20  # < 60s (cap observado do CLI) com folga
+SSE_KEEPALIVE_SEC = 20  # < 60s (observed CLI cap) with margin
 
 
 JSONRPC_PARSE_ERROR = -32700
@@ -65,7 +65,7 @@ def _err(id_: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
 
 
 class McpServer:
-    """Wrap de aiohttp. Roda no mesmo event loop do BaseAgent."""
+    """aiohttp wrapper. Runs on the same event loop as the BaseAgent."""
 
     def __init__(
         self,
@@ -83,12 +83,12 @@ class McpServer:
         self.agent_name = agent_name
         self.host = host
         self.port = port
-        # D-96: pool usado pra consultar parent_conv_id da conv associada ao
-        # slug em runtime e gatear ask_human/ask_agent quando conv eh filha.
+        # D-96: pool used to look up, at runtime, the parent_conv_id of the conv
+        # tied to the slug, to gate ask_human/ask_agent when the conv is a child.
         self.db_pool = db_pool
         self._app = web.Application()
         self._app.router.add_post("/mcp/{slug}", self._handle_post)
-        self._app.router.add_get("/mcp/{slug}", self._handle_get)  # no-op pra SSE
+        self._app.router.add_get("/mcp/{slug}", self._handle_get)  # no-op for SSE
         self._app.router.add_get("/health", self._health)
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
@@ -116,7 +116,7 @@ class McpServer:
         return web.json_response({"status": "ok"})
 
     async def _handle_get(self, _request: web.Request) -> web.Response:
-        # Pode ser usado pra SSE no futuro. Por enquanto, 204.
+        # May be used for SSE in the future. For now, 204.
         return web.Response(status=204)
 
     async def _handle_post(self, request: web.Request) -> web.Response:
@@ -126,7 +126,7 @@ class McpServer:
         except Exception:
             return web.json_response(_err(None, JSONRPC_PARSE_ERROR, "Parse error"))
 
-        # Pode vir um batch (lista) ou single request
+        # May be a batch (list) or a single request
         if isinstance(body, list):
             responses = []
             for item in body:
@@ -134,13 +134,13 @@ class McpServer:
                 if resp is not None:
                     responses.append(resp)
             if not responses:
-                return web.Response(status=202)  # so notifications, no response
+                return web.Response(status=202)  # notifications only, no response
             return web.json_response(responses)
 
-        # Long-running tool: stream SSE com keepalive ate resolver.
-        # Client MCP do Claude CLI tem cap ~60s; sem SSE, tool call
-        # blocante de horas (ask_human/ask_agent aguardando humano) e
-        # derrubada. Ver D-47.
+        # Long-running tool: stream SSE with keepalive until resolved.
+        # The Claude CLI MCP client has a ~60s cap; without SSE, a tool call
+        # blocking for hours (ask_human/ask_agent waiting for a human) gets
+        # dropped. See D-47.
         if self._is_long_running_tool_call(body):
             return await self._handle_streaming_tool_call(request, slug, body)
 
@@ -161,10 +161,10 @@ class McpServer:
     async def _handle_streaming_tool_call(
         self, request: web.Request, slug: str, body: dict[str, Any],
     ) -> web.StreamResponse:
-        """Responde com text/event-stream. Emite SSE comment (': ping')
-        a cada SSE_KEEPALIVE_SEC enquanto o dispatch blocante roda, e ao
-        final emite o envelope JSON-RPC como unico data event. Isso mantem
-        a conexao HTTP viva dentro do cap do CLI (~60s sem bytes).
+        """Responds with text/event-stream. Emits an SSE comment (': ping')
+        every SSE_KEEPALIVE_SEC while the blocking dispatch runs, and at the
+        end emits the JSON-RPC envelope as the single data event. This keeps
+        the HTTP connection alive within the CLI cap (~60s without bytes).
         """
         resp = web.StreamResponse(
             status=200,
@@ -182,7 +182,7 @@ class McpServer:
         req_id = body.get("id")
         log.info("mcp.sse.start", slug=slug, method=method, tool=tool_name, id=req_id)
 
-        # Dispara o dispatch em task; keepalive loop em paralelo.
+        # Run the dispatch in a task; keepalive loop in parallel.
         dispatch_task = asyncio.create_task(self._dispatch(slug, body))
 
         try:
@@ -193,21 +193,21 @@ class McpServer:
                     )
                     break
                 except asyncio.TimeoutError:
-                    # Ainda rodando — manda keepalive e segue.
+                    # Still running — send keepalive and continue.
                     try:
                         await resp.write(b": ping\n\n")
                     except (ConnectionResetError, asyncio.CancelledError):
-                        # Cliente desconectou — cancela dispatch pra nao vazar.
+                        # Client disconnected — cancel dispatch so it does not leak.
                         dispatch_task.cancel()
                         log.info("mcp.sse.client_disconnected", slug=slug, tool=tool_name)
                         return resp
             if result is not None:
-                # Segue o formato JSON-RPC response-as-SSE: 1 data event
-                # com o envelope. Clients MCP que aceitam SSE leem isso.
+                # Follows the JSON-RPC response-as-SSE format: 1 data event
+                # with the envelope. MCP clients that accept SSE read this.
                 payload = json.dumps(result, ensure_ascii=False)
                 await resp.write(f"data: {payload}\n\n".encode("utf-8"))
             else:
-                # Notification (sem id) — nao ha resposta, so 202-ish no SSE.
+                # Notification (no id) — no response, just 202-ish over SSE.
                 pass
         except Exception:
             log.exception("mcp.sse.dispatch_failed", slug=slug, tool=tool_name)
@@ -246,7 +246,7 @@ class McpServer:
                 })
 
             if method == "notifications/initialized":
-                # client-to-server ack, sem resposta
+                # client-to-server ack, no response
                 return None
 
             if method == "ping":
@@ -259,7 +259,7 @@ class McpServer:
                 return await self._call_tool(slug, req_id, params)
 
             if is_notification:
-                # notificacao nao-suportada: ignora silencioso
+                # unsupported notification: ignore silently
                 return None
 
             return _err(req_id, JSONRPC_METHOD_NOT_FOUND, f"Method not found: {method}")
@@ -270,12 +270,12 @@ class McpServer:
             return _err(req_id, JSONRPC_INTERNAL_ERROR, f"Internal error: {e!s}")
 
     async def _is_child_conv(self, slug: str) -> bool:
-        """D-96: True se a conv associada ao slug atual eh filha
-        (parent_conv_id IS NOT NULL). Usado pra gatear tools que so podem ser
-        chamadas em raiz (ask_human, ask_agent, ask_agents_many).
-        Falha-aberta: se nao consegue determinar (pool ausente, conv_id
-        desconhecido), retorna False — preserva comportamento antigo em vez
-        de bloquear injustamente."""
+        """D-96: True if the conv tied to the current slug is a child
+        (parent_conv_id IS NOT NULL). Used to gate tools that may only be
+        called in a root conv (ask_human, ask_agent, ask_agents_many).
+        Fail-open: if it cannot tell (no pool, unknown conv_id),
+        returns False — keeps the old behavior instead of blocking
+        unfairly."""
         if self.db_pool is None or self.broker is None:
             return False
         conv_id = self.broker.conv_id_for_slug(slug)
@@ -302,27 +302,27 @@ class McpServer:
         )
 
     # ---------- Skills (per-agent) ----------
-    # Path canonico no container: /app/agents/<self.agent_name>/skills/<slug>/SKILL.md.
-    # No host eh `instance/agents/<name>/skills/<slug>/SKILL.md` via mount.
-    # Entrypoint symlinka ~/.claude/skills -> /app/agents/<name>/skills/, fazendo
-    # o CLI carregar essas skills no startup do proximo turn.
+    # Canonical path in the container: /app/agents/<self.agent_name>/skills/<slug>/SKILL.md.
+    # On the host it is `instance/agents/<name>/skills/<slug>/SKILL.md` via mount.
+    # The entrypoint symlinks ~/.claude/skills -> /app/agents/<name>/skills/, so
+    # the CLI loads these skills at startup of the next turn.
     SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,49}$")
     SKILL_BODY_LIMIT = 100 * 1024  # 100KB
     SKILL_DESC_LIMIT = 500
 
     def _skills_root(self) -> Path:
-        """Diretorio raiz das skills DESTE agente. Sempre derivado de
-        self.agent_name — agente nunca passa path. Garante isolamento."""
+        """Root directory of THIS agent's skills. Always derived from
+        self.agent_name — the agent never passes a path. Ensures isolation."""
         return Path("/app/agents") / self.agent_name / "skills"
 
     def _skill_dir(self, name: str) -> Path:
-        """Diretorio de uma skill validada. Resolve e checa que o resultado
-        ainda esta sob _skills_root (defesa-em-profundidade contra traversal,
-        embora a regex ja barre `/` e `..`)."""
+        """Directory of a validated skill. Resolves it and checks the result
+        is still under _skills_root (defense in depth against traversal,
+        although the regex already blocks `/` and `..`)."""
         root = self._skills_root().resolve()
         candidate = (root / name).resolve()
-        # Em containers o `Path.resolve()` segue symlinks; checamos via
-        # `is_relative_to` pra evitar escape.
+        # In containers `Path.resolve()` follows symlinks; check via
+        # `is_relative_to` to prevent escape.
         if not candidate.is_relative_to(root):
             raise ValueError(f"skill name escapes skills root: {name!r}")
         return candidate
@@ -337,13 +337,13 @@ class McpServer:
         return None
 
     def _save_skill(self, name: str, description: str, body: str) -> str:
-        """Escreve <skills_root>/<name>/SKILL.md (upsert). Retorna 'created'
-        ou 'updated'."""
+        """Writes <skills_root>/<name>/SKILL.md (upsert). Returns 'created'
+        or 'updated'."""
         skill_dir = self._skill_dir(name)
         existed = skill_dir.exists()
         skill_dir.mkdir(parents=True, exist_ok=True)
-        # Frontmatter minimo + body. `marked` no Claude CLI parseia frontmatter
-        # YAML; description/name vem dele, nao do body.
+        # Minimal frontmatter + body. `marked` in the Claude CLI parses YAML
+        # frontmatter; description/name come from it, not from the body.
         frontmatter = f"---\nname: {name}\ndescription: {description}\n---\n"
         content = frontmatter + (body if body.endswith("\n") else body + "\n")
         skill_path = skill_dir / "SKILL.md"
@@ -362,8 +362,8 @@ class McpServer:
             if not skill_md.is_file():
                 continue
             description = ""
-            # Le so o suficiente pra extrair `description:` do frontmatter.
-            # Se faltar, retorna string vazia — nao falha o list.
+            # Read just enough to extract `description:` from the frontmatter.
+            # If missing, return an empty string — do not fail the list.
             try:
                 head = skill_md.read_text(encoding="utf-8").splitlines()[:10]
                 for line in head:
@@ -386,7 +386,7 @@ class McpServer:
         name = params.get("name")
         arguments = params.get("arguments") or {}
 
-        # D-96 gating: ask_human/ask_agent/ask_agents_many bloqueados em filha.
+        # D-96 gating: ask_human/ask_agent/ask_agents_many blocked in a child conv.
         if name in ("ask_human", "ask_agent", "ask_agents_many"):
             if await self._is_child_conv(slug):
                 log.info("mcp.child_conv_gate", slug=slug, tool=name)
@@ -412,7 +412,7 @@ class McpServer:
             })
 
         if name == "ask_agent":
-            # topic atual (de quem esta perguntando) — so usado pra logs
+            # current topic (of the asker) — only used for logs
             asker_topic = self.broker.topic_for_slug(slug)
             target_agent = (arguments.get("target_agent") or "").strip()
             question = arguments.get("question")
@@ -513,8 +513,8 @@ class McpServer:
             if not task_slug or not artifact or not next_:
                 return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug, artifact and next are required")
 
-            # Captura origem da task via topic atual do chamador (usado pelo
-            # reactor pra posar notificacao terminal tambem la).
+            # Capture the task origin from the caller's current topic (used by
+            # the reactor to post the terminal notification there too).
             caller_topic = self.broker.topic_for_slug(slug) if self.broker else None
             origin_stream = caller_topic.stream if caller_topic else None
             origin_topic = caller_topic.topic if caller_topic else None
@@ -929,9 +929,9 @@ class McpServer:
         return _err(req_id, JSONRPC_METHOD_NOT_FOUND, f"Unknown tool: {name}")
 
     # ---------- Backlog + Task list store (D-53) ----------
-    # Essas tools falam diretamente com o Postgres (via self.workflow._pool),
-    # sem passar pelo WorkflowManager — sao operacoes de gestao (CRUD de
-    # backlog, list de tasks) que nao movem o estado de workflow.
+    # These tools talk to Postgres directly (via self.workflow._pool),
+    # bypassing the WorkflowManager — they are management operations (backlog
+    # CRUD, task list) that do not move workflow state.
 
     async def _handle_task_store(self, name: str, args: dict) -> dict[str, Any]:
         import json as _json
@@ -1034,7 +1034,7 @@ class McpServer:
                 "aberto", "rascunho", "em_execucao", "promovido", "descartado",
             ):
                 raise ValueError(
-                    f"status invalido: {args['status']!r}. "
+                    f"invalid status: {args['status']!r}. "
                     "Use aberto | rascunho | em_execucao | promovido | descartado."
                 )
             fields = []
@@ -1070,8 +1070,8 @@ class McpServer:
             next_agent = args.get("next_agent")
             initial_topic = (args.get("initial_topic") or f"task-{task_slug}").strip()
 
-            # Resolve initial_step + dispatch_agent ANTES da transacao — usado
-            # tanto pra setar current_step na task quanto pra payload do evento.
+            # Resolve initial_step + dispatch_agent BEFORE the transaction — used
+            # both to set current_step on the task and for the event payload.
             wf = self.workflow.registry.get(workflow) if workflow else None
             initial_step: str | None = None
             if wf and wf.initial_step:
@@ -1086,15 +1086,15 @@ class McpServer:
                     "Pass next_agent or define a workflow with initial_step.agent."
                 )
 
-            # Resolve orchestrator do workflow. Eh quem hospeda a conv-supervisora
-            # da task — ponto fixo enquanto a task vive, independente de quem
-            # promoveu ou de quem executa cada fase. Sem orchestrator declarado,
-            # fallback pro dispatch_agent (workflows pre-orchestrator continuam
-            # funcionando como antes — supervisora == conv da primeira fase).
+            # Resolve the workflow orchestrator. It hosts the task's supervisor
+            # conv — a fixed point while the task lives, regardless of who
+            # promoted it or who runs each phase. With no orchestrator declared,
+            # fall back to dispatch_agent (pre-orchestrator workflows keep
+            # working as before — supervisor == first phase conv).
             orchestrator = (wf.orchestrator if wf else None) or dispatch_agent
-            # origem da task = (orchestrator, task-<slug>). Reactor usa pra
-            # criar conv-supervisora (Caminho A) ou unificar com a conv da
-            # primeira fase (Caminho B, orchestrator == dispatch_agent).
+            # task origin = (orchestrator, task-<slug>). The reactor uses it to
+            # create the supervisor conv (Path A) or merge it with the first
+            # phase conv (Path B, orchestrator == dispatch_agent).
             origin_stream = orchestrator
             origin_topic = initial_topic
 
@@ -1106,11 +1106,11 @@ class McpServer:
                     )
                     if item is None:
                         raise ValueError(f"backlog item '{backlog_slug}' does not exist")
-                    # Cria task (se ja existe, nao duplica — prefer atomic).
-                    # current_step + current_agent setados desde o INSERT pra o
-                    # next_agent que acordar via handoff ja ver estado consistente
-                    # (evita race com claude_runner._step_instructions_block que
-                    # le current_step do banco no spawn).
+                    # Create the task (if it already exists, do not duplicate — prefer atomic).
+                    # current_step + current_agent set from the INSERT so the
+                    # next_agent woken by the handoff already sees consistent state
+                    # (avoids a race with claude_runner._step_instructions_block, which
+                    # reads current_step from the DB at spawn).
                     existing = await conn.fetchval(
                         "SELECT id FROM tasks.tasks WHERE slug = $1", task_slug,
                     )
@@ -1125,7 +1125,7 @@ class McpServer:
                             initial_step, dispatch_agent,
                             origin_stream, origin_topic,
                         )
-                    # Marca item como promovido.
+                    # Mark the item as promoted.
                     await conn.execute(
                         """UPDATE tasks.backlog
                               SET status = 'promovido', promoted_task_slug = $2
@@ -1203,9 +1203,9 @@ class McpServer:
         raise ValueError(f"internal tool not implemented: {name}")
 
     # ---------- Scheduler custom jobs (MCP) ----------
-    # Whitelist: agentes so podem criar/editar jobs com action=post_message.
-    # Actions nativas (backup/cleanup/cost_*) sao gerenciadas no PWA em
-    # /settings/routines — se o agente precisar disso, pede via ask_human.
+    # Whitelist: agents may only create/edit jobs with action=post_message.
+    # Native actions (backup/cleanup/cost_*) are managed in the PWA at
+    # /settings/routines — if the agent needs one, it asks via ask_human.
 
     _AGENT_ACTION_WHITELIST = {"post_message"}
     _AGENT_MAX_JOBS_PER_CREATOR = 20
@@ -1316,8 +1316,8 @@ class McpServer:
             )
             if existing is None:
                 raise ValueError(f"slug {slug!r} does not exist")
-            # Protege action: nao deixa mudar via update (se agente quiser
-            # outro action, delete e recria).
+            # Protect action: do not allow changing it via update (if the agent
+            # wants another action, delete and recreate).
             if "action" in args:
                 raise ValueError(
                     "schedule_update does not change 'action'. Remove and recreate."

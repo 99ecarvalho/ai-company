@@ -1,20 +1,20 @@
-"""Hot reload de agentes em dev. Watcher de mtime em agent.yaml.
+"""Dev hot reload for agents. mtime watcher on agent.yaml.
 
-Mudanca detectada -> docker restart do container do agente.
+Change detected -> docker restart of the agent's container.
 
-Opt-in: rodar via `docker compose --profile dev up -d hot-reload`. Usa
-mesma imagem do watchdog (ja tem docker SDK). Default off pra producao.
+Opt-in: run via `docker compose --profile dev up -d hot-reload`. Uses
+the same image as the watchdog (already has the docker SDK). Off by default for production.
 
-D-63: WATCH_FILES default reduzido a `agent.yaml` apenas. CLAUDE.md (e demais
-secoes do system prompt) sao re-lidos pelo claude_runner a cada invocacao —
-restart vira ruido. agent.yaml continua exigindo restart porque mexe em
-permissions/MCP/pool no entrypoint. Pra restaurar comportamento antigo:
+D-63: WATCH_FILES default reduced to `agent.yaml` only. CLAUDE.md (and the other
+system prompt sections) are re-read by claude_runner on every invocation —
+a restart is just noise. agent.yaml still requires a restart because it touches
+permissions/MCP/pool in the entrypoint. To restore the old behavior:
 WATCH_FILES=CLAUDE.md,agent.yaml.
 
 Env vars:
   AGENTS_DIR         default /workspace/agents
   POLL_SEC           default 5
-  COOLDOWN_SEC       default 10  (debounce restart por agente)
+  COOLDOWN_SEC       default 10  (per-agent restart debounce)
   CONTAINER_PREFIX   default ai-company-agent-
   CONTAINER_SUFFIX   default -1
   WATCH_FILES        default "agent.yaml" (csv)
@@ -86,7 +86,7 @@ def main() -> int:
                         last_mtime[key] = mtime
                         if prev is None or mtime <= prev:
                             continue
-                        # mudanca detectada
+                        # change detected
                         cooldown_until = last_restart.get(agent_name, 0) + COOLDOWN_SEC
                         if now < cooldown_until:
                             log.info(

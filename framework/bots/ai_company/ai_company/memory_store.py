@@ -1,9 +1,9 @@
-"""Memoria de longo prazo por agente — agora em Postgres (schema memory.facts).
+"""Per-agent long-term memory — now in Postgres (schema memory.facts).
 
-Cada agente partilha a tabela mas tem seu proprio namespace (coluna agent).
-Interface async (asyncpg). Consumers chamam com await.
+Agents share the table but each has its own namespace (agent column).
+Async interface (asyncpg). Consumers call it with await.
 
-Fallback: se DATABASE_URL nao setada, retorna stub no-op que nao persiste nada.
+Fallback: if DATABASE_URL is not set, returns a no-op stub that persists nothing.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class MemoryStore:
         import re
         tokens = re.findall(r"\w{2,}", (query or ""), re.UNICODE)
         if tokens:
-            # FTS via to_tsquery com OR entre tokens
+            # FTS via to_tsquery with OR between tokens
             ts_q = " | ".join(tokens)
             rows = await self._pool.fetch(
                 """SELECT id, key, value, tags,
@@ -133,12 +133,12 @@ class MemoryStore:
         value: str | None = None,
         tags: list[str] | None = None,
     ) -> dict:
-        """Atualiza fato existente. Falha com KeyError se key nao existir.
+        """Update an existing fact. Raises KeyError if the key does not exist.
 
-        Pelo menos um de value/tags deve ser fornecido. Campos omitidos sao preservados.
+        At least one of value/tags must be provided. Omitted fields are preserved.
         """
         if value is None and tags is None:
-            raise ValueError("ao menos um de 'value' ou 'tags' deve ser fornecido")
+            raise ValueError("at least one of 'value' or 'tags' must be provided")
         if self._pool is None:
             return {"action": "skipped", "key": key}
         sets: list[str] = []

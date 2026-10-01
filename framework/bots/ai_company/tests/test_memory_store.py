@@ -1,4 +1,4 @@
-"""Tests do MemoryStore — paths sem Postgres (no-pool) e validacao de edit."""
+"""MemoryStore tests — paths without Postgres (no pool) and edit validation."""
 from __future__ import annotations
 
 import pytest
@@ -7,7 +7,7 @@ from ai_company.memory_store import MemoryStore
 
 
 def _store_without_pool() -> MemoryStore:
-    # Sem DATABASE_URL e sem start() -> _pool fica None, metodos viram stubs.
+    # No DATABASE_URL and no start() -> _pool stays None, methods become stubs.
     return MemoryStore(agent_name="tester", database_url="")
 
 

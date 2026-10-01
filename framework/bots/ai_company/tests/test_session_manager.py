@@ -1,12 +1,12 @@
-"""Tests do SessionManager — symlinks idempotentes + session_id tracking + GC.
+"""SessionManager tests — idempotent symlinks + session_id tracking + GC.
 
-Pos-D-61: CLAUDE.md e knowledge nao ficam mais como symlinks no session_dir
-(identidade vai pelo system prompt / --add-dir). Sobram repos/company como
-ergonomia de path.
+Post-D-61: CLAUDE.md and knowledge are no longer symlinks in the session_dir
+(identity goes through the system prompt / --add-dir). What remains is repos/company
+for path ergonomics.
 
-Pos-migracao 009: session_id vive em `messaging.conversations.claude_session_id`
-(Postgres). Quando SessionManager e instanciado sem db_pool (caso dos testes),
-cai num fallback em memoria equivalente.
+Post-migration 009: session_id lives in `messaging.conversations.claude_session_id`
+(Postgres). When SessionManager is instantiated without db_pool (as in the tests),
+it falls back to an equivalent in-memory store.
 """
 from __future__ import annotations
 
@@ -56,13 +56,13 @@ def test_topic_workdir_and_setup_creates_symlinks(tmp_env: SessionManager):
     key = TopicKey(stream="debug", topic="smoke1")
     wd = tmp_env.setup(key)
     assert wd.exists()
-    # Apenas repos + company viram symlinks — CLAUDE.md/knowledge vao
-    # pelo system prompt + --add-dir (D-61).
+    # Only repos + company become symlinks — CLAUDE.md/knowledge go
+    # through the system prompt + --add-dir (D-61).
     assert (wd / "repos").is_symlink()
     assert (wd / "company").is_symlink()
     assert not (wd / "CLAUDE.md").exists()
     assert not (wd / "knowledge").exists()
-    # Apontam pros targets certos
+    # They point to the right targets
     assert (wd / "repos").resolve() == tmp_env.workspace_repos.resolve()
     assert (wd / "company").resolve() == tmp_env.workspace_company.resolve()
 
@@ -75,25 +75,25 @@ def test_setup_is_idempotent(tmp_env: SessionManager):
 
 
 async def test_session_id_roundtrip_inmem_fallback(tmp_env: SessionManager):
-    """Sem db_pool, usa fallback em memoria. Aceita roundtrip basico."""
+    """Without db_pool, uses the in-memory fallback. Supports a basic roundtrip."""
     key = TopicKey(stream="debug", topic="smoke1")
     tmp_env.setup(key)
     assert await tmp_env.session_id_for(key) is None
     await tmp_env.save_session_id(key, "sess-abc-123")
     assert await tmp_env.session_id_for(key) == "sess-abc-123"
-    # Sobrescreve
+    # Overwrite
     await tmp_env.save_session_id(key, "sess-new-456")
     assert await tmp_env.session_id_for(key) == "sess-new-456"
 
 
 async def test_clear_session_id_removes_entry(tmp_env: SessionManager):
-    """clear_session_id zera o id (D-70 — recovery de ghost session)."""
+    """clear_session_id clears the id (D-70 — ghost session recovery)."""
     key = TopicKey(stream="debug", topic="ghost")
     await tmp_env.save_session_id(key, "sess-ghost-xyz")
     assert await tmp_env.session_id_for(key) == "sess-ghost-xyz"
     await tmp_env.clear_session_id(key)
     assert await tmp_env.session_id_for(key) is None
-    # Idempotente: clear de topic sem id nao explode.
+    # Idempotent: clearing a topic without an id does not blow up.
     await tmp_env.clear_session_id(key)
     assert await tmp_env.session_id_for(key) is None
 
@@ -108,21 +108,21 @@ async def test_session_id_isolated_per_topic(tmp_env: SessionManager):
 
 
 async def test_session_ref_persists_cwd_alongside_sid(tmp_env: SessionManager):
-    """D-97: save guarda (sid, cwd); session_ref_for devolve a tupla."""
+    """D-97: save stores (sid, cwd); session_ref_for returns the tuple."""
     key = TopicKey(stream="debug", topic="cwd-track")
     assert await tmp_env.session_ref_for(key) is None
     await tmp_env.save_session_id(key, "sess-A", cwd="/workspace/sessions/foo")
     assert await tmp_env.session_ref_for(key) == ("sess-A", "/workspace/sessions/foo")
-    # Sobrescrever atualiza ambos os campos.
+    # Overwriting updates both fields.
     await tmp_env.save_session_id(key, "sess-B", cwd="/workspace/worktrees/core/x")
     assert await tmp_env.session_ref_for(key) == ("sess-B", "/workspace/worktrees/core/x")
-    # Save sem cwd grava cwd=None (back-compat com call sites legados).
+    # Save without cwd stores cwd=None (back-compat with legacy call sites).
     await tmp_env.save_session_id(key, "sess-C")
     assert await tmp_env.session_ref_for(key) == ("sess-C", None)
 
 
-async def test_clear_zera_cwd_alem_do_sid(tmp_env: SessionManager):
-    """clear_session_id derruba cwd junto pra evitar reuso indevido."""
+async def test_clear_resets_cwd_as_well_as_sid(tmp_env: SessionManager):
+    """clear_session_id drops the cwd too, to avoid improper reuse."""
     key = TopicKey(stream="debug", topic="cwd-clear")
     await tmp_env.save_session_id(key, "sess-X", cwd="/workspace/sessions/y")
     assert await tmp_env.session_ref_for(key) == ("sess-X", "/workspace/sessions/y")
@@ -135,34 +135,34 @@ def test_topic_key_slug_deterministic():
     k1 = TopicKey(stream="my-stream", topic="smoke1")
     k2 = TopicKey(stream="my-stream", topic="smoke1")
     assert k1.slug() == k2.slug()
-    # Caracteres especiais viram _
+    # Special characters become _
     k3 = TopicKey(stream="weird/stream!", topic="x y z")
     assert k3.slug() == "weird_stream___x_y_z" or "weird" in k3.slug()
 
 
 def test_topic_key_slug_truncates_long_topic():
-    # Caso real: coordenador passou descrição inteira (300+ chars) como next_topic.
-    # Antes o slug estourava o limite de 255 bytes do Linux e quebrava session_manager.
+    # Real case: an agent passed a whole description (300+ chars) as next_topic.
+    # The slug used to exceed Linux's 255-byte limit and broke session_manager.
     long_topic = (
-        "Analise o bug SQL->exists() em schedule.php:180 no repo public_api. "
-        "Complexidade pequena — calibre dose accordingly. Identifique a causa raiz "
-        "(se é o exists() que não trata false, ou a query que falha antes), "
-        "e mapeie o fix mínimo seguro para código legado."
+        "Analyze the SQL->exists() bug in schedule.php:180 in the public_api repo. "
+        "Small complexity — calibrate the dose accordingly. Identify the root cause "
+        "(whether it is exists() not handling false, or the query failing earlier), "
+        "and map out the minimal safe fix for legacy code."
     )
-    k = TopicKey(stream="analista", topic=long_topic)
+    k = TopicKey(stream="analyst", topic=long_topic)
     slug = k.slug()
     assert len(slug.encode("utf-8")) <= 200
-    # Determinístico: mesma (stream, topic) produz mesmo slug.
-    assert k.slug() == TopicKey(stream="analista", topic=long_topic).slug()
-    # Topics longos diferentes produzem slugs diferentes (hash desempata).
-    k2 = TopicKey(stream="analista", topic=long_topic + " outra variante")
+    # Deterministic: the same (stream, topic) produces the same slug.
+    assert k.slug() == TopicKey(stream="analyst", topic=long_topic).slug()
+    # Different long topics produce different slugs (the hash breaks ties).
+    k2 = TopicKey(stream="analyst", topic=long_topic + " another variant")
     assert k.slug() != k2.slug()
 
 
 def test_merge_claude_subdirs_agent_only(tmp_path: Path):
-    """Sem main_repo, agents/commands do agente ficam acessiveis no session_dir.
+    """Without main_repo, the agent's agents/commands are reachable from the session_dir.
 
-    Skills nao entram aqui (D-105) — caminho dedicado via symlink global no
+    Skills are not handled here (D-105) — dedicated path via a global symlink in the
     entrypoint.
     """
     agent_home = tmp_path / "agent_home"
@@ -186,14 +186,14 @@ def test_merge_claude_subdirs_agent_only(tmp_path: Path):
     assert linked_subagent.resolve() == agent_subagent.resolve()
     assert linked_command.is_symlink()
     assert linked_command.resolve() == agent_command.resolve()
-    # skills/ NAO eh criado pelo merge (D-105).
+    # skills/ is NOT created by the merge (D-105).
     assert not (wd / ".claude" / "skills").exists()
 
 
 def test_merge_claude_subdirs_with_main_repo(tmp_path: Path):
-    """main_repo preenche entradas que o agente nao tem; agente vence em colisao.
+    """main_repo fills in entries the agent lacks; the agent wins on collision.
 
-    Cobre `agents/` e `commands/` (D-105 tirou `skills/` do merge).
+    Covers `agents/` and `commands/` (D-105 removed `skills/` from the merge).
     """
     agent_home = tmp_path / "agent_home"
     workspace_repos = tmp_path / "repos"
@@ -203,10 +203,10 @@ def test_merge_claude_subdirs_with_main_repo(tmp_path: Path):
     main_repo = workspace_repos / "core"
     main_repo.mkdir()
 
-    # Agente tem reviewer + shared (shared tambem existe no main_repo).
+    # The agent has reviewer + shared (shared also exists in main_repo).
     agent_reviewer = _write_subagent(agent_home / ".claude", "reviewer", body="agent-rev")
     agent_shared = _write_subagent(agent_home / ".claude", "shared", body="agent-shared")
-    # main_repo tem shared (vai perder) + planner (vai entrar) + comando deploy.
+    # main_repo has shared (will lose) + planner (will be added) + the deploy command.
     _write_subagent(main_repo / ".claude", "shared", body="repo-shared")
     main_planner = _write_subagent(main_repo / ".claude", "planner")
     main_cmd = _write_command(main_repo / ".claude", "deploy")
@@ -219,18 +219,18 @@ def test_merge_claude_subdirs_with_main_repo(tmp_path: Path):
     )
     wd = mgr.setup(TopicKey(stream="s", topic="t"))
 
-    # reviewer: veio do agente.
+    # reviewer: came from the agent.
     assert (wd / ".claude" / "agents" / "reviewer.md").resolve() == agent_reviewer.resolve()
-    # shared: AGENTE vence (override) — NAO deve apontar pro main_repo.
+    # shared: the AGENT wins (override) — must NOT point to main_repo.
     assert (wd / ".claude" / "agents" / "shared.md").resolve() == agent_shared.resolve()
-    # planner: veio do main_repo.
+    # planner: came from main_repo.
     assert (wd / ".claude" / "agents" / "planner.md").resolve() == main_planner.resolve()
-    # command deploy veio do main_repo.
+    # the deploy command came from main_repo.
     assert (wd / ".claude" / "commands" / "deploy.md").resolve() == main_cmd.resolve()
 
 
 def test_merge_claude_subdirs_idempotent_and_stale_cleanup(tmp_path: Path):
-    """Setup repetido preserva links corretos; item removido da fonte some do session."""
+    """Repeated setup keeps correct links; an item removed from the source disappears from the session."""
     agent_home = tmp_path / "agent_home"
     workspace_repos = tmp_path / "repos"
     workspace_company = tmp_path / "company"
@@ -249,7 +249,7 @@ def test_merge_claude_subdirs_idempotent_and_stale_cleanup(tmp_path: Path):
     assert (wd / ".claude" / "agents" / "alpha.md").is_symlink()
     assert (wd / ".claude" / "agents" / "beta.md").is_symlink()
 
-    # Remove beta da fonte, roda setup de novo: beta deve sumir; alpha intacto.
+    # Remove beta from the source, run setup again: beta must go away; alpha intact.
     s2.unlink()
     wd2 = mgr.setup(key)
     assert wd == wd2
@@ -258,7 +258,7 @@ def test_merge_claude_subdirs_idempotent_and_stale_cleanup(tmp_path: Path):
 
 
 def test_merge_claude_subdirs_missing_main_repo_is_warning_not_fatal(tmp_path: Path):
-    """main_repo apontando pra path inexistente nao quebra setup."""
+    """main_repo pointing to a nonexistent path does not break setup."""
     agent_home = tmp_path / "agent_home"
     workspace_repos = tmp_path / "repos"
     workspace_company = tmp_path / "company"
@@ -270,10 +270,10 @@ def test_merge_claude_subdirs_missing_main_repo_is_warning_not_fatal(tmp_path: P
         agent_home=agent_home,
         workspace_repos=workspace_repos,
         workspace_company=workspace_company,
-        main_repo_name="nao-existe",
+        main_repo_name="does-not-exist",
     )
     wd = mgr.setup(TopicKey(stream="s", topic="t"))
-    # Subagent do agente continua disponivel.
+    # The agent's subagent is still available.
     assert (wd / ".claude" / "agents" / "only-agent.md").is_symlink()
 
 
@@ -283,7 +283,7 @@ def test_gc_removes_old_dirs(tmp_env: SessionManager):
     wd_old = tmp_env.setup(key_old)
     wd_new = tmp_env.setup(key_new)
 
-    # Simula mtime antigo (2h atras)
+    # Simulate an old mtime (2h ago)
     past = time.time() - (2 * 3600)
     import os
     os.utime(wd_old, (past, past))

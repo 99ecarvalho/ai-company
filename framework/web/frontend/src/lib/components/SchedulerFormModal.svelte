@@ -29,8 +29,8 @@
 
   let slug = $state('');
   let cron = $state('');
-  // Initially only post_message — dropdown extensivel quando novas actions
-  // entrarem na whitelist humana (scheduler_routes._HUMAN_ACTION_WHITELIST).
+  // Initially only post_message — the dropdown can grow when new actions
+  // join the human whitelist (scheduler_routes._HUMAN_ACTION_WHITELIST).
   let action = $state<'post_message'>('post_message');
   let stream = $state('');
   let topic = $state('');

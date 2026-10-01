@@ -481,7 +481,7 @@
   </div>
 </div>
 
-<!-- Modais -->
+<!-- Modals -->
 <BacklogFormModal
   mode="create"
   bind:open={createOpen}

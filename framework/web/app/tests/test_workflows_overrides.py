@@ -1,8 +1,8 @@
-"""Smoke tests dos helpers de overrides em workflows.yaml.
+"""Smoke tests for the workflows.yaml overrides helpers.
 
-Sem pytest (nao instalado no `web` container). Uso unittest da stdlib.
+No pytest (not installed in the `web` container). Uses stdlib unittest.
 
-Run dentro do container web:
+Run inside the web container:
   docker compose exec web python -m unittest app.tests.test_workflows_overrides -v
 """
 from __future__ import annotations
@@ -63,14 +63,14 @@ class NormalizeStepOverrides(unittest.TestCase):
 class ValidateStepOverrides(unittest.TestCase):
     def _expect_400(self, overrides):
         with self.assertRaises(HTTPException) as ctx:
-            _validate_step_overrides("triagem", overrides)
+            _validate_step_overrides("triage", overrides)
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_empty_dict_ok(self):
-        _validate_step_overrides("triagem", {})
+        _validate_step_overrides("triage", {})
 
     def test_full_valid_passes(self):
-        _validate_step_overrides("triagem", {
+        _validate_step_overrides("triage", {
             "model": "opus",
             "effort": "high",
             "memory": {"enabled": True, "auto_inject_limit": 5},
@@ -89,7 +89,7 @@ class ValidateStepOverrides(unittest.TestCase):
         self._expect_400({"memory": {"auto_inject_limit": -1}})
 
     def test_auto_inject_limit_bool_rejected(self):
-        # bool eh subclass de int em python — guard explicito.
+        # bool is a subclass of int in python — explicit guard.
         self._expect_400({"memory": {"auto_inject_limit": True}})
 
     def test_overrides_not_dict_400(self):
@@ -97,18 +97,18 @@ class ValidateStepOverrides(unittest.TestCase):
 
 
 class WorkflowBodyEndToEnd(unittest.TestCase):
-    """Garante que normalize+validate rodam juntos sem quebrar."""
+    """Ensures normalize+validate run together without breaking."""
 
     def _wf_body(self, step_overrides=None):
         step = {"agent": "po", "next": ["done"]}
         if step_overrides is not None:
             step["overrides"] = step_overrides
-        return {"initial_step": "triagem", "steps": {"triagem": step}}
+        return {"initial_step": "triage", "steps": {"triage": step}}
 
     def test_no_overrides_passes(self):
         body = _normalize_workflow_body(self._wf_body())
         _validate_workflow_body("default", body)
-        self.assertNotIn("overrides", body["steps"]["triagem"])
+        self.assertNotIn("overrides", body["steps"]["triage"])
 
     def test_valid_overrides_passes(self):
         body = _normalize_workflow_body(self._wf_body({
@@ -117,13 +117,13 @@ class WorkflowBodyEndToEnd(unittest.TestCase):
         }))
         _validate_workflow_body("default", body)
         self.assertEqual(
-            body["steps"]["triagem"]["overrides"],
+            body["steps"]["triage"]["overrides"],
             {"model": "sonnet", "effort": "low"},
         )
 
     def test_invalid_effort_400_at_validate(self):
         body = _normalize_workflow_body(self._wf_body({"effort": "ultra"}))
-        # normalize aceita (so checa shape); validate rejeita.
+        # normalize accepts (only checks shape); validate rejects.
         with self.assertRaises(HTTPException) as ctx:
             _validate_workflow_body("default", body)
         self.assertEqual(ctx.exception.status_code, 400)

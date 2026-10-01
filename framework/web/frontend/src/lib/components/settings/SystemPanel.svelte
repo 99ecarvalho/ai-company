@@ -16,7 +16,7 @@
   let streams = $state<StreamInfo[]>([]);
   let loading = $state(false);
 
-  // Drafts editaveis
+  // Editable drafts
   let defaultStreamDraft = $state('');
   let contactEmailDraft = $state('');
   let savingGeneral = $state(false);
@@ -94,7 +94,7 @@
       await refresh();
       confirmRotate = false;
     } catch (e) {
-      // Backend devolve 409 quando ja existe e force=false — UI converte em prompt
+      // Backend returns 409 when it already exists and force=false — UI turns it into a prompt
       const msg = String(e);
       if (msg.includes('409') && !force) {
         confirmRotate = true;

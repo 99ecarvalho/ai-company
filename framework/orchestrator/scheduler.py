@@ -1,13 +1,13 @@
 """Scheduler container. APScheduler.
 
-Jobs vem de duas fontes:
+Jobs come from two sources:
   - native defaults: framework/orchestrator/defaults/schedule.yaml (shipped),
-    com overrides per-instancia em scheduler.native_overrides (DB).
-  - custom jobs: scheduler.custom_jobs (DB), criados via PWA / MCP.
+    with per-instance overrides in scheduler.native_overrides (DB).
+  - custom jobs: scheduler.custom_jobs (DB), created via PWA / MCP.
 
-Hot-reload via pg_notify('scheduler_config_reload') — sem restart.
+Hot-reload via pg_notify('scheduler_config_reload') — no restart.
 
-Actions suportadas:
+Supported actions:
 
   post_message              stream/topic/content (+ optional sender)
   backup_company            retain: <n>  (default BACKUP_RETAIN, 30)
@@ -16,8 +16,8 @@ Actions suportadas:
   cleanup_telemetry         days: <n>  (default 90)
   cleanup_live_events       days: <n>  (default 7)
   reaper_runs               seconds: <n>  (default 600) — running -> stale
-  cleanup_runs              days: <n>  (default 7) — DELETE rows terminados
-  cost_budget_check         posta alert em budget-alerts quando agente excede cap
+  cleanup_runs              days: <n>  (default 7) — DELETE finished rows
+  cost_budget_check         posts an alert to budget-alerts when an agent exceeds its cap
 """
 from __future__ import annotations
 
@@ -51,10 +51,10 @@ _stats: dict = {
     "per_job": {},
 }
 
-# Module-scoped pra que o servidor HTTP do scheduler (scheduler_http.py) consiga
-# inspecionar/modificar runtime: get_jobs(), pause_job(id), resume_job(id), e
-# dispatch_job(_jobs_by_id[id]) pra "Run now". AsyncIOScheduler eh thread-safe
-# nesses metodos — pode ser chamado da thread do health server sem tocar o loop.
+# Module-scoped so the scheduler HTTP server (scheduler_http.py) can
+# inspect/modify the runtime: get_jobs(), pause_job(id), resume_job(id), and
+# dispatch_job(_jobs_by_id[id]) for "Run now". AsyncIOScheduler is thread-safe
+# for these methods — they can be called from the health server thread without touching the loop.
 scheduler: AsyncIOScheduler | None = None
 _jobs_by_id: dict[str, dict] = {}
 
@@ -97,7 +97,7 @@ def _load_yaml_jobs(path: Path) -> list[dict]:
 
 
 async def _load_native_overrides(pool: asyncpg.Pool | None) -> dict[str, dict]:
-    """Retorna {id: {cron_override, enabled}} da tabela native_overrides."""
+    """Returns {id: {cron_override, enabled}} from the native_overrides table."""
     if pool is None:
         return {}
     try:
@@ -111,7 +111,7 @@ async def _load_native_overrides(pool: asyncpg.Pool | None) -> dict[str, dict]:
 
 
 async def _load_custom_jobs(pool: asyncpg.Pool | None) -> list[dict]:
-    """Retorna lista de job dicts (shape compativel com YAML) de
+    """Returns a list of job dicts (YAML-compatible shape) from
     scheduler.custom_jobs WHERE enabled=true."""
     if pool is None:
         return []
@@ -139,11 +139,11 @@ async def _load_custom_jobs(pool: asyncpg.Pool | None) -> list[dict]:
 
 
 async def load_jobs(pool: asyncpg.Pool | None = None) -> list[dict]:
-    """Carrega jobs: native defaults (framework YAML) + native overrides (DB)
+    """Loads jobs: native defaults (framework YAML) + native overrides (DB)
     + custom jobs (DB).
 
-    Native merge rule: se `native_overrides.enabled=false` → job skipado;
-    se `cron_override IS NOT NULL` → usa esse cron em vez do default.
+    Native merge rule: if `native_overrides.enabled=false` → job skipped;
+    if `cron_override IS NOT NULL` → use that cron instead of the default.
     """
     defaults = _load_yaml_jobs(DEFAULTS_PATH)
     overrides = await _load_native_overrides(pool)
@@ -164,7 +164,7 @@ async def load_jobs(pool: asyncpg.Pool | None = None) -> list[dict]:
     for j in custom:
         jid = j.get("id")
         if jid:
-            by_id[jid] = j  # DB custom sempre vence
+            by_id[jid] = j  # DB custom always wins
 
     if not by_id:
         log.warning("scheduler.no_config", defaults_path=str(DEFAULTS_PATH))
@@ -177,13 +177,13 @@ async def load_jobs(pool: asyncpg.Pool | None = None) -> list[dict]:
 def run_post_message(job: dict) -> None:
     content = job.get("content", "")
     base_topic = job["topic"]
-    # Cada fire cria conv nova: topic = `<base>-<unix-ts>`. Permite que o PWA
-    # liste runs separados em vez de aglutinar tudo numa thread infinita.
+    # Each fire creates a new conv: topic = `<base>-<unix-ts>`. Lets the PWA
+    # list separate runs instead of piling everything into one endless thread.
     fire_topic = f"{base_topic}-{int(time.time())}"
     body: dict = {"stream": job["stream"], "topic": fire_topic, "content": content}
     sender = job.get("sender")
     if sender:
-        # Broker resolve por username; sem sender, cai em system-bot.
+        # Broker resolves by username; without sender, falls back to system-bot.
         body["as_username"] = sender
     try:
         r = requests.post(
@@ -205,9 +205,9 @@ def run_post_message(job: dict) -> None:
 
 
 def run_backup_company(job: dict) -> None:
-    """Action: gera tar.gz de company/+agents.yaml+override+notes/.
-    Idempotente: escreve em /workspace/backups/<timestamp>.tar.gz e aplica
-    retention (mantem ultimos BACKUP_RETAIN, default 30).
+    """Action: builds a tar.gz of company/+agents.yaml+override+notes/.
+    Idempotent: writes to /workspace/backups/<timestamp>.tar.gz and applies
+    retention (keeps the last BACKUP_RETAIN, default 30).
     """
     import subprocess
     import time
@@ -216,7 +216,7 @@ def run_backup_company(job: dict) -> None:
     retain = int(os.environ.get("BACKUP_RETAIN", job.get("retain", 30)))
     ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     out = backup_dir / f"backup-{ts}.tar.gz"
-    # Paths relativos ao workspace do container (bind mounts de instance/).
+    # Paths relative to the container workspace (bind mounts of instance/).
     paths = [
         "company",
         "agents",
@@ -232,7 +232,7 @@ def run_backup_company(job: dict) -> None:
     except Exception:
         log.exception("scheduler.backup_failed", job_id=job.get("id"))
         return
-    # Retention: apaga mais antigos
+    # Retention: delete the oldest
     backups = sorted(backup_dir.glob("backup-*.tar.gz"))
     for old in backups[:-retain] if len(backups) > retain else []:
         try:
@@ -243,10 +243,10 @@ def run_backup_company(job: dict) -> None:
 
 
 def run_backup_postgres(job: dict) -> None:
-    """Action: pg_dump do banco principal -> /workspace/backups/db-<TS>.sql.gz.
-    Retention: BACKUP_RETAIN (env, default 30) ou job.retain.
+    """Action: pg_dump of the main database -> /workspace/backups/db-<TS>.sql.gz.
+    Retention: BACKUP_RETAIN (env, default 30) or job.retain.
 
-    Requer postgresql-client + gzip na imagem (ver agent.Dockerfile).
+    Requires postgresql-client + gzip in the image (see agent.Dockerfile).
     """
     import subprocess
     import time
@@ -259,8 +259,8 @@ def run_backup_postgres(job: dict) -> None:
     if not db_url:
         log.error("scheduler.db_backup_no_dsn", job_id=job.get("id"))
         return
-    # Stream pg_dump | gzip pra arquivo. Sem shell=True (db_url embutido seria
-    # safe — env-controlled — mas evitamos injection-by-default).
+    # Stream pg_dump | gzip to a file. No shell=True (embedding db_url would be
+    # safe — env-controlled — but we avoid injection-by-default).
     try:
         with out.open("wb") as f:
             dump = subprocess.Popen(
@@ -282,7 +282,7 @@ def run_backup_postgres(job: dict) -> None:
         log.info("scheduler.db_backup_ok", job_id=job.get("id"), path=str(out), size_bytes=size)
     except Exception:
         log.exception("scheduler.db_backup_failed", job_id=job.get("id"))
-        # cleanup parcial vazio
+        # clean up an empty partial file
         try:
             if out.exists() and out.stat().st_size == 0:
                 out.unlink()
@@ -300,10 +300,10 @@ def run_backup_postgres(job: dict) -> None:
 
 
 def _pg_notify(channel: str, payload: dict) -> None:
-    """Emite pg_notify(channel, payload::jsonb) via psql. Usado pra sinalizar
-    ao SSE do web que houve mudanca (job fired, paused, etc). Payload JSON
-    escapado por doubling de aspas simples — SQL-safe porque JSON so contem
-    aspas simples dentro de strings de valor, nunca quebrando o wrapper."""
+    """Emits pg_notify(channel, payload::jsonb) via psql. Used to signal
+    web's SSE that something changed (job fired, paused, etc). The JSON payload
+    is escaped by doubling single quotes — SQL-safe because JSON only has
+    single quotes inside value strings, never breaking the wrapper."""
     import json as _json
     import subprocess
     db_url = os.environ.get("DATABASE_URL")
@@ -318,13 +318,13 @@ def _pg_notify(channel: str, payload: dict) -> None:
             capture_output=True, text=True, check=True, timeout=5,
         )
     except Exception:
-        # best-effort; scheduler nao pode falhar por causa de notify
+        # best-effort; the scheduler must not fail because of notify
         log.exception("scheduler.pg_notify_failed", channel=channel)
 
 
 def _run_cleanup_sql(sql: str, label: str, job_id: str | None) -> None:
-    """Roda DELETE encapsulado em CTE + SELECT COUNT(*) pra logar quantos
-    foram. Usa psql (postgresql-client ja na imagem)."""
+    """Runs a DELETE wrapped in a CTE + SELECT COUNT(*) to log how many
+    went. Uses psql (postgresql-client is already in the image)."""
     import subprocess
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
@@ -347,7 +347,7 @@ def _run_cleanup_sql(sql: str, label: str, job_id: str | None) -> None:
 
 
 def run_cleanup_sessions(job: dict) -> None:
-    """DELETE web.sessions com expires_at no passado."""
+    """DELETE web.sessions with expires_at in the past."""
     _run_cleanup_sql(
         "WITH d AS (DELETE FROM web.sessions WHERE expires_at < now() RETURNING 1) "
         "SELECT COUNT(*) FROM d;",
@@ -356,7 +356,7 @@ def run_cleanup_sessions(job: dict) -> None:
 
 
 def run_cleanup_telemetry(job: dict) -> None:
-    """DELETE telemetry.events mais velhos que job.days (default 90)."""
+    """DELETE telemetry.events older than job.days (default 90)."""
     days = max(1, int(job.get("days", 90)))
     _run_cleanup_sql(
         f"WITH d AS (DELETE FROM telemetry.events WHERE ts < now() - INTERVAL '{days} days' RETURNING 1) "
@@ -366,8 +366,8 @@ def run_cleanup_telemetry(job: dict) -> None:
 
 
 def run_cleanup_live_events(job: dict) -> None:
-    """DELETE telemetry.live_events mais velhos que job.days (default 7).
-    Cresce rapido — TTL curto."""
+    """DELETE telemetry.live_events older than job.days (default 7).
+    Grows fast — short TTL."""
     days = max(1, int(job.get("days", 7)))
     _run_cleanup_sql(
         f"WITH d AS (DELETE FROM telemetry.live_events WHERE ts < now() - INTERVAL '{days} days' RETURNING 1) "
@@ -377,15 +377,15 @@ def run_cleanup_live_events(job: dict) -> None:
 
 
 def run_reaper_runs(job: dict) -> None:
-    """Transiciona messaging.runs com status='running' e heartbeat antigo
-    pra status='stale'. Migration 030: messaging.runs eh single source of
-    truth do estado do CLI; o trigger trg_notify_runs_stale dispara
-    pg_notify('conv_activity', kind='run_stale') pra atualizar a sidebar
-    do PWA.
+    """Moves messaging.runs with status='running' and an old heartbeat
+    to status='stale'. Migration 030: messaging.runs is the single source of
+    truth for CLI state; the trg_notify_runs_stale trigger fires
+    pg_notify('conv_activity', kind='run_stale') to update the PWA
+    sidebar.
 
-    Threshold default 600s (espelha RUNNER_STUCK_SEC do web). Cobre
-    SIGKILL hard, container kill sem run_end, network glitch perdendo
-    o run_end fire-and-forget."""
+    Default threshold 600s (mirrors web's RUNNER_STUCK_SEC). Covers
+    hard SIGKILL, container kill without run_end, a network glitch losing
+    the fire-and-forget run_end."""
     seconds = max(60, int(job.get("seconds", 600)))
     _run_cleanup_sql(
         "WITH u AS ("
@@ -402,9 +402,9 @@ def run_reaper_runs(job: dict) -> None:
 
 
 def run_cleanup_runs(job: dict) -> None:
-    """DELETE messaging.runs terminados (done/error/stale) mais velhos que
-    job.days (default 7). Espelha o TTL de telemetry.live_events. Nunca
-    deleta rows com status='running' — reaper transiciona antes."""
+    """DELETE finished messaging.runs (done/error/stale) older than
+    job.days (default 7). Mirrors the telemetry.live_events TTL. Never
+    deletes rows with status='running' — the reaper moves them first."""
     days = max(1, int(job.get("days", 7)))
     _run_cleanup_sql(
         "WITH d AS ("
@@ -418,14 +418,14 @@ def run_cleanup_runs(job: dict) -> None:
 
 
 def run_cleanup_live_events_output_full(job: dict) -> None:
-    """Remove o campo `output_full` do data JSONB em eventos > job.hours
-    (default 48h). Linha permanece (output inline 5KB + is_error + meta
-    preservados); so o blob grande sai. "View full" no PWA so funciona
-    durante essa janela.
+    """Removes the `output_full` field from the data JSONB in events > job.hours
+    (default 48h). The row stays (5KB inline output + is_error + meta
+    preserved); only the large blob goes. "View full" in the PWA only works
+    within that window.
 
-    UPDATE ao inves de DELETE: nao queremos perder a row pra nao furar
-    metricas (tool_uses count por conv, por exemplo). Count retornado eh
-    quantas rows foram modificadas."""
+    UPDATE instead of DELETE: we don't want to lose the row and break
+    metrics (tool_uses count per conv, for example). The returned count is
+    how many rows were modified."""
     hours = max(1, int(job.get("hours", 48)))
     _run_cleanup_sql(
         "WITH u AS ("
@@ -440,18 +440,18 @@ def run_cleanup_live_events_output_full(job: dict) -> None:
 
 
 def run_cost_budget_check(job: dict) -> None:
-    """Compara gasto de hoje (UTC) por agente vs web.cost_budgets. Quando
-    passa do limite, posta msg via broker em #<TERMINAL_NOTIFY_STREAM>/budget-
-    alerts e registra em web.budget_alerts pra nao repetir no mesmo dia
-    (cooldown 1 dia por agente).
+    """Compares today's (UTC) spend per agent vs web.cost_budgets. When it
+    exceeds the limit, posts a msg via the broker to #<TERMINAL_NOTIFY_STREAM>/budget-
+    alerts and records it in web.budget_alerts to avoid repeating on the same day
+    (1-day cooldown per agent).
     """
     import subprocess
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         log.error("scheduler.budget_check_no_dsn", job_id=job.get("id"))
         return
-    # Posta alert no proprio stream do agente (sempre existe se gerou cost).
-    # Override opcional via job.stream pra centralizar num canal especifico.
+    # Post the alert to the agent's own stream (always exists if it generated cost).
+    # Optional override via job.stream to centralize in a specific channel.
     override_stream = job.get("stream")
     sql = (
         "WITH today_spend AS ("
@@ -494,10 +494,10 @@ def run_cost_budget_check(job: dict) -> None:
         except ValueError:
             continue
         msg = (
-            f"⚠️ **Budget excedido**\n\n"
-            f"Agente `{agent}` gastou **${spent:.4f}** hoje "
-            f"(limite ${lim:.4f}, {spent / lim * 100:.0f}%).\n\n"
-            f"Considere pausar trabalho desse agente ou ajustar o budget."
+            f"⚠️ **Budget exceeded**\n\n"
+            f"Agent `{agent}` spent **${spent:.4f}** today "
+            f"(limit ${lim:.4f}, {spent / lim * 100:.0f}%).\n\n"
+            f"Consider pausing this agent's work or adjusting the budget."
         )
         target_stream = override_stream or agent
         try:
@@ -516,7 +516,7 @@ def run_cost_budget_check(job: dict) -> None:
         except Exception:
             log.exception("scheduler.budget_post_failed", agent=agent)
             continue
-        # cooldown: marca alert
+        # cooldown: record the alert
         try:
             subprocess.run(
                 ["psql", "--dbname", db_url, "-At", "-v", "ON_ERROR_STOP=1", "-c",
@@ -534,7 +534,7 @@ def run_cost_budget_check(job: dict) -> None:
 
 def dispatch_job(job: dict) -> None:
     action = job.get("action")
-    job_id = job.get("id") or "<sem-id>"
+    job_id = job.get("id") or "<no-id>"
     started = time.time()
     _stats["jobs_fired"] += 1
     _stats["last_fire_at"] = started
@@ -577,7 +577,7 @@ def dispatch_job(job: dict) -> None:
             "last_error": err,
             "last_duration_ms": duration_ms,
         }
-        # Notifica SSE (/api/scheduler/events) — best-effort, nao bloqueia.
+        # Notify SSE (/api/scheduler/events) — best-effort, non-blocking.
         _pg_notify("scheduler_event", {
             "kind": "job_fired",
             "job_id": job_id,
@@ -599,8 +599,8 @@ def _health_status() -> dict:
 
 
 def _register_job(job: dict) -> bool:
-    """Registra (ou re-registra) job no scheduler APScheduler. Retorna
-    True se ok, False se invalido. Idempotente via replace_existing."""
+    """Registers (or re-registers) a job in the APScheduler scheduler. Returns
+    True if ok, False if invalid. Idempotent via replace_existing."""
     job_id = job.get("id")
     cron = job.get("cron")
     if not job_id or not cron or not scheduler:
@@ -631,7 +631,7 @@ def _unregister_job(job_id: str) -> None:
 
 
 async def _handle_reload(pool: asyncpg.Pool, scope: str, id_: str | None) -> None:
-    """Aplica um reload pontual ou geral ao scheduler em runtime."""
+    """Applies a targeted or full reload to the scheduler at runtime."""
     log.info("scheduler.config_reload_received", scope=scope, id=id_)
     if scope == "all" or id_ is None:
         jobs = await load_jobs(pool)
@@ -685,8 +685,8 @@ async def _handle_reload(pool: asyncpg.Pool, scope: str, id_: str | None) -> Non
 
 
 async def _config_reload_loop() -> None:
-    """Conn dedicada pra LISTEN scheduler_config_reload. Reconecta em
-    backoff se cair. Padrao copiado de web/app/broker.py:314-382."""
+    """Dedicated conn for LISTEN scheduler_config_reload. Reconnects with
+    backoff if it drops. Pattern copied from web/app/broker.py:314-382."""
     if not DATABASE_URL:
         log.warning("scheduler.reload_loop_disabled", reason="no DATABASE_URL")
         return
@@ -732,19 +732,19 @@ async def _config_reload_loop() -> None:
 
 async def run() -> None:
     global scheduler
-    # Servidor HTTP do scheduler: alem de /health, expoe /jobs, /jobs/{id}/run,
-    # /jobs/{id}/pause, /jobs/{id}/resume — consumidos pelo broker que proxia
-    # pra UI do PWA. Roda em thread daemon (http.server, sync).
+    # Scheduler HTTP server: besides /health, exposes /jobs, /jobs/{id}/run,
+    # /jobs/{id}/pause, /jobs/{id}/resume — consumed by the broker, which proxies
+    # them to the PWA UI. Runs in a daemon thread (http.server, sync).
     import sys
     from . import scheduler_http
-    # Passa esta instancia do modulo (que pode ser __main__ quando rodado como
-    # `python -m orchestrator.scheduler`) pra evitar que scheduler_http leia
-    # uma segunda copia importada com estado vazio.
+    # Pass this module instance (which may be __main__ when run as
+    # `python -m orchestrator.scheduler`) so scheduler_http doesn't read
+    # a second imported copy with empty state.
     scheduler_http.start_server(HEALTH_PORT, _health_status, sys.modules[__name__])
 
     scheduler = AsyncIOScheduler(timezone=os.environ.get("TZ", "UTC"))
 
-    # Pool asyncpg pra load_jobs (le native_overrides + custom_jobs).
+    # asyncpg pool for load_jobs (reads native_overrides + custom_jobs).
     load_pool: asyncpg.Pool | None = None
     if DATABASE_URL:
         try:
@@ -754,7 +754,7 @@ async def run() -> None:
 
     jobs = await load_jobs(load_pool)
     if load_pool is not None:
-        await load_pool.close()  # _config_reload_loop cria seu proprio pool
+        await load_pool.close()  # _config_reload_loop creates its own pool
     log.info("scheduler.loading", num_jobs=len(jobs), health_port=HEALTH_PORT)
 
     for job in jobs:
@@ -764,7 +764,7 @@ async def run() -> None:
     scheduler.start()
     log.info("scheduler.started")
 
-    # Task de hot-reload em paralelo — escuta pg_notify e reschedules sem restart.
+    # Hot-reload task in parallel — listens to pg_notify and reschedules without a restart.
     reload_task = asyncio.create_task(_config_reload_loop())
 
     try:

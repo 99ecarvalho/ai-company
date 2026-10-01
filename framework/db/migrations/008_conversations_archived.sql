@@ -1,15 +1,15 @@
--- 008: archived_at em messaging.conversations pra soft-delete manual de threads
--- pelo humano no PWA.
+-- 008: archived_at on messaging.conversations for manual soft-delete of threads
+-- by the human in the PWA.
 --
--- Parte do plano D-57 (unificacao tasks <-> threads + Active/Closed manual):
--- a PWA passa a ter *uma* lista de threads (mata abas Mine/Background/Tasks),
--- com dois filtros Active (archived_at IS NULL) e Closed (archived_at IS NOT
--- NULL). Decisao de fechar/reabrir e sempre do humano, nunca automatica —
--- nem quando a task atrelada bate terminal (done/halt/human_review), a thread
--- fecha sozinha.
+-- Part of the D-57 plan (tasks <-> threads unification + manual Active/Closed):
+-- the PWA now has *one* thread list (kills the Mine/Background/Tasks tabs),
+-- with two filters, Active (archived_at IS NULL) and Closed (archived_at IS NOT
+-- NULL). Closing/reopening is always the human's decision, never automatic —
+-- not even when the linked task hits a terminal (done/halt/human_review) does the
+-- thread close by itself.
 --
--- Aditivo: NULL default preserva comportamento atual (todas as convs existentes
--- viram Active). Reversivel trivialmente (DROP COLUMN).
+-- Additive: NULL default preserves current behavior (all existing convs
+-- become Active). Trivially reversible (DROP COLUMN).
 
 ALTER TABLE messaging.conversations
   ADD COLUMN archived_at TIMESTAMPTZ;

@@ -8,12 +8,12 @@ export type TaskFilter = 'active' | 'done' | 'archived';
 export const tasks = writable<TaskSummary[]>([]);
 export const taskFilter = writable<TaskFilter>('active');
 
-// Query local da lista de tasks. Aplica sobre slug/title/workflow/current_agent
-// (case-insensitive). Zero API — FTS em artefatos fica pra outra rodada.
+// Local query for the task list. Applied to slug/title/workflow/current_agent
+// (case-insensitive). Zero API — FTS over artifacts is left for another round.
 export const taskQuery = writable<string>('');
 
-// Se precisa incluir arquivadas no fetch: só quando filtro é 'archived'.
-// 'active' e 'done' usam o default enxuto (sem _archive/).
+// Whether to include archived ones in the fetch: only when the filter is 'archived'.
+// 'active' and 'done' use the lean default (no _archive/).
 const includeArchivedForFilter = (f: TaskFilter) => f === 'archived';
 
 export const filteredTasks = derived([tasks, taskFilter], ([$tasks, $filter]) => {
@@ -21,12 +21,12 @@ export const filteredTasks = derived([tasks, taskFilter], ([$tasks, $filter]) =>
     if ($filter === 'archived') return t.archived;
     if (t.archived) return false;
     if ($filter === 'done') return t.status === 'done';
-    // 'active' — tudo não-arquivado que não é done. Inclui null/in_progress/halt/human_review.
+    // 'active' — everything non-archived that isn't done. Includes null/in_progress/halt/human_review.
     return t.status !== 'done';
   });
 });
 
-/** Composicao: filteredTasks + taskQuery. Consumido pela /tasks list page. */
+/** Composition: filteredTasks + taskQuery. Consumed by the /tasks list page. */
 export const visibleTasks = derived(
   [filteredTasks, taskQuery],
   ([items, q]) => {
@@ -58,7 +58,7 @@ export async function refreshTasks() {
   }
 }
 
-// Quando o filtro muda, re-fetch (pra incluir/excluir arquivadas).
+// When the filter changes, re-fetch (to include/exclude archived ones).
 taskFilter.subscribe(() => {
   if (sseClient) refreshTasks();
 });

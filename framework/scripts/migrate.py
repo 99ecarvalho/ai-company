@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Aplica migrations SQL versionadas em framework/db/migrations/.
+"""Applies the versioned SQL migrations in framework/db/migrations/.
 
-Cada arquivo NNN_nome.sql e aplicado em transacao. Versao fica em
-public.schema_migrations. Idempotente: reroda sem efeito se nada novo.
+Each NNN_name.sql file is applied in a transaction. The version is stored in
+public.schema_migrations. Idempotent: rerunning is a no-op if nothing is new.
 
-Uso:
-  python3 migrate.py                     # aplica pendentes
-  python3 migrate.py --status            # lista applied + pending
-  python3 migrate.py --baseline <N>      # marca 001..N como applied
-                                         # (pra DBs ja populados migrarem
-                                         #  pro sistema de migrations sem
-                                         #  re-rodar o que ja existe)
+Usage:
+  python3 migrate.py                     # apply pending
+  python3 migrate.py --status            # list applied + pending
+  python3 migrate.py --baseline <N>      # mark 001..N as applied
+                                         # (so already-populated DBs can move
+                                         #  to the migration system without
+                                         #  re-running what already exists)
 
-DSN vem de DATABASE_URL. Se ausente: erro.
+The DSN comes from DATABASE_URL. If missing: error.
 """
 from __future__ import annotations
 
@@ -41,17 +41,17 @@ async def _ensure_table(conn: asyncpg.Connection) -> None:
 
 
 def _list_migrations() -> list[tuple[int, str, Path]]:
-    """Retorna [(version, name, path), ...] ordenado por version."""
+    """Returns [(version, name, path), ...] sorted by version."""
     out: list[tuple[int, str, Path]] = []
     if not MIGRATIONS_DIR.is_dir():
         return out
     for p in sorted(MIGRATIONS_DIR.glob("*.sql")):
-        stem = p.stem  # ex: "001_init"
+        stem = p.stem  # e.g. "001_init"
         try:
             v_str, name = stem.split("_", 1)
             version = int(v_str)
         except ValueError:
-            print(f"ignore (nome invalido): {p.name}", file=sys.stderr)
+            print(f"ignore (invalid name): {p.name}", file=sys.stderr)
             continue
         out.append((version, name, p))
     return out
@@ -96,7 +96,7 @@ async def cmd_status(dsn: str) -> int:
         applied = await _applied_versions(conn)
         migs = _list_migrations()
         if not migs:
-            print("(nenhuma migration em framework/db/migrations/)")
+            print("(no migrations in framework/db/migrations/)")
             return 0
         print(f"{'ver':>4}  {'name':<30}  status")
         print(f"{'-' * 4}  {'-' * 30}  {'-' * 7}")
@@ -112,8 +112,8 @@ async def cmd_status(dsn: str) -> int:
 
 
 async def cmd_baseline(dsn: str, up_to: int) -> int:
-    """Marca todas versions <= up_to como aplicadas sem rodar o SQL.
-    Pra DBs ja populados manualmente (init.sql antigo) entrando no sistema.
+    """Marks every version <= up_to as applied without running the SQL.
+    For DBs already populated by hand (old init.sql) joining the system.
     """
     conn = await asyncpg.connect(dsn)
     try:
@@ -133,8 +133,8 @@ async def cmd_baseline(dsn: str, up_to: int) -> int:
                 print(f"baseline marked: {version:03d}_{name}")
                 marked += 1
             else:
-                print(f"skip (ja aplicada): {version:03d}_{name}")
-        print(f"{marked} marcada(s) como baseline (sem executar SQL)")
+                print(f"skip (already applied): {version:03d}_{name}")
+        print(f"{marked} marked as baseline (SQL not executed)")
         return 0
     finally:
         await conn.close()
@@ -143,7 +143,7 @@ async def cmd_baseline(dsn: str, up_to: int) -> int:
 def main() -> int:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
-        print("erro: DATABASE_URL nao definida", file=sys.stderr)
+        print("error: DATABASE_URL is not set", file=sys.stderr)
         return 1
     args = sys.argv[1:]
     if not args:
@@ -152,7 +152,7 @@ def main() -> int:
         return asyncio.run(cmd_status(dsn))
     if args[0] == "--baseline":
         if len(args) < 2:
-            print("uso: --baseline <version>", file=sys.stderr)
+            print("usage: --baseline <version>", file=sys.stderr)
             return 2
         return asyncio.run(cmd_baseline(dsn, int(args[1])))
     print(__doc__)

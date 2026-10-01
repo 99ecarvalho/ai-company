@@ -1,16 +1,16 @@
 #!/bin/bash
-# Gera o arquivo .env com secrets aleatorios + defaults e prepara instance/.
-# Idempotente: nao sobrescreve se .env ja existe (use --force pra regenerar).
-# Sempre garante as pastas de instance/ (precisam existir antes do compose up
-# pra Docker nao criar bind-mounts como root).
+# Generates the .env file with random secrets + defaults and prepares instance/.
+# Idempotent: does not overwrite an existing .env (use --force to regenerate).
+# Always ensures the instance/ folders exist (they must exist before compose up
+# so Docker does not create the bind mounts as root).
 set -euo pipefail
 
 PROJECT_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$PROJECT_ROOT"
 
-# Le env vars customizaveis do ambiente primeiro, depois .env se existir
-# (pra respeitar override de AGENTS_DIR/COMPANY_DIR/BACKUPS_DIR). install.sh
-# exporta essas vars antes de nos chamar, entao pegamos pelo env.
+# Read customizable vars from the environment first, then from .env if present
+# (to honor AGENTS_DIR/COMPANY_DIR/BACKUPS_DIR overrides). install.sh
+# exports these vars before calling us, so we pick them up from the env.
 read_env_var() {
   local var="$1" default="$2"
   local env_val="${!var:-}"
@@ -30,9 +30,9 @@ REPOS_DIR_HOST=$(read_env_var REPOS_DIR "./instance/repos")
 WORKTREES_DIR_HOST=$(read_env_var WORKTREES_DIR "./instance/worktrees")
 SESSIONS_DIR_HOST=$(read_env_var SESSIONS_DIR "./instance/sessions")
 
-# Garante tudo que agent/web/orchestrator fazem bind-mount — impede Docker
-# de criar essas pastas como root na primeira subida.
-echo "→ Preparando pastas da instancia"
+# Ensure everything agent/web/orchestrator bind-mount exists — keeps Docker
+# from creating these folders as root on first start.
+echo "→ Preparing instance folders"
 mkdir -p \
   "$AGENTS_DIR_HOST" \
   "$COMPANY_DIR_HOST" \
@@ -42,41 +42,41 @@ mkdir -p \
   "$SESSIONS_DIR_HOST" \
   instance/heartbeats
 
-# Worktrees precisa ser escrita por agente (UID node=1000) e tambem pelo host
-# (UID do usuario dev). Bind-mount herda ownership do host — abrimos permissao
-# pra que o agente consiga criar e o host consiga inspecionar/limpar.
+# Worktrees must be writable by agents (UID node=1000) and also by the host
+# (the developer's UID). The bind mount inherits host ownership — we open up
+# permissions so agents can create them and the host can inspect/clean them.
 chmod 777 "$WORKTREES_DIR_HOST" 2>/dev/null || true
 
-# Seed do CONTEXT.md (contexto compartilhado injetado no system prompt
-# de todos os agentes).
+# Seed CONTEXT.md (shared context injected into the system prompt
+# of every agent).
 if [ ! -e "$COMPANY_DIR_HOST/CONTEXT.md" ]; then
   if [ -f framework/templates/CONTEXT.md.example ]; then
     cp framework/templates/CONTEXT.md.example "$COMPANY_DIR_HOST/CONTEXT.md"
-    echo "  seed: $COMPANY_DIR_HOST/CONTEXT.md copiado do template (edite no PWA)"
+    echo "  seed: $COMPANY_DIR_HOST/CONTEXT.md copied from the template (edit it in the PWA)"
   fi
 fi
 
-# Seed do philosophy.md (filosofia operacional ativa). Vazio por default;
-# preenchido pelo wizard de onboarding ou cp manual de framework/templates/philosophies/.
+# Seed philosophy.md (active operating philosophy). Empty by default;
+# filled in by the onboarding wizard or a manual cp from framework/templates/philosophies/.
 if [ ! -e "$COMPANY_DIR_HOST/philosophy.md" ]; then
-  printf '# Philosophy\n\n_(opcional — define modelo operacional. Veja templates em framework/templates/philosophies/.)_\n' \
+  printf '# Philosophy\n\n_(optional — defines the operating model. See templates in framework/templates/philosophies/.)_\n' \
     > "$COMPANY_DIR_HOST/philosophy.md"
 fi
 
-# Seed do agents.yaml se nao existir.
+# Seed agents.yaml if missing.
 if [ ! -e "$AGENTS_DIR_HOST/agents.yaml" ]; then
   if [ -f framework/examples/agents.yaml.example ]; then
     cp framework/examples/agents.yaml.example "$AGENTS_DIR_HOST/agents.yaml"
-    echo "  seed: $AGENTS_DIR_HOST/agents.yaml copiado do example (edite e rode make reconcile)"
+    echo "  seed: $AGENTS_DIR_HOST/agents.yaml copied from the example (edit it and run make reconcile)"
   fi
 fi
 
-# Seed do workflows.yaml se nao existir. Opcional — na ausencia, o framework
-# opera em modo permissivo (aceita qualquer step, exige next_agent explicito).
+# Seed workflows.yaml if missing. Optional — without it the framework runs in
+# permissive mode (accepts any step, requires an explicit next_agent).
 if [ ! -e "$COMPANY_DIR_HOST/workflows.yaml" ]; then
   if [ -f framework/examples/workflows.yaml.example ]; then
     cp framework/examples/workflows.yaml.example "$COMPANY_DIR_HOST/workflows.yaml"
-    echo "  seed: $COMPANY_DIR_HOST/workflows.yaml copiado do example (edite pra declarar seus steps)"
+    echo "  seed: $COMPANY_DIR_HOST/workflows.yaml copied from the example (edit it to declare your steps)"
   fi
 fi
 
@@ -84,15 +84,15 @@ ENV_FILE=".env"
 FORCE=${1:-}
 
 if [ -f "$ENV_FILE" ] && [ "$FORCE" != "--force" ]; then
-  echo "$ENV_FILE ja existe. Use '--force' pra regenerar."
+  echo "$ENV_FILE already exists. Use '--force' to regenerate."
   exit 0
 fi
 
 gen() { openssl rand -hex 32; }
 
 cat > "$ENV_FILE" <<EOF
-# Gerado por framework/scripts/bootstrap-env.sh em $(date -u +%Y-%m-%dT%H:%M:%SZ)
-# NAO COMITAR este arquivo. .gitignore ja ignora.
+# Generated by framework/scripts/bootstrap-env.sh at $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# DO NOT COMMIT this file. .gitignore already ignores it.
 
 # --- Postgres ---
 POSTGRES_DB=ai_company
@@ -104,10 +104,10 @@ ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=
 
 # --- PWA auth ---
-# DEV: 1 mantem admin implicito quando nao ha cookie/token (single-user local).
-# PROD: deixe vazio + ADMIN_PASSWORD setado pra forcar login.
+# DEV: 1 keeps an implicit admin when there is no cookie/token (local single-user).
+# PROD: leave empty + set ADMIN_PASSWORD to force login.
 WEB_AUTH_DEV_BYPASS=1
-# Marcar cookies como Secure (=requer HTTPS). Setar 1 quando expor com TLS.
+# Mark cookies as Secure (=requires HTTPS). Set to 1 when exposing over TLS.
 WEB_COOKIE_SECURE=
 
 # --- Service tokens ---
@@ -116,8 +116,8 @@ SCHEDULER_TOKEN=$(gen)
 
 # --- Transcriber ---
 # GPU: layer docker-compose.gpu.yml (COMPOSE_FILE=...:docker-compose.gpu.yml)
-# pra reservar NVIDIA + flipar pra cuda/large-v3/float16. Defaults aqui sao
-# conservadores (CPU/small/int8) pra rodar em qualquer host.
+# to reserve an NVIDIA GPU + switch to cuda/large-v3/float16. The defaults here
+# are conservative (CPU/small/int8) so they run on any host.
 WHISPER_MODEL=small
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
@@ -126,51 +126,51 @@ WHISPER_LANGUAGE=
 # --- Timezone ---
 TZ=America/Sao_Paulo
 
-# --- Deploy: multi-empresa na mesma maquina ---
-# Para rodar varias empresas lado a lado, copie o framework pra pastas separadas
-# e troque COMPOSE_PROJECT_NAME + WEB_PORT em cada .env.
+# --- Deploy: multiple companies on one machine ---
+# To run several companies side by side, copy the framework into separate folders
+# and change COMPOSE_PROJECT_NAME + WEB_PORT in each .env.
 COMPOSE_PROJECT_NAME=ai-company
 WEB_PORT=9090
 
-# --- BYOI / Docker config (registry privado) ---
-# Preencha se algum agente usar image: de registry privado.
-# Setup: DOCKER_CONFIG=./.docker docker login <registry> (install.sh faz auto).
+# --- BYOI / Docker config (private registry) ---
+# Fill in if any agent uses an image: from a private registry.
+# Setup: DOCKER_CONFIG=./.docker docker login <registry> (install.sh does it automatically).
 DOCKER_CONFIG=
 
-# --- Paths customizaveis da instancia ---
-# Bind-mounts que o docker-compose expande no host. Defaults mantem tudo
-# em ./instance/ (comportamento classico). Troque se quiser:
-#  - versionar config separada (AGENTS_DIR/COMPANY_DIR em repo proprio),
-#  - rodar multi-empresa com 1 framework + N instancias em paths distintos,
-#  - pipar backups pra disco/mount diferente,
-#  - manter repos FORA do framework pra editor nao ver gits aninhados.
+# --- Customizable instance paths ---
+# Bind mounts that docker-compose expands on the host. The defaults keep everything
+# in ./instance/ (classic behavior). Change them if you want to:
+#  - version config separately (AGENTS_DIR/COMPANY_DIR in their own repo),
+#  - run several companies with 1 framework + N instances in different paths,
+#  - send backups to a different disk/mount,
+#  - keep repos OUTSIDE the framework so the editor does not see nested git repos.
 AGENTS_DIR=./instance/agents
 COMPANY_DIR=./instance/company
 BACKUPS_DIR=./instance/backups
 REPOS_DIR=./instance/repos
-# Worktrees vao aqui (fora de REPOS_DIR) pra nao poluir status do repo
-# canonico. create_worktree cria em WORKTREES_DIR/<repo>/<slug>/.
+# Worktrees go here (outside REPOS_DIR) so they do not pollute the canonical
+# repo's status. create_worktree creates them in WORKTREES_DIR/<repo>/<slug>/.
 WORKTREES_DIR=./instance/worktrees
-# Runtime cwds por topic (D-51). Separado de AGENTS_DIR pra config persistente
-# (agent.yaml, CLAUDE.md, knowledge/) nao misturar com state efemero (GC 24h).
+# Runtime cwds per topic (D-51). Kept apart from AGENTS_DIR so persistent config
+# (agent.yaml, CLAUDE.md, knowledge/) does not mix with ephemeral state (GC 24h).
 SESSIONS_DIR=./instance/sessions
 
-# --- MySQL de producao (opcional) ---
-# Credenciais read-only consumidas via capability_instance MySQL declarada
-# em instance/agents/agents.yaml (template \`mysql\`, runs stdio in-process
-# via @benborla29/mcp-server-mysql). Preencha apenas se algum agente
-# declarar uma capability_instance que mapeia esses vars no env.
+# --- Production MySQL (optional) ---
+# Read-only credentials consumed by a MySQL capability_instance declared
+# in instance/agents/agents.yaml (template \`mysql\`, runs stdio in-process
+# via @benborla29/mcp-server-mysql). Fill in only if some agent declares
+# a capability_instance that maps these vars into its env.
 DB_PROD_HOST=
 DB_PROD_PORT=3306
 DB_PROD_USER=
 DB_PROD_PASS=
 DB_PROD_NAME=
 
-# --- Git push / MR-PR (usados por executores e revisor-testador) ---
-# Injetadas em todos os agentes pelo reconcile. Imagem do agente traz
-# glab (GitLab) e gh (GitHub) pre-instalados — framework-agnostico.
+# --- Git push / MR-PR (used by agents that push code and open MRs/PRs) ---
+# Injected into every agent by reconcile. The agent image ships with
+# glab (GitLab) and gh (GitHub) preinstalled — framework-agnostic.
 # GITLAB_TOKEN: scope api + write_repository
-# GITLAB_HOST: so se self-hosted (ex: gitlab.empresa.com)
+# GITLAB_HOST: only if self-hosted (e.g. gitlab.example.com)
 # GH_TOKEN: scope repo
 GITLAB_TOKEN=
 GITLAB_HOST=
@@ -178,17 +178,17 @@ GH_TOKEN=
 GIT_AUTHOR_NAME=ai-company
 GIT_AUTHOR_EMAIL=agents@local
 
-# Proteção anti-push-main: hooks_defaults em agents.yaml (D-60) — PreToolUse
-# do Claude Code bloqueia agentes tentando push em main/master. Push do host
-# e livre. Script generico em framework/examples/hooks/block-push-main.sh —
-# copie pra \${HOOKS_DIR:-instance/hooks}/ e referencie em agents.yaml.
+# Push-to-main protection: hooks_defaults in agents.yaml (D-60) — a Claude Code
+# PreToolUse hook blocks agents trying to push to main/master. Pushing from the
+# host is unrestricted. Generic script in framework/examples/hooks/block-push-main.sh —
+# copy it to \${HOOKS_DIR:-instance/hooks}/ and reference it in agents.yaml.
 
-# --- Test mode (vazio em producao, "1" pra mockar Claude nos testes) ---
+# --- Test mode (empty in production, "1" to mock Claude in tests) ---
 CLAUDE_MOCK=
 CLAUDE_MOCK_REPLY=
 EOF
 
 chmod 600 "$ENV_FILE"
-echo "$ENV_FILE criado com permissao 600."
-echo "Conteudo (secrets ocultos):"
+echo "$ENV_FILE created with mode 600."
+echo "Contents (secrets hidden):"
 sed -E 's/(=[a-f0-9]{8})[a-f0-9]+/\1.../' "$ENV_FILE"

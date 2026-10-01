@@ -1,10 +1,10 @@
--- 021: backfill corrigido do task_slug em telemetry.events.
+-- 021: corrected backfill of task_slug in telemetry.events.
 --
--- A migration 020 fez backfill com `topic_slug LIKE 'task-%'`, mas esqueci
--- que o runner compoe `topic_slug = '<stream>__<topic>'` (ver TopicKey.slug
--- em internal_client.py). O LIKE original nao casou nada em producao.
--- Aqui extraimos a parte apos o primeiro '__' e verificamos se comeca
--- com 'task-'. Idempotente: so atualiza rows com task_slug IS NULL.
+-- Migration 020 backfilled with `topic_slug LIKE 'task-%'`, but I forgot
+-- that the runner builds `topic_slug = '<stream>__<topic>'` (see TopicKey.slug
+-- in internal_client.py). The original LIKE matched nothing in production.
+-- Here we extract the part after the first '__' and check whether it starts
+-- with 'task-'. Idempotent: only updates rows with task_slug IS NULL.
 
 UPDATE telemetry.events
    SET task_slug = substring(split_part(topic_slug, '__', 2) FROM 6)

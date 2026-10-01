@@ -1,7 +1,7 @@
-"""Tests dos handlers MCP save_skill / list_skills / delete_skill.
+"""Tests for the save_skill / list_skills / delete_skill MCP handlers.
 
-Skills moram em /app/agents/<name>/skills/<slug>/SKILL.md no container; nos
-testes monkey-patchamos `_skills_root` pra apontar pra um tmp_path.
+Skills live in /app/agents/<name>/skills/<slug>/SKILL.md in the container; in
+the tests we monkey-patch `_skills_root` to point to a tmp_path.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def server(tmp_path: Path):
     broker = McpBroker(pending_dir=tmp_path / "pending")
     skills_root = tmp_path / "skills"
     srv = McpServer(broker=broker, agent_name="tester")
-    # Override do path canonico (no container seria /app/agents/tester/skills).
+    # Override the canonical path (in the container it would be /app/agents/tester/skills).
     srv._skills_root = lambda: skills_root  # type: ignore[method-assign]
     return srv, skills_root
 
@@ -121,7 +121,7 @@ async def test_list_skills_returns_name_and_description(server):
 
 async def test_list_skills_skips_dirs_without_skill_md(server):
     srv, root = server
-    # Cria diretorio sem SKILL.md — list ignora.
+    # Create a directory without SKILL.md — list ignores it.
     (root / "stray").mkdir(parents=True)
     await _call(srv, "save_skill", {"name": "real", "description": "r", "body": "b"})
     resp = await _call(srv, "list_skills", {})

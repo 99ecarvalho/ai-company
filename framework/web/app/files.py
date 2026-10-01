@@ -1,10 +1,10 @@
 """File viewer + upload endpoints.
 
-Regras:
-  - Bases permitidas: company (rw), repos (ro), agents (rw), sessions (ro).
-  - Path traversal (..) bloqueado.
-  - Upload salva em /workspace/company/uploads/<yyyymmdd>/<filename>.
-  - Viewer detecta mime por extensao; retorna bytes + content-type.
+Rules:
+  - Allowed bases: company (rw), repos (ro), agents (rw), sessions (ro).
+  - Path traversal (..) blocked.
+  - Upload saves to /workspace/company/uploads/<yyyymmdd>/<filename>.
+  - Viewer detects mime by extension; returns bytes + content-type.
 """
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ AGENTS_DIR = Path("/workspace/agents")
 SESSIONS_DIR = Path("/workspace/sessions")
 UPLOADS_SUBDIR = "uploads"
 
-# Mapa prefix-relativo -> base no FS. Se o frontend mandar caminhos com
-# prefixo /app/<x>/ ou /workspace/<x>/, ele normaliza antes; aqui esperamos
-# sempre o shape relativo "<base>/...".
+# Map relative prefix -> FS base. If the frontend has paths with a
+# /app/<x>/ or /workspace/<x>/ prefix, it normalizes them first; here we
+# always expect the relative shape "<base>/...".
 _BASES = {
     "company": COMPANY_DIR,
     "repos": REPOS_DIR,
@@ -47,8 +47,8 @@ SAFE_NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
 def _resolve(rel: str) -> Path:
-    """Resolve 'company/x', 'repos/x', 'agents/x' ou 'sessions/x' para Path
-    absoluto dentro das bases permitidas. Bloqueia traversal.
+    """Resolve 'company/x', 'repos/x', 'agents/x' or 'sessions/x' to an absolute
+    Path inside the allowed bases. Blocks traversal.
     """
     rel = rel.lstrip("/")
     parts = rel.split("/", 1)
@@ -91,9 +91,9 @@ async def list_files(
     show_hidden: bool = False,
     _: Principal = Depends(get_principal),
 ):
-    """List directory contents under company/, repos/ ou agents/.
-    show_hidden=true inclui dotfiles (default oculta — repo `.git/` etc.
-    polui rapido)."""
+    """List directory contents under company/, repos/ or agents/.
+    show_hidden=true includes dotfiles (hidden by default — a repo's `.git/` etc.
+    clutters things fast)."""
     full = _resolve(path)
     if not full.exists():
         raise HTTPException(status_code=404, detail="path does not exist")
@@ -103,14 +103,14 @@ async def list_files(
     return {"path": path, "entries": entries}
 
 
-# Diretorios que quase sempre sao ruido em busca de arquivo. Skipados no walk
-# pra nao estourar limit em node_modules/.git/etc. Match exato por nome.
+# Directories that are almost always noise in a file search. Skipped in the walk
+# so node_modules/.git/etc don't blow the limit. Exact name match.
 _SEARCH_SKIP_DIRS = {
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     "dist", "build", ".next", ".svelte-kit", ".turbo", ".parcel-cache",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", "coverage",
-    # Go modules / PHP composer vendored deps — gigantes e nunca alvo de
-    # mencao humana no chat.
+    # Go modules / PHP composer vendored deps — huge and never something a
+    # human mentions in chat.
     "vendor",
     # Rust build output.
     "target",
@@ -126,9 +126,9 @@ async def search_files(
     limit: int = 30,
     _: Principal = Depends(get_principal),
 ):
-    """Busca fuzzy-substring por caminho relativo dentro das bases
-    permitidas. Usado pelo @-mention picker do composer. Case-insensitive;
-    matches basename primeiro (rank 0) e caminho completo depois (rank 1).
+    """Fuzzy-substring search by relative path within the allowed
+    bases. Used by the composer's @-mention picker. Case-insensitive;
+    basename matches first (rank 0), then full path (rank 1).
     """
     q_norm = q.strip().lower()
     limit = max(1, min(limit, 100))
@@ -150,7 +150,7 @@ async def search_files(
             except ValueError:
                 continue
             rel_prefix = f"{key}/{rel_root}".rstrip("/.") if str(rel_root) != "." else key
-            # Inclui o proprio diretorio (exceto a raiz base)
+            # Include the directory itself (except the base root)
             if str(rel_root) != ".":
                 name_lower = root_p.name.lower()
                 if not q_norm or q_norm in name_lower:
@@ -175,7 +175,7 @@ async def search_files(
         if len(results) > limit * 4:
             break
 
-    # Ordena por (rank, path) e trunca
+    # Sort by (rank, path) and truncate
     results.sort(key=lambda r: (r[0], r[1].lower()))
     out = [{"path": p, "is_dir": d} for (_r, p, d) in results[:limit]]
     return {"q": q, "bases": base_keys, "count": len(out), "entries": out}
@@ -214,8 +214,8 @@ async def read_file(path: str, raw: int = 0, _: Principal = Depends(get_principa
 
 @router.post("/write")
 async def write_file(payload: dict, _: Principal = Depends(get_principal)):
-    """Sobreescreve arquivo de texto. Aceita apenas company/ e agents/
-    (RW); rejeita repos/ e sessions/ (RO). Cria diretorios pais se faltam.
+    """Overwrites a text file. Accepts only company/ and agents/
+    (RW); rejects repos/ and sessions/ (RO). Creates missing parent directories.
     """
     rel = (payload.get("path") or "").strip()
     content = payload.get("content")
@@ -261,7 +261,7 @@ async def upload_file(file: UploadFile = File(...), principal: Principal = Depen
     dest_dir = COMPANY_DIR / UPLOADS_SUBDIR / today
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Evita colisao: se ja existe, adiciona sufixo -1, -2...
+    # Avoid collisions: if it already exists, add a -1, -2... suffix
     dest = dest_dir / safe_name
     if dest.exists():
         stem, suffix = dest.stem, dest.suffix

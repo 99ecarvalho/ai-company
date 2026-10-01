@@ -1,21 +1,21 @@
-"""HTTP server do scheduler — expoe /health (compat) + endpoints de inspecao
-e controle runtime usados pelo PWA.
+"""Scheduler HTTP server — exposes /health (compat) + runtime inspection and
+control endpoints used by the PWA.
 
-Roda em thread daemon com http.server (mesmo padrao do health.py generico),
-mas precisa do estado do scheduler.py (scheduler global, _stats, _jobs_by_id),
-por isso vive aqui — nao no health.py compartilhado pelos outros daemons.
+Runs in a daemon thread with http.server (same pattern as the generic health.py),
+but needs the state of scheduler.py (global scheduler, _stats, _jobs_by_id),
+so it lives here — not in the health.py shared by the other daemons.
 
-Endpoints (sem auth — exposto so na rede compose; broker no `web` proxia
-com auth):
+Endpoints (no auth — exposed only on the compose network; the broker in `web`
+proxies them with auth):
 
-  GET  /health                  — payload do _health_status (compat com healthcheck)
-  GET  /jobs                    — lista jobs registrados + next_run_time + last fire
-  POST /jobs/{id}/run           — dispara dispatch_job(job) em thread; 202 imediato
+  GET  /health                  — _health_status payload (healthcheck compat)
+  GET  /jobs                    — lists registered jobs + next_run_time + last fire
+  POST /jobs/{id}/run           — fires dispatch_job(job) in a thread; immediate 202
   POST /jobs/{id}/pause         — scheduler.pause_job(id); 204
   POST /jobs/{id}/resume        — scheduler.resume_job(id); 204
 
-Pause/resume sao runtime-only — somem em restart (schedule.yaml eh source of
-truth). Tooltip na UI deve avisar.
+Pause/resume are runtime-only — lost on restart (schedule.yaml is the source of
+truth). A UI tooltip should warn about this.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ GetStatus = Callable[[], dict]
 
 
 def _job_to_dict(apjob, job_def: dict | None, per_job_stats: dict) -> dict:
-    """Serializa um Job do APScheduler + metadata original do yaml + ultima fire."""
+    """Serializes an APScheduler Job + original yaml metadata + last fire."""
     next_run = apjob.next_run_time.isoformat() if apjob.next_run_time else None
     paused = apjob.next_run_time is None
     last = per_job_stats.get(apjob.id) or {}
@@ -52,14 +52,14 @@ def _job_to_dict(apjob, job_def: dict | None, per_job_stats: dict) -> dict:
 
 
 def start_server(port: int, get_status: GetStatus, scheduler_mod) -> HTTPServer:
-    """Sobe o servidor HTTP em thread daemon. Retorna o server.
+    """Starts the HTTP server in a daemon thread. Returns the server.
 
-    `scheduler_mod` precisa ser o objeto modulo que **executa** o daemon (ex.:
-    `sys.modules[__name__]` chamado de dentro de scheduler.py). Importa-lo aqui
-    com `from . import scheduler` cria uma SEGUNDA instancia do modulo quando o
-    daemon roda como `python -m orchestrator.scheduler` (ai o modulo principal
-    fica como `__main__` e nao como `orchestrator.scheduler`) — handlers leem
-    estado vazio. Passar via parametro garante a mesma instancia.
+    `scheduler_mod` must be the module object that **runs** the daemon (e.g.
+    `sys.modules[__name__]` called from inside scheduler.py). Importing it here
+    with `from . import scheduler` creates a SECOND instance of the module when the
+    daemon runs as `python -m orchestrator.scheduler` (then the main module
+    is `__main__`, not `orchestrator.scheduler`) — handlers read
+    empty state. Passing it as a parameter guarantees the same instance.
     """
 
     class Handler(BaseHTTPRequestHandler):
@@ -80,7 +80,7 @@ def start_server(port: int, get_status: GetStatus, scheduler_mod) -> HTTPServer:
             self._write_json(404, {"error": "not found"})
 
         def log_message(self, *args, **kwargs):  # noqa: ARG002, N802
-            return  # silencia access log padrao
+            return  # silence default access log
 
         # ---------- GET ----------
 
@@ -138,10 +138,10 @@ def start_server(port: int, get_status: GetStatus, scheduler_mod) -> HTTPServer:
         def _run_now(self, job_id: str) -> None:
             job_def = scheduler_mod._jobs_by_id.get(job_id)
             if job_def is None:
-                self._write_json(404, {"error": f"job {job_id!r} nao registrado"})
+                self._write_json(404, {"error": f"job {job_id!r} not registered"})
                 return
-            # dispatch_job eh sync (usa requests/subprocess/psql). Roda em thread
-            # propria pra responder 202 sem bloquear (backups demoram).
+            # dispatch_job is sync (uses requests/subprocess/psql). Runs in its own
+            # thread so we can answer 202 without blocking (backups take a while).
             t = threading.Thread(
                 target=scheduler_mod.dispatch_job,
                 args=(job_def,),

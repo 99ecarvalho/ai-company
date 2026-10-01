@@ -1,14 +1,14 @@
 import { readable } from 'svelte/store';
 
 /**
- * Clock reativo — tick a cada 1s, emite Date.now() em ms.
+ * Reactive clock — ticks every 1s, emits Date.now() in ms.
  *
- * Usado por componentes que renderizam "ha Xs" / "19s atras" sem refetch:
- * em vez de polling que re-baixava a lista so pra re-render, mantemos o
- * dado em memoria (SSE-triggered) e so re-avaliamos o formatter quando
- * `$now` muda.
+ * Used by components that render "Xs ago" / "19s ago" without refetching:
+ * instead of polling that re-downloaded the list just to re-render, we keep the
+ * data in memory (SSE-triggered) and only re-evaluate the formatter when
+ * `$now` changes.
  *
- * Pattern de uso:
+ * Usage pattern:
  *   ```
  *   import { now } from '$lib/stores/clock';
  *   import { fmtAge } from '$lib/services/format';
@@ -16,9 +16,9 @@ import { readable } from 'svelte/store';
  *   <span>{fmtAge(conv.last_activity, $now)}</span>
  *   ```
  *
- * O readable store so roda o setInterval quando tem subscriber ativo
- * (lazy) e limpa quando o ultimo desinscreve — zero custo em rotas sem
- * consumo.
+ * The readable store only runs setInterval while it has an active subscriber
+ * (lazy) and clears it when the last one unsubscribes — zero cost on routes
+ * that don't use it.
  */
 export const now = readable<number>(Date.now(), (set) => {
   set(Date.now());

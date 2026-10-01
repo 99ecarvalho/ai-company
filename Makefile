@@ -1,8 +1,8 @@
 .DEFAULT_GOAL := help
 
-# Carrega .env (se existir) e exporta — propaga DOCKER_CONFIG, REPOS_DIR, etc.
-# pros targets que chamam docker/docker compose. Sem isso, `docker compose`
-# le so variaveis do shell, nao o .env do projeto.
+# Load .env (if present) and export it — propagates DOCKER_CONFIG, REPOS_DIR, etc.
+# to the targets that call docker/docker compose. Without this, `docker compose`
+# only reads shell variables, not the project's .env.
 ifneq (,$(wildcard .env))
   include .env
   export
@@ -10,19 +10,19 @@ endif
 
 .PHONY: help up down restart logs build test shell-% logs-% reset-agent-% reset-instance reset-instance-yes reconcile new-agent healthcheck submodules submodules-latest
 
-install: ## Setup interativo de uma nova instância (prompts → bootstrap → build → reconcile)
+install: ## Interactive setup of a new instance (prompts → bootstrap → build → reconcile)
 	bash framework/scripts/install.sh
 
-help: ## Lista targets disponíveis
+help: ## List available targets
 	@grep -E '^[a-zA-Z_%-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-24s %s\n", $$1, $$2}'
 
-up: ## Sobe a stack inteira (docker compose up -d)
+up: ## Start the whole stack (docker compose up -d)
 	docker compose up -d
 
-down: ## Derruba a stack
+down: ## Stop the stack
 	docker compose down
 
-restart: down up ## Reinicia a stack
+restart: down up ## Restart the stack
 
 submodules: ## Fetch the external/ submodules (ai-tts, ai-transcriber) at the pinned commits
 	git submodule update --init --recursive
@@ -30,75 +30,75 @@ submodules: ## Fetch the external/ submodules (ai-tts, ai-transcriber) at the pi
 submodules-latest: ## Move the external/ submodules to the latest commit on their main branch
 	git submodule update --init --remote --recursive
 
-build: submodules ## Build das imagens customizadas (agent + web + transcriber + watchdog)
+build: submodules ## Build the custom images (agent + web + transcriber + watchdog)
 	docker compose build
 
-logs: ## Logs de toda a stack (tail)
+logs: ## Logs for the whole stack (tail)
 	docker compose logs -f --tail=100
 
-logs-%: ## Logs de um serviço específico (ex: make logs-inbox)
+logs-%: ## Logs for one service (e.g. make logs-inbox)
 	docker compose logs -f --tail=200 $*
 
-logs-all: ## Logs agregados com pretty-print JSON + cores por service (LEVEL=error filtra)
+logs-all: ## Aggregated logs with pretty-printed JSON + per-service colors (LEVEL=error filters)
 	bash framework/scripts/logs.sh
 
-logs-errors: ## Logs agregados, somente warnings+errors
+logs-errors: ## Aggregated logs, warnings+errors only
 	LEVEL=warning bash framework/scripts/logs.sh
 
-shell-%: ## Bash em um serviço (ex: make shell-inbox)
+shell-%: ## Bash in a service (e.g. make shell-inbox)
 	docker compose exec $* bash
 
-test: ## Roda testes unitários do framework (pytest dentro do container web)
+test: ## Run the framework unit tests (pytest inside the web container)
 	docker compose cp framework/bots/ai_company web:/tmp/ai_company_src/
 	docker compose exec -T web bash -c "cd /tmp/ai_company_src && pip install --quiet -e .[dev] && pytest tests/ -v"
 
-test-e2e: ## Roda suite Playwright (sobe agentes com CLAUDE_MOCK=1 + pool grande antes)
-	@echo "==> ativando CLAUDE_MOCK=1 + POOL_SIZE=10 + IDLE_TIMEOUT_SEC=15 (recreate)..."
+test-e2e: ## Run the Playwright suite (first starts agents with CLAUDE_MOCK=1 + a large pool)
+	@echo "==> enabling CLAUDE_MOCK=1 + POOL_SIZE=10 + IDLE_TIMEOUT_SEC=15 (recreate)..."
 	CLAUDE_MOCK=1 POOL_SIZE=10 IDLE_TIMEOUT_SEC=15 \
 	  docker compose up -d --force-recreate agent-inbox agent-executor
 	@sleep 4
-	@echo "==> rodando playwright..."
+	@echo "==> running playwright..."
 	cd framework/web/frontend && pnpm exec playwright test
 
-test-e2e-ui: ## Playwright em modo UI interativo
+test-e2e-ui: ## Playwright in interactive UI mode
 	cd framework/web/frontend && pnpm exec playwright test --ui
 
-reset-agent-%: ## Limpa sessions de um agente (ex: make reset-agent-inbox)
-	@# D-51: sessions moram em ${SESSIONS_DIR}/<agent>/ (fora de AGENTS_DIR).
+reset-agent-%: ## Clear an agent's sessions (e.g. make reset-agent-inbox)
+	@# D-51: sessions live in ${SESSIONS_DIR}/<agent>/ (outside AGENTS_DIR).
 	rm -rf $(or $(SESSIONS_DIR),./instance/sessions)/$*/*
-	@# Legacy: limpa tambem $AGENTS_DIR/<agent>/sessions/ se existir (pre-D-51).
+	@# Legacy: also clear $AGENTS_DIR/<agent>/sessions/ if present (pre-D-51).
 	@rm -rf $(or $(AGENTS_DIR),./instance/agents)/$*/sessions 2>/dev/null || true
-	@echo "Sessions de $* limpas."
+	@echo "Sessions of $* cleared."
 
-tasks-migrate: ## Backfill idempotente company/tasks/ -> Postgres (D-53)
+tasks-migrate: ## Idempotent backfill company/tasks/ -> Postgres (D-53)
 	docker compose exec -T web python3 /app/migrate_tasks_fs_to_db.py
 
-reset-instance: ## Reseta estado runtime (DB + sessions) preservando config (pede confirmação)
+reset-instance: ## Reset runtime state (DB + sessions), keeping config (asks for confirmation)
 	bash framework/scripts/reset-instance.sh
 
-reset-instance-yes: ## Igual a reset-instance mas sem prompt (perigoso — pra CI/scripts)
+reset-instance-yes: ## Same as reset-instance but without a prompt (dangerous — for CI/scripts)
 	bash framework/scripts/reset-instance.sh --yes
 
 healthcheck: ## Sanity check: containers up + web/db ok + transcriber + tasks
 	bash framework/scripts/healthcheck.sh
 
-reconcile: ## Aplica instance/agents/agents.yaml (bots + streams + .env + override + up)
+reconcile: ## Apply instance/agents/agents.yaml (bots + streams + .env + override + up)
 	bash framework/scripts/reconcile.sh
 
-reconcile-dry: ## Mostra o que o reconcile faria, sem aplicar
+reconcile-dry: ## Show what reconcile would do, without applying
 	bash framework/scripts/reconcile.sh --dry-run
 
-new-agent: ## Adiciona agent novo em agents.yaml (uso: make new-agent NAME=x DISPLAY="X")
-	@[ -n "$(NAME)" ] || (echo "use: make new-agent NAME=<slug> DISPLAY=\"<Nome>\""; exit 1)
-	@[ -n "$(DISPLAY)" ] || (echo "use: make new-agent NAME=<slug> DISPLAY=\"<Nome>\""; exit 1)
+new-agent: ## Add a new agent to agents.yaml (usage: make new-agent NAME=x DISPLAY="X")
+	@[ -n "$(NAME)" ] || (echo "use: make new-agent NAME=<slug> DISPLAY=\"<Name>\""; exit 1)
+	@[ -n "$(DISPLAY)" ] || (echo "use: make new-agent NAME=<slug> DISPLAY=\"<Name>\""; exit 1)
 	bash framework/scripts/new-agent.sh $(NAME) "$(DISPLAY)"
 
-migrate: ## Aplica migrations pendentes (normalmente roda sozinho no boot do web)
+migrate: ## Apply pending migrations (normally runs on its own when web boots)
 	docker compose exec -T web python3 /app/migrate.py
 
-migrate-status: ## Lista migrations aplicadas/pendentes
+migrate-status: ## List applied/pending migrations
 	docker compose exec -T web python3 /app/migrate.py --status
 
-migrate-baseline: ## Marca migrations como aplicadas sem executar (uso: make migrate-baseline V=1)
+migrate-baseline: ## Mark migrations as applied without running them (usage: make migrate-baseline V=1)
 	@[ -n "$(V)" ] || (echo "use: make migrate-baseline V=<version>"; exit 1)
 	docker compose exec -T web python3 /app/migrate.py --baseline $(V)

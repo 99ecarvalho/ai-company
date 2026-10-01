@@ -1,70 +1,70 @@
-# Platform-level scheduler defaults (tracked no framework).
+# Platform-level scheduler defaults (tracked in the framework).
 #
-# Toda instancia herda esses jobs automaticamente. Pra sobrescrever
-# parametros (TTL, retain, cron) — redefina o MESMO `id` em
-# `instance/agents/schedule.yaml`, que ganha.
+# Every instance inherits these jobs automatically. To override
+# parameters (TTL, retain, cron), redefine the SAME `id` in
+# `instance/agents/schedule.yaml`, which wins.
 #
-# Jobs especificos da empresa (posts agendados, curadoria de backlog,
-# etc) vao pro instance schedule.yaml, NAO aqui. Regra:
-# "se e igual pra todo mundo que usa o framework, vai aqui".
+# Company-specific jobs (scheduled posts, backlog curation,
+# etc) go in the instance schedule.yaml, NOT here. Rule:
+# "if it's the same for everyone using the framework, it goes here".
 
 jobs:
-  # ---- Cleanup: live_events completos (TTL longo — 7 dias) ----
-  # Limpa tudo: linhas com ts > 7d sao deletadas. Mantem metrica +
-  # debug de incidentes recentes sem deixar tabela explodir.
+  # ---- Cleanup: complete live_events (long TTL — 7 days) ----
+  # Cleans everything: rows with ts > 7d are deleted. Keeps metrics +
+  # debugging of recent incidents without letting the table blow up.
   - id: cleanup-live-events
-    cron: "0 2 * * *"            # diario 02:00
+    cron: "0 2 * * *"            # daily 02:00
     action: cleanup_live_events
     days: 7
 
-  # ---- Cleanup: output_full do data JSONB (TTL curto — 48h) ----
-  # Remove so o campo `output_full` dos tool_result apos 48h. A linha
-  # fica (inline `output` 5KB preservado), o blob grande sai. "View full"
-  # no PWA funciona durante a sessao; depois ve so o inline.
+  # ---- Cleanup: output_full in the data JSONB (short TTL — 48h) ----
+  # Removes only the `output_full` field of tool_result after 48h. The row
+  # stays (inline 5KB `output` preserved), the big blob goes. "View full"
+  # in the PWA works during the session; afterwards only the inline shows.
   - id: cleanup-live-events-output-full
-    cron: "17 * * * *"           # de hora em hora, offset 17 pra espalhar
+    cron: "17 * * * *"           # hourly, offset 17 to spread load
     action: cleanup_live_events_output_full
     hours: 48
 
-  # ---- Reaper: messaging.runs com heartbeat antigo -> stale ----
-  # Single source of truth do estado do CLI (migration 030). Cobre
-  # crashes/SIGKILL que nao emitem run_end. Cadence 60s pra fechar a
-  # janela de divergencia com o PWA. Trigger faz pg_notify automatico.
+  # ---- Reaper: messaging.runs with an old heartbeat -> stale ----
+  # Single source of truth for the CLI state (migration 030). Covers
+  # crashes/SIGKILL that don't emit run_end. 60s cadence to close the
+  # divergence window with the PWA. A trigger does pg_notify automatically.
   - id: reaper-runs
-    cron: "* * * * *"            # a cada 60s
+    cron: "* * * * *"            # every 60s
     action: reaper_runs
     seconds: 600
 
-  # ---- Cleanup: messaging.runs terminados (TTL 7d, espelha live_events) ----
+  # ---- Cleanup: finished messaging.runs (TTL 7d, mirrors live_events) ----
   - id: cleanup-runs
-    cron: "45 2 * * *"           # diario 02:45 (offset pra nao colidir)
+    cron: "45 2 * * *"           # daily 02:45 (offset to avoid collisions)
     action: cleanup_runs
     days: 7
 
-  # ---- Cleanup: telemetry events (cost/tokens) — retencao longa ----
+  # ---- Cleanup: telemetry events (cost/tokens) — long retention ----
   - id: cleanup-telemetry
-    cron: "30 2 * * *"           # diario 02:30 (offset pra nao colidir)
+    cron: "30 2 * * *"           # daily 02:30 (offset to avoid collisions)
     action: cleanup_telemetry
     days: 90
 
-  # ---- Cleanup: web.sessions expiradas ----
+  # ---- Cleanup: expired web.sessions ----
   - id: cleanup-sessions
-    cron: "15 * * * *"           # de hora em hora, offset 15
+    cron: "15 * * * *"           # hourly, offset 15
     action: cleanup_sessions
 
-  # ---- Backup: company/ (tar.gz com agents.yaml + override + notes) ----
+  # ---- Backup: company/ (tar.gz with agents.yaml + override + notes) ----
   - id: daily-backup-company
-    cron: "0 3 * * *"            # diario 03:00
+    cron: "0 3 * * *"            # daily 03:00
     action: backup_company
     retain: 30
 
-  # ---- Backup: postgres dump gzipped ----
+  # ---- Backup: gzipped postgres dump ----
   - id: daily-backup-postgres
-    cron: "15 3 * * *"           # diario 03:15 (offset pra nao colidir)
+    cron: "15 3 * * *"           # daily 03:15 (offset to avoid collisions)
     action: backup_postgres
     retain: 30
 
-  # ---- Cost budget check: alerta quando agente passa limite diario ----
+  # ---- Cost budget check: alert when an agent exceeds its daily limit ----
   - id: cost-budget-check
-    cron: "*/30 * * * *"         # a cada 30min
+    cron: "*/30 * * * *"         # every 30min
     action: cost_budget_check

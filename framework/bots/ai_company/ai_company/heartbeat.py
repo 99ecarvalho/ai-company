@@ -1,11 +1,11 @@
-"""Heartbeat pro watchdog.
+"""Heartbeat for the watchdog.
 
-Cada agente escreve um arquivo periodicamente em
-`/heartbeats/<agent_name>.txt` contendo o timestamp unix. O container
-`watchdog` le esses arquivos e restarta agentes cujo heartbeat esta
-stale (nao atualiza ha mais de N segundos) — sinal de deadlock interno
-(container vivo mas loop travado). Crash de container ja eh resolvido
-pelo `restart: unless-stopped` do compose.
+Each agent periodically writes a file at
+`/heartbeats/<agent_name>.txt` containing the unix timestamp. The
+`watchdog` container reads these files and restarts agents whose heartbeat
+is stale (not updated for more than N seconds) — a sign of an internal
+deadlock (container alive but loop stuck). Container crashes are already
+handled by compose's `restart: unless-stopped`.
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ HEARTBEAT_INTERVAL_SEC = float(os.environ.get("HEARTBEAT_INTERVAL_SEC", "30"))
 
 
 async def heartbeat_loop(agent_name: str) -> None:
-    """Loop infinito — escreve timestamp a cada N segundos. Falha silenciosa
-    (ex: dir sem permissao) nao derruba o agente."""
+    """Infinite loop — writes the timestamp every N seconds. Silent failures
+    (e.g. dir without permission) do not bring the agent down."""
     try:
         HEARTBEAT_DIR.mkdir(parents=True, exist_ok=True)
     except Exception:

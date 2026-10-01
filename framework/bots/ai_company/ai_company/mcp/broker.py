@@ -1,10 +1,10 @@
-"""McpBroker — estado compartilhado entre o servidor MCP e o BaseAgent.
+"""McpBroker — state shared between the MCP server and the BaseAgent.
 
-Responsabilidades:
-  - Manter um dict topic_slug -> TopicKey (o MCP resolve URLs por slug)
-  - Gerenciar asyncio.Future por topic_key pra asks pendentes
-  - Persistir perguntas em `pending_questions/<slug>.json` pra crash recovery
-  - Expor callbacks que o BaseAgent usa pra postar perguntas no broker
+Responsibilities:
+  - Keep a topic_slug -> TopicKey dict (the MCP resolves URLs by slug)
+  - Manage an asyncio.Future per topic_key for pending asks
+  - Persist questions in `pending_questions/<slug>.json` for crash recovery
+  - Expose callbacks the BaseAgent uses to post questions to the broker
 """
 from __future__ import annotations
 
@@ -20,28 +20,28 @@ from ..log import get_logger
 
 log = get_logger(__name__)
 
-# callback: (topic, question, context, blocking) -> awaitable de Nada
+# callback: (topic, question, context, blocking) -> awaitable of None
 OnAskCallback = Callable[[TopicKey, str, str, bool], Awaitable[None]]
 
-# callback pra notify_human: (topic, message) -> awaitable. Posta msg no
-# broker sem criar pending_ask. Comportamento diferente de ask_human:
-# nao aguarda, nao bloqueia, nao vira waiting badge na UI.
+# callback for notify_human: (topic, message) -> awaitable. Posts a msg to the
+# broker without creating a pending_ask. Unlike ask_human it does not
+# wait, does not block, and does not become a waiting badge in the UI.
 OnNotifyCallback = Callable[[TopicKey, str], Awaitable[None]]
 
-# callback pra archive_conversation: (conv_id) -> awaitable. POSTa
-# /api/conversations/<id>/archive no broker. Erro deve subir como excecao
-# pro handler MCP renderizar pro agente.
+# callback for archive_conversation: (conv_id) -> awaitable. POSTs
+# /api/conversations/<id>/archive to the broker. Errors must propagate as
+# exceptions so the MCP handler can render them for the agent.
 OnArchiveCallback = Callable[[int], Awaitable[None]]
 
-# callback pra ask_agent: (asker_topic, from_agent, target_agent, question, context)
-# -> tupla (TopicKey, resposta_se_ja_resolvido).
-#   - TopicKey: target onde a msg foi postada (ou re-encontrada).
-#   - resposta_se_ja_resolvido: D-111 restart-recovery — se pending_ask
-#     dessa conv ja foi resolvido por uma resposta do target enquanto o
-#     asker estava down, retorna o conteudo direto (sem repostar nem
-#     aguardar). None = caminho normal (caller aguarda Future).
-# asker_topic eh o topic atual de quem esta chamando (None se nao mapeavel) —
-# usado pra cycle/depth check ao montar o nome do topic do target.
+# callback for ask_agent: (asker_topic, from_agent, target_agent, question, context)
+# -> tuple (TopicKey, answer_if_already_resolved).
+#   - TopicKey: target where the msg was posted (or found again).
+#   - answer_if_already_resolved: D-111 restart recovery — if this conv's
+#     pending_ask was already resolved by a target reply while the
+#     asker was down, returns the content directly (no repost, no
+#     wait). None = normal path (caller awaits the Future).
+# asker_topic is the caller's current topic (None if not mappable) —
+# used for the cycle/depth check when building the target topic name.
 OnAskAgentCallback = Callable[
     [TopicKey | None, str, str, str, str], Awaitable[tuple[TopicKey, str | None]]
 ]
@@ -53,21 +53,21 @@ class McpBroker:
         self.pending_dir.mkdir(parents=True, exist_ok=True)
         self._pending_futures: dict[TopicKey, asyncio.Future[str]] = {}
         self._slug_to_key: dict[str, TopicKey] = {}
-        # D-87: conv_id indexado por slug. Populado pelo Dispatcher quando
-        # processa cada evento. Usado pelo MCP handler de `__ask_agent` pra
-        # passar parent_conv_id ao broker no create-conv da nova `__ask-from-*`.
+        # D-87: conv_id indexed by slug. Populated by the Dispatcher as it
+        # processes each event. Used by the `__ask_agent` MCP handler to
+        # pass parent_conv_id to the broker when creating the new `__ask-from-*` conv.
         self._slug_to_conv_id: dict[str, int] = {}
         self._on_ask: OnAskCallback | None = None
         self._on_ask_agent: OnAskAgentCallback | None = None
         self._on_notify: OnNotifyCallback | None = None
         self._on_archive: OnArchiveCallback | None = None
-        # Callback opcional: dado um TopicKey, devolve True se aquele topic
-        # tem ask_human pendente (nao resolvido). Usado pro timeout
-        # adaptativo do ask_agent — se target esta bloqueado num humano,
-        # estende o wait indefinidamente em vez de desistir.
+        # Optional callback: given a TopicKey, returns True if that topic
+        # has a pending (unresolved) ask_human. Used for ask_agent's adaptive
+        # timeout — if the target is blocked on a human, the wait is
+        # extended indefinitely instead of giving up.
         self._check_target_blocked_on_human: Callable[[TopicKey], Awaitable[bool]] | None = None
 
-    # ---------- registro topic <-> slug ----------
+    # ---------- topic <-> slug registry ----------
 
     def register_topic(self, key: TopicKey, conv_id: int | None = None) -> str:
         slug = key.slug()
@@ -80,12 +80,12 @@ class McpBroker:
         return self._slug_to_key.get(slug)
 
     def conv_id_for_slug(self, slug: str) -> int | None:
-        """D-87: retorna conv_id registrado via register_topic. Usado pelos
-        handlers MCP de `__ask_agent`/`__ask_agents_many` pra passar
-        parent_conv_id na criacao da nova conv `__ask-from-*`."""
+        """D-87: returns the conv_id registered via register_topic. Used by the
+        `__ask_agent`/`__ask_agents_many` MCP handlers to pass
+        parent_conv_id when creating the new `__ask-from-*` conv."""
         return self._slug_to_conv_id.get(slug)
 
-    # ---------- callback pra postar no broker ----------
+    # ---------- callbacks for posting to the broker ----------
 
     def set_on_ask(self, cb: OnAskCallback) -> None:
         self._on_ask = cb
@@ -97,9 +97,9 @@ class McpBroker:
         self._on_notify = cb
 
     async def notify_human(self, key: TopicKey, message: str) -> None:
-        """Posta mensagem simples no topic sem criar pending_ask."""
+        """Posts a plain message to the topic without creating a pending_ask."""
         if self._on_notify is None:
-            raise RuntimeError("notify_human nao configurado neste agente")
+            raise RuntimeError("notify_human is not configured on this agent")
         log.info("broker.notify_human", topic=key.slug(), length=len(message))
         await self._on_notify(key, message)
 
@@ -108,7 +108,7 @@ class McpBroker:
 
     async def archive_conversation(self, conv_id: int) -> None:
         if self._on_archive is None:
-            raise RuntimeError("archive_conversation nao configurado neste agente")
+            raise RuntimeError("archive_conversation is not configured on this agent")
         log.info("broker.archive_conversation", conv_id=conv_id)
         await self._on_archive(conv_id)
 
@@ -117,7 +117,7 @@ class McpBroker:
     ) -> None:
         self._check_target_blocked_on_human = cb
 
-    # ---------- estado ----------
+    # ---------- state ----------
 
     def has_pending(self, key: TopicKey) -> bool:
         fut = self._pending_futures.get(key)
@@ -126,7 +126,7 @@ class McpBroker:
     def pending_question_path(self, key: TopicKey) -> Path:
         return self.pending_dir / f"{key.slug()}.json"
 
-    # ---------- API principal ----------
+    # ---------- main API ----------
 
     async def ask_human(
         self,
@@ -134,14 +134,14 @@ class McpBroker:
         question: str,
         context: str = "",
     ) -> str:
-        """Invocado pelo MCP server quando o claude chama a tool ask_human.
+        """Invoked by the MCP server when claude calls the ask_human tool.
 
-        Sempre bloqueia indefinidamente ate o humano responder. Sem timeout,
-        sem fallback — quem nao pode esperar usa `complete_phase(next='halt')`.
-        Decisao tomada pos-incidente onde timeout deixava `pending_ask`
-        orfao no banco enquanto o agente seguia adiante via fallback,
-        confundindo o humano (badge NEEDS YOU permanente em conv que ja
-        nao escutava resposta)."""
+        Always blocks indefinitely until the human answers. No timeout,
+        no fallback — whoever cannot wait uses `complete_phase(next='halt')`.
+        Decision made after an incident where a timeout left an orphan
+        `pending_ask` in the DB while the agent moved on via fallback,
+        confusing the human (permanent NEEDS YOU badge on a conv that was no
+        longer listening for an answer)."""
         asked_iso = datetime.now(tz=timezone.utc).isoformat()
         pending_path = self.pending_question_path(key)
         pending_path.write_text(
@@ -166,15 +166,15 @@ class McpBroker:
             question_preview=question[:120],
         )
 
-        # Notifica o humano (posta no broker)
+        # Notify the human (post to the broker)
         if self._on_ask is not None:
             try:
                 await self._on_ask(key, question, context, True)
             except Exception:
                 log.exception("broker.on_ask_failed", topic=key.slug())
 
-        # Blocking indefinido: aguarda Future ate alguem (humano via PWA →
-        # broker → Dispatcher → broker.resolve()) marcar resultado.
+        # Indefinite blocking: await the Future until someone (human via PWA →
+        # broker → Dispatcher → broker.resolve()) sets the result.
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[str] = loop.create_future()
         self._pending_futures[key] = fut
@@ -190,7 +190,7 @@ class McpBroker:
                 pass
 
     def resolve(self, key: TopicKey, response: str) -> bool:
-        """Chamado pelo Dispatcher quando chega msg no topic que tem pergunta pendente."""
+        """Called by the Dispatcher when a msg arrives on a topic with a pending question."""
         fut = self._pending_futures.get(key)
         if fut is None or fut.done():
             return False
@@ -198,7 +198,7 @@ class McpBroker:
         log.info("broker.resolved", topic=key.slug(), length=len(response))
         return True
 
-    # ---------- ask_agent (comunicacao entre agentes) ----------
+    # ---------- ask_agent (agent-to-agent communication) ----------
 
     async def ask_agent_via_callback(
         self,
@@ -210,8 +210,8 @@ class McpBroker:
         context: str,
         timeout_minutes: float,
     ) -> str:
-        """Helper completo: chama on_ask_agent pra postar a msg (que retorna
-        TopicKey criado), registra Future, aguarda resolve/timeout."""
+        """Full helper: calls on_ask_agent to post the msg (which returns the
+        created TopicKey), registers a Future, awaits resolve/timeout."""
         if self._on_ask_agent is None:
             return "[error] ask_agent is not configured on this agent."
         try:
@@ -222,8 +222,8 @@ class McpBroker:
             log.exception("broker.ask_agent.post_failed", target=target_agent)
             return f"[error asking] {e}"
 
-        # D-111 restart-recovery: target ja respondeu enquanto o asker estava
-        # down. Retorna direto sem registrar Future nem aguardar.
+        # D-111 restart recovery: the target already replied while the asker was
+        # down. Return directly without registering a Future or waiting.
         if already_resolved is not None:
             log.info(
                 "broker.ask_agent.restart_recovered",
@@ -242,10 +242,10 @@ class McpBroker:
         fut: asyncio.Future[str] = loop.create_future()
         self._pending_futures[target_key] = fut
         try:
-            # Loop com extensao: ao bater no timeout, checamos se o target
-            # esta bloqueado num ask_human. Se sim, recomecamos o wait —
-            # permanentemente, ate humano responder e target destravar.
-            # Se target nao tem ask_human pendente e nao respondeu, timeout real.
+            # Loop with extension: on timeout, check whether the target
+            # is blocked on an ask_human. If so, restart the wait —
+            # indefinitely, until the human answers and the target unblocks.
+            # If the target has no pending ask_human and did not reply, real timeout.
             interval = timeout_minutes * 60
             extensions = 0
             while True:
@@ -284,7 +284,7 @@ class McpBroker:
                 )
                 if not fut.done():
                     fut.cancel()
-                return f"[timeout] Agente {target_agent} nao respondeu em {timeout_minutes}min."
+                return f"[timeout] Agent {target_agent} did not reply within {timeout_minutes}min."
         finally:
             self._pending_futures.pop(target_key, None)
 
@@ -296,12 +296,12 @@ class McpBroker:
         asks: list[dict[str, str]],
         timeout_minutes: float,
     ) -> list[dict[str, str]]:
-        """Roda N ask_agent_via_callback concorrentemente via asyncio.gather.
+        """Runs N ask_agent_via_callback calls concurrently via asyncio.gather.
 
-        Cada item de `asks` é um dict com `target_agent`, `question`, e
-        opcionalmente `context`. Retorna lista na mesma ordem com `response`
-        (sucesso) ou `error` (policy/cycle/depth/post/timeout), sem falhar
-        o batch inteiro por causa de um item.
+        Each item in `asks` is a dict with `target_agent`, `question`, and
+        optionally `context`. Returns a list in the same order with `response`
+        (success) or `error` (policy/cycle/depth/post/timeout), without failing
+        the whole batch because of one item.
         """
         log.info(
             "broker.ask_agents_many.start",

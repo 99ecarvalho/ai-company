@@ -26,17 +26,17 @@
   let { children } = $props();
   let booted = $state(false);
 
-  // Rotas que nao usam o shell (rail/list/bottom-nav). Login e onboarding
-  // tem fluxo proprio centralizado.
+  // Routes that don't use the shell (rail/list/bottom-nav). Login and onboarding
+  // have their own centered flow.
   const bareRoutes = new Set(['/login', '/onboard']);
   let isBareRoute = $derived(bareRoutes.has($page.url.pathname));
 
-  // Home = "/" (conv list/capture). Em rotas nao-home, ConvListPane fica
-  // escondida no mobile (bottom-nav devolve pra home).
+  // Home = "/" (conv list/capture). On non-home routes, ConvListPane is
+  // hidden on mobile (bottom-nav takes you back home).
   let isHomeRoute = $derived($page.url.pathname === '/');
 
-  // ConvListPane aparece so nas rotas de conversas (/ e /c/*). Outras rotas
-  // (tasks/scheduler/telemetry/etc) usam o espaco inteiro pra seu conteudo.
+  // ConvListPane only appears on conversation routes (/ and /c/*). Other routes
+  // (tasks/scheduler/telemetry/etc) use the whole space for their content.
   let isConvRoute = $derived(
     $page.url.pathname === '/' || $page.url.pathname.startsWith('/c/')
   );
@@ -71,9 +71,9 @@
     startConversationsStream();
     startTasksStream();
 
-    // Deep link ?ask=<id> — mesmo comportamento que tinha em +page.svelte
-    // antes da reestruturacao; agora mora no layout pra funcionar em
-    // qualquer rota de boot.
+    // Deep link ?ask=<id> — same behavior it had in +page.svelte
+    // before the restructuring; now it lives in the layout so it works on
+    // any boot route.
     const askId = $page.url.searchParams.get('ask');
     if (askId) {
       try {
@@ -98,23 +98,23 @@
   {@render children()}
 {:else if booted}
   <div class="flex h-dvh w-screen flex-col overflow-hidden bg-bg text-fg">
-    <!-- pb-safe-nav reserva `bottom-nav-h + env(safe-area-inset-bottom)`
-         pro bottom nav (`fixed`, fora do flex flow) + gesture bar do OS
-         (Android nav bar / iOS home indicator). Antes usava `pb-bottomNav`
-         (so 56px), conteudo com scroll ficava cortado em devices com
-         gesture bar > 0. md:pb-0 anula em desktop (sem bottom nav). -->
+    <!-- pb-safe-nav reserves `bottom-nav-h + env(safe-area-inset-bottom)`
+         for the bottom nav (`fixed`, outside the flex flow) + the OS gesture bar
+         (Android nav bar / iOS home indicator). It used to be `pb-bottomNav`
+         (only 56px); scrolling content got cut off on devices with
+         gesture bar > 0. md:pb-0 cancels it on desktop (no bottom nav). -->
     <div class="flex min-h-0 flex-1 overflow-hidden pb-safe-nav md:pb-0">
       <!-- Desktop rail -->
       <div class="hidden md:flex">
         <AppNav variant="rail" />
       </div>
 
-      <!-- ConvListPane: so nas rotas de conversas (/ e /c/*). Desktop
-           sempre visivel quando isConvRoute; mobile so quando isHomeRoute
-           e mobileShowList. -->
+      <!-- ConvListPane: only on conversation routes (/ and /c/*). Desktop:
+           always visible when isConvRoute; mobile: only when isHomeRoute
+           and mobileShowList. -->
       {#if isConvRoute}
-        <!-- Mobile: full-width + min-w-0 (sem isso, conteudo do aside vaza
-             alem do viewport). Desktop: largura definida pelo aside (w-sidebar). -->
+        <!-- Mobile: full-width + min-w-0 (without it, the aside's content leaks
+             past the viewport). Desktop: width set by the aside (w-sidebar). -->
         <div
           class="flex h-full w-full min-w-0 md:w-auto md:flex"
           class:hidden={!(isHomeRoute && $mobileShowList)}
@@ -123,7 +123,7 @@
         </div>
       {/if}
 
-      <!-- Main: sempre visivel desktop; mobile so quando nao for home-list. -->
+      <!-- Main: always visible on desktop; on mobile only when not on home-list. -->
       <main
         class="min-w-0 flex-1 md:block"
         class:hidden={isHomeRoute && $mobileShowList}
@@ -135,22 +135,22 @@
     <!-- Mobile bottom nav -->
     <AppNav variant="bottom" />
 
-    <!-- FAB: somente mobile e somente em home-list (estado "lista vista"). -->
+    <!-- FAB: mobile only and only on home-list (the "list shown" state). -->
     {#if isHomeRoute && $mobileShowList}
       <CaptureFab variant="fab" />
     {/if}
 
-    <!-- Overlays residuais (hire, fileViewer) -->
+    <!-- Residual overlays (hire, fileViewer) -->
     {#each Array.from($openOverlays) as id (id)}
       {@const Cmp = overlays[id]}
       {#if Cmp}<Cmp />{/if}
     {/each}
 
-    <!-- Drawer lateral -->
+    <!-- Side drawer -->
     <DrawerMenu />
   </div>
 {/if}
 
-<!-- Toaster fica fora do {#if} pra cobrir rotas bare (login/onboard) e o
-     período pré-boot — qualquer logEvent('err') ganha feedback visual. -->
+<!-- Toaster stays outside the {#if} to cover bare routes (login/onboard) and the
+     pre-boot period — any logEvent('err') gets visual feedback. -->
 <Toaster />

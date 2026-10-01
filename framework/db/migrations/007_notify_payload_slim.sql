@@ -1,19 +1,19 @@
--- 007: remove `content` e `sent_at` do payload do pg_notify em
--- messaging.notify_message. Postgres limita o payload do NOTIFY a 8000 bytes
--- (hardcoded, compile-time) — qualquer mensagem cujo JSON inteiro passasse
--- desse limite causava `InvalidParameterValueError: payload string too long`,
--- abortando o INSERT inteiro (trigger fora da transacao do caller) e perdendo
--- a mensagem. Sintoma visto em 2026-04-22: resposta de 9128 bytes do
--- investigador-producao falhou no reply com HTTP 500, nunca persistida.
+-- 007: remove `content` and `sent_at` from the pg_notify payload in
+-- messaging.notify_message. Postgres limits the NOTIFY payload to 8000 bytes
+-- (hardcoded, compile-time) — any message whose full JSON exceeded
+-- that limit caused `InvalidParameterValueError: payload string too long`,
+-- aborting the whole INSERT (trigger outside the caller's transaction) and losing
+-- the message. Symptom seen on 2026-04-22: a 9128-byte reply from
+-- investigador-producao failed with HTTP 500, never persisted.
 --
--- Fix: payload minimo (id + conversation_id + sender_id). Consumers que
--- precisam de content/sent_at buscam por `SELECT ... WHERE id = $1` no
--- callback — custo desprezivel (index lookup) e mata o modo de falha.
+-- Fix: minimal payload (id + conversation_id + sender_id). Consumers that
+-- need content/sent_at fetch it with `SELECT ... WHERE id = $1` in the
+-- callback — negligible cost (index lookup) and it kills the failure mode.
 --
--- Consumers atuais (todos ja compativeis ou ajustados neste commit):
---   - bots/internal_client._on_notify → ja fazia HTTP enrich via id
---   - web/broker.events_sse → SELECT enrich atualizado pra incluir content/sent_at
---   - web/main._push_notifier_loop → SELECT enrich atualizado pra incluir content
+-- Current consumers (all already compatible or adjusted in this commit):
+--   - bots/internal_client._on_notify → already did HTTP enrich via id
+--   - web/broker.events_sse → SELECT enrich updated to include content/sent_at
+--   - web/main._push_notifier_loop → SELECT enrich updated to include content
 
 CREATE OR REPLACE FUNCTION messaging.notify_message() RETURNS TRIGGER AS $$
 DECLARE

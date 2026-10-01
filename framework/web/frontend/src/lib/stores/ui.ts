@@ -4,37 +4,37 @@ import { goto } from '$app/navigation';
 import { pushToast } from './toasts';
 
 export type Panel = 'capture' | 'conv';
-// Overlays residuais: só sub-interações que não são destino de navegação.
-// Destinos (backlog, telemetry, memory, settings, files, search, log) são
-// rotas SvelteKit (`/backlog`, etc).
+// Residual overlays: only sub-interactions that aren't navigation destinations.
+// Destinations (backlog, telemetry, memory, settings, files, search, log) are
+// SvelteKit routes (`/backlog`, etc).
 export type OverlayId = 'hire' | 'fileViewer' | 'fileBrowser' | 'childConv';
 
 /**
- * Panel ativo derivado da rota:
+ * Active panel derived from the route:
  * - '/c/<rest>' → 'conv'
- * - qualquer outra rota → 'capture'
+ * - any other route → 'capture'
  */
 export const activePanel = derived<typeof page, Panel>(page, ($p) =>
   $p.url.pathname.startsWith('/c/') ? 'conv' : 'capture'
 );
 
 /**
- * ConvId ativo derivado do route param `convId` (rest param, pode conter '/').
- * null quando não estamos numa rota de conversa.
+ * Active ConvId derived from the `convId` route param (rest param, may contain '/').
+ * null when we're not on a conversation route.
  */
 export const activeConvId = derived<typeof page, string | null>(page, ($p) => {
   const raw = $p.params?.convId;
   return raw ? decodeURIComponent(raw) : null;
 });
 
-// Mobile-only: controla se em `/` mostramos a ConvListPane (true, home padrão)
-// ou o main panel com CapturePanel (false, via FAB). No desktop não afeta nada:
-// rail + ConvListPane + main são todos visíveis simultaneamente.
+// Mobile-only: controls whether `/` shows the ConvListPane (true, default home)
+// or the main panel with CapturePanel (false, via FAB). On desktop it has no effect:
+// rail + ConvListPane + main are all visible at the same time.
 export const mobileShowList = writable<boolean>(true);
 
 export const openOverlays = writable<Set<OverlayId>>(new Set());
 
-// Drawer lateral (DrawerMenu) — controlado pela aba "More" do AppNav.
+// Side drawer (DrawerMenu) — controlled by the AppNav "More" tab.
 export const drawerOpen = writable<boolean>(false);
 
 export interface FileViewerRequest {
@@ -47,7 +47,7 @@ export interface FileBrowserRequest {
 }
 export const fileBrowserTarget = writable<FileBrowserRequest | null>(null);
 
-/** Abre o browser de arquivos como overlay, preservando a rota atual. */
+/** Opens the file browser as an overlay, keeping the current route. */
 export function openFileBrowserAt(path: string) {
   fileBrowserTarget.set({ path });
   openOverlay('fileBrowser');
@@ -58,7 +58,7 @@ export interface ChildConvRequest {
 }
 export const childConvTarget = writable<ChildConvRequest | null>(null);
 
-/** Abre conversa filha (delegated) como overlay sem sair da conversa pai. */
+/** Opens a child (delegated) conversation as an overlay without leaving the parent conversation. */
 export function openChildConv(convId: string) {
   childConvTarget.set({ convId });
   openOverlay('childConv');

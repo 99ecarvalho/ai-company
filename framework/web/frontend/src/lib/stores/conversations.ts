@@ -8,27 +8,27 @@ import { createSSEClient, coalesceRefresh, type SSEClient } from '$lib/sse';
 import { activeConvId, logEvent } from './ui';
 
 /**
- * D-57: lista unificada de threads (mata Mine/Background/Tasks).
- * Um store só, dois filtros de visão (`convFilter`):
+ * D-57: unified thread list (kills Mine/Background/Tasks).
+ * A single store, two view filters (`convFilter`):
  *   - 'active'  -> archived_at IS NULL (default)
- *   - 'closed'  -> archived_at IS NOT NULL (thread soft-deletada manualmente)
+ *   - 'closed'  -> archived_at IS NOT NULL (thread manually soft-deleted)
  *
- * Distinção "participei vs não participei" passa a ser visual (campo
- * `participating` em cada item), não mais abas separadas.
+ * The "participated vs did not participate" distinction is now visual (the
+ * `participating` field on each item), no longer separate tabs.
  *
- * Hierarquia: cada conv carrega `parent_conv_id` (db_id do pai, ou null) e
- * `children_stats` agregado recursivamente. `conversationTree` deriva a
- * arvore pra renderizar na sidebar.
+ * Hierarchy: each conv carries `parent_conv_id` (parent's db_id, or null) and
+ * recursively aggregated `children_stats`. `conversationTree` derives the
+ * tree to render in the sidebar.
  */
 export const conversations = writable<ConversationSummary[]>([]);
 export const convFilter = writable<ConvFilter>('active');
 
-/** Query de filtro local da lista de conversas (ConvListPane). Aplicado
- *  sobre topic, agent e conteudo do ultimo preview. Case-insensitive. */
+/** Local filter query for the conversation list (ConvListPane). Applied
+ *  to topic, agent and the content of the last preview. Case-insensitive. */
 export const convQuery = writable<string>('');
 
-/** Lista filtrada localmente pela query. Compoe com `convFilter` (Active/
- *  Closed) ja aplicado server-side na hora do fetch. */
+/** List filtered locally by the query. Composes with `convFilter` (Active/
+ *  Closed), already applied server-side at fetch time. */
 export const filteredConversations = derived(
   [conversations, convQuery],
   ([items, q]) => {
@@ -58,13 +58,13 @@ export interface ConvTree {
   byId: Map<number, ConvTreeNode>;
 }
 
-/** D-96: determina se uma filha eh "resolvida" do ponto de vista do bucket
- *  de chips (active vs done) no header da raiz.
- *  - awaiting_human / is_running / is_stuck → ativa
- *  - task em status terminal → resolvida
- *  - task_not_current_agent (D-79) → fase concluida, resolvida
- *  - filha sem nada acima → ja terminou seu turno, resolvida
- *  Roots (parent_conv_id null) nao sao classificadas aqui. */
+/** D-96: decides whether a child is "resolved" from the point of view of the
+ *  chip bucket (active vs done) in the root's header.
+ *  - awaiting_human / is_running / is_stuck → active
+ *  - task in a terminal status → resolved
+ *  - task_not_current_agent (D-79) → phase finished, resolved
+ *  - child with none of the above → already finished its turn, resolved
+ *  Roots (parent_conv_id null) are not classified here. */
 function isResolvedSelf(c: ConversationSummary): boolean {
   if (c.awaiting_human) return false;
   if (c.is_running || c.is_stuck) return false;
@@ -74,9 +74,9 @@ function isResolvedSelf(c: ConversationSummary): boolean {
   return false;
 }
 
-/** Tree derivado — aplica `filteredConversations` (busca local) + monta
- *  relacao pai-filha via `parent_conv_id`. Quando ha query de busca, retorna
- *  flat (busca rasa funciona melhor). */
+/** Derived tree — applies `filteredConversations` (local search) + builds
+ *  the parent-child relation via `parent_conv_id`. When there is a search
+ *  query, returns it flat (shallow search works better). */
 export const conversationTree = derived(
   [conversations, convQuery],
   ([items, q]): ConvTree => {
@@ -96,9 +96,9 @@ export const conversationTree = derived(
       }
     }
 
-    // Se tem busca ativa, reduz a arvore: mostra so convs que matcham (flat
-    // como root). Filhas matchadas viram root — mais util que esconder sob
-    // pais que nao matcham.
+    // If a search is active, collapse the tree: show only matching convs (flat
+    // as roots). Matching children become roots — more useful than hiding them
+    // under parents that don't match.
     const needle = q.trim().toLowerCase();
     if (needle) {
       const flat: ConvTreeNode[] = [];
@@ -127,25 +127,25 @@ export const pendingConversation = derived(conversations, (items) =>
   items.find((c) => c.awaiting_human) || null
 );
 
-// D-96 cleanup: stores `expandedChildren`/`expandedResolved` removidos.
-// Pos-flat sidebar nao tem mais tree expand/collapse — so renderiza
-// raizes e filhas viraram chips no header (overlay read-only).
+// D-96 cleanup: stores `expandedChildren`/`expandedResolved` removed.
+// The post-flat sidebar no longer has tree expand/collapse — it only renders
+// roots, and children became chips in the header (read-only overlay).
 
 let sseClient: SSEClient | null = null;
 let inFlight = false;
 
-/** Dedupe defensivo por db_id: o backend pode estar retornando linhas
- *  duplicadas em alguns casos (JOIN sem GROUP BY); Svelte 5 quebra o
- *  {#each} silenciosamente quando ha keys duplicadas. Mantem a ultima
- *  ocorrencia (mais fresca em geral). */
+/** Defensive dedupe by db_id: the backend may return duplicate rows
+ *  in some cases (JOIN without GROUP BY); Svelte 5 silently breaks
+ *  {#each} when there are duplicate keys. Keeps the last
+ *  occurrence (usually the freshest). */
 function dedupeByDbId(items: ConversationSummary[]): ConversationSummary[] {
   const map = new Map<number, ConversationSummary>();
   for (const c of items) map.set(c.db_id, c);
   return Array.from(map.values());
 }
 
-// D-96: pruneExpansionSets/autoExpandPending removidos — sidebar virou flat
-// pos-D-96, sem tree expand/collapse, sem badges cascateadas de descendentes.
+// D-96: pruneExpansionSets/autoExpandPending removed — the sidebar became flat
+// after D-96, with no tree expand/collapse and no badges cascaded from descendants.
 
 export async function refreshConversations() {
   if (inFlight) return;
@@ -162,10 +162,10 @@ export async function refreshConversations() {
 }
 
 /**
- * SSE-triggered refresh: o endpoint /api/events emite um evento por mensagem
- * nova (qualquer stream). Cada evento dispara um re-fetch da lista — como
- * mudancas em has_pending_ask/last_msg/children_stats sao server-derived,
- * re-fetch eh autoritativo e simples. Coalesce evita N paralelos num burst.
+ * SSE-triggered refresh: the /api/events endpoint emits one event per new
+ * message (any stream). Each event triggers a re-fetch of the list — since
+ * changes to has_pending_ask/last_msg/children_stats are server-derived,
+ * a re-fetch is authoritative and simple. Coalescing avoids N in parallel in a burst.
  */
 const refreshTriggered = coalesceRefresh(refreshConversations);
 
@@ -180,12 +180,12 @@ interface MsgEvent {
 
 export function startConversationsStream() {
   if (sseClient) return;
-  // Hidratacao inicial sincrona (nao bloqueia start do SSE).
+  // Initial hydration, fire-and-forget (doesn't block the SSE start).
   refreshConversations();
   sseClient = createSSEClient<MsgEvent>({
     url: '/api/events',
     onMessage: () => refreshTriggered(),
-    // Reconnect: re-hidratar pra cobrir eventos perdidos durante downtime.
+    // Reconnect: re-hydrate to cover events lost during downtime.
     onOpen: () => refreshTriggered()
   });
 }
@@ -197,7 +197,7 @@ export function stopConversationsStream() {
   }
 }
 
-/** Ao trocar filtro, refresh imediato (active <-> closed vem do backend). */
+/** On filter change, refresh immediately (active <-> closed comes from the backend). */
 convFilter.subscribe(() => {
   if (sseClient) refreshConversations();
 });
@@ -218,8 +218,8 @@ export function dropConversationLocally(id: string) {
   conversations.update((arr) => arr.filter((c) => c.id !== id));
 }
 
-/** Otimismo local apos PATCH /api/conversations/{id} — atualiza custom_title
- *  no card sem esperar refresh. Migration 027. */
+/** Local optimism after PATCH /api/conversations/{id} — updates custom_title
+ *  on the card without waiting for a refresh. Migration 027. */
 export function patchConversationLocally(id: string, fields: Partial<ConversationSummary>) {
   conversations.update((arr) => arr.map((c) => (c.id === id ? { ...c, ...fields } : c)));
 }

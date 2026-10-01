@@ -1,6 +1,6 @@
-"""FastAPI app — serve PWA + broker interno + endpoints de transcribe/push/memory/telemetry/hire.
+"""FastAPI app — serves the PWA + internal broker + transcribe/push/memory/telemetry/hire endpoints.
 
-Rotas de messaging/conversations/streams/users/asks/events estao em broker.py.
+Messaging/conversations/streams/users/asks/events routes live in broker.py.
 """
 from __future__ import annotations
 
@@ -55,24 +55,24 @@ log = structlog.get_logger("web.main")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 BUILD_DIR = Path(__file__).resolve().parent.parent / "build"
-# D-94: instance/web/ permite que cada instancia sobrescreva assets PWA
-# (icones, futuramente custom CSS) sem editar tracked code. Bind-mount em
-# /workspace/web/ pelo compose. Override prevalece sobre framework default
-# quando arquivo equivalente existe.
+# D-94: instance/web/ lets each instance override PWA assets (icons, later
+# custom CSS) without editing tracked code. Bind-mounted at /workspace/web/
+# by compose. The override wins over the framework default when an
+# equivalent file exists.
 INSTANCE_WEB_DIR = Path(os.environ.get("INSTANCE_WEB_DIR", "/workspace/web"))
 
 
 # ---------- Lifespan ----------
 
 async def _bootstrap_admin_user():
-    """Garante que o admin humano existe em messaging.users.
+    """Ensures the human admin exists in messaging.users.
 
-    Idempotente: ON CONFLICT atualiza is_admin/full_name. Quando
-    ADMIN_PASSWORD vem setado no env, tambem atualiza password_hash
-    (permite rotacao da senha via .env + restart, sem precisar mexer
-    no banco). Quando vazio, preserva o hash existente — assim instancias
-    que ja tinham senha valida nao sao zeradas se um restart venha sem
-    a env.
+    Idempotent: ON CONFLICT updates is_admin/full_name. When
+    ADMIN_PASSWORD is set in the env, it also updates password_hash
+    (allows rotating the password via .env + restart, without touching
+    the database). When empty, it keeps the existing hash — so instances
+    that already had a valid password are not wiped if a restart comes
+    without the env.
     """
     email = os.environ.get("ADMIN_EMAIL", "admin@example.com")
     pwd = os.environ.get("ADMIN_PASSWORD", "")
@@ -92,8 +92,8 @@ async def _bootstrap_admin_user():
 
 
 async def _bootstrap_system_bot():
-    """User dedicado pra service tokens (reactor/scheduler) postarem mensagens.
-    agent_name=NULL — nao aparece no /api/agents (sidebar do PWA).
+    """Dedicated user for service tokens (reactor/scheduler) to post messages.
+    agent_name=NULL — does not show up in /api/agents (PWA sidebar).
     """
     await db.execute(
         """
@@ -108,18 +108,18 @@ async def _bootstrap_system_bot():
 
 
 async def _bootstrap_terminal_stream():
-    """Garante que o stream agregador de terminais (task done/halt/human_review)
-    existe, se configurado via env. Sem isso, reactor tenta postar em stream
-    inexistente. Idempotente. No-op quando TERMINAL_NOTIFY_STREAM vazio.
+    """Ensures the terminal aggregator stream (task done/halt/human_review)
+    exists, if configured via env. Without it, the reactor tries to post to a
+    nonexistent stream. Idempotent. No-op when TERMINAL_NOTIFY_STREAM is empty.
     """
     terminal = os.environ.get("TERMINAL_NOTIFY_STREAM", "").strip()
     if not terminal:
-        log.info("web.terminal_stream_skipped", reason="TERMINAL_NOTIFY_STREAM vazio")
+        log.info("web.terminal_stream_skipped", reason="TERMINAL_NOTIFY_STREAM empty")
         return
     await db.execute(
         """
         INSERT INTO messaging.streams (name, description)
-        VALUES ($1, 'Notificacoes terminais de tasks (done/halt/human_review)')
+        VALUES ($1, 'Task terminal notifications (done/halt/human_review)')
         ON CONFLICT (name) DO NOTHING
         """,
         terminal,
@@ -128,8 +128,8 @@ async def _bootstrap_terminal_stream():
 
 
 async def _reload_push_dispatcher() -> bool:
-    """(Re)cria app.state.push_dispatcher a partir da config corrente
-    (web.app_settings + fallback env). Retorna True se ficou habilitado."""
+    """(Re)creates app.state.push_dispatcher from the current config
+    (web.app_settings + env fallback). Returns True if it ended up enabled."""
     from . import app_settings as _s
     cfg = await _s.get_vapid()
     if not cfg:
@@ -143,17 +143,17 @@ async def _reload_push_dispatcher() -> bool:
 
 
 async def _push_notifier_loop():
-    """LISTEN em msg_all e dispara push VAPID APENAS quando ha pending_ask
-    nao resolvido na conversa (ou seja, um agente esta bloqueado aguardando
-    resposta do humano). Reply normal do bot nao gera push — aparece como
-    unread discreto na sidebar ate o humano abrir.
+    """LISTENs on msg_all and fires a VAPID push ONLY when there is an
+    unresolved pending_ask in the conversation (i.e. an agent is blocked
+    waiting for the human's answer). A normal bot reply does not push — it
+    shows up as a discreet unread in the sidebar until the human opens it.
 
-    Racional: push e interrupcao — reservado pra demanda real de atencao
-    (ask_human), nao pra cada bot reply/emoji de sinal.
+    Rationale: a push is an interruption — reserved for real demands on
+    attention (ask_human), not for every bot reply/signal emoji.
 
-    Hot-reload: dispatcher eh lido fresh a cada msg em vez de cacheado,
-    pra que clicar Generate keypair no PWA passe a disparar pushes sem
-    restart. Se ainda nao tem dispatcher, msg eh ignorada (sem panic loop).
+    Hot-reload: the dispatcher is read fresh on every msg instead of cached,
+    so clicking Generate keypair in the PWA starts firing pushes without a
+    restart. If there is no dispatcher yet, the msg is ignored (no panic loop).
     """
     dsn = os.environ["DATABASE_URL"]
     while True:
@@ -173,10 +173,10 @@ async def _push_notifier_loop():
                     continue
                 try:
                     data = json.loads(payload_raw)
-                    # Migration 026: echoes (D-100 forward) sao puramente
-                    # visuais — pular push pra nao notificar humano de uma
-                    # copia (a msg original na conv-filha ja teve sua propria
-                    # avaliacao de pending_ask).
+                    # Migration 026: echoes (D-100 forward) are purely
+                    # visual — skip the push so the human is not notified of a
+                    # copy (the original msg in the child conv already had its
+                    # own pending_ask evaluation).
                     if data.get("kind") == "echo":
                         continue
                     meta = await db.fetch_one(
@@ -191,8 +191,8 @@ async def _push_notifier_loop():
                     )
                     if meta is None or meta["sender_kind"] != "bot":
                         continue
-                    # D-111: filtra kind='ask_human' — ask_agent e
-                    # silencioso pra humano (target agente responde).
+                    # D-111: filter kind='ask_human' — ask_agent is
+                    # silent for the human (the target agent answers).
                     has_pending = await db.fetch_one(
                         "SELECT 1 FROM messaging.pending_asks "
                         " WHERE conversation_id = $1 AND resolved_at IS NULL "
@@ -201,8 +201,8 @@ async def _push_notifier_loop():
                     )
                     if not has_pending:
                         continue
-                    # Hot-reload: pega dispatcher corrente. Se Generate keypair
-                    # rodou no PWA, novo dispatcher ja esta ativo aqui.
+                    # Hot-reload: take the current dispatcher. If Generate keypair
+                    # ran in the PWA, the new dispatcher is already active here.
                     dispatcher = app.state.push_dispatcher
                     if dispatcher is None:
                         continue
@@ -256,9 +256,9 @@ app.include_router(files_router)
 app.include_router(scheduler_routes_router)
 
 
-# ---------- Compat aliases pro PWA legacy ----------
-# PWA espera formato {items: [...]} e ids como "stream/topic" (string).
-# Broker retorna lista direta com id numerico. Aqui adaptamos.
+# ---------- Compat aliases for the legacy PWA ----------
+# The PWA expects the {items: [...]} format and ids as "stream/topic" (string).
+# The broker returns a plain list with numeric ids. We adapt here.
 
 def _conv_id_string(stream: str, topic: str) -> str:
     return f"{stream}/{topic}"
@@ -268,7 +268,7 @@ def _conv_id_string(stream: str, topic: str) -> str:
 async def pending_asks_alias(principal: Principal = Depends(get_principal)):
     from .broker import list_asks
     items = await list_asks(principal)
-    # PWA espera id=stream/topic
+    # PWA expects id=stream/topic
     for it in items:
         it["id"] = _conv_id_string(it["stream"], it["topic"])
     return {"items": items}
@@ -283,8 +283,8 @@ async def post_message_alias(payload: dict, principal: Principal = Depends(get_p
         content=payload.get("content", ""),
         client_id=payload.get("client_id"),
     )
-    # Se topic veio vazio/None, cria um default com timestamp humanizado
-    # (sem prefixo — entrada pode vir de voz ou texto, prefixo nao agrega).
+    # If topic came empty/None, create a default with a human-readable timestamp
+    # (no prefix — input may come from voice or text, a prefix adds nothing).
     if not msg.topic:
         from datetime import datetime
         msg.topic = datetime.utcnow().strftime('%Y-%m-%d %H:%M')
@@ -301,11 +301,11 @@ async def conversations_alias(
     filter: str = "active",
     principal: Principal = Depends(get_principal),
 ):
-    """Lista unificada (D-57): retorna Active (archived_at IS NULL) ou Closed
-    (archived_at IS NOT NULL). Task metadata vem junto quando a conversation
-    e origem de uma task.
+    """Unified list (D-57): returns Active (archived_at IS NULL) or Closed
+    (archived_at IS NOT NULL). Task metadata comes along when the conversation
+    is the origin of a task.
 
-    Campos: `archived_at`, `participating`, `task: {...}` quando aplicavel."""
+    Fields: `archived_at`, `participating`, `task: {...}` when applicable."""
     from .broker import list_unified_conversations
     items = await list_unified_conversations(principal, filter_=filter)
     from datetime import datetime
@@ -335,8 +335,8 @@ async def conversations_alias(
             },
             "awaiting_human": c["awaiting_human"],
             "participating": c["participating"],
-            # `closed` legado (web.closed_conversations, pre-D-57) nao se aplica
-            # mais — filtro e archived_at. Mantido como False pra shape legacy.
+            # Legacy `closed` (web.closed_conversations, pre-D-57) no longer
+            # applies — the filter is archived_at. Kept as False for the legacy shape.
             "closed": False,
             "parent_conv_id": c.get("parent_conv_id"),
             "children_stats": c.get("children_stats") or {
@@ -354,7 +354,7 @@ async def conversations_alias(
 
 
 async def _resolve_conv_id(conv_id: str) -> int:
-    """Aceita 'stream/topic' ou numero (string). Retorna id numerico."""
+    """Accepts 'stream/topic' or a number (string). Returns the numeric id."""
     if conv_id.isdigit():
         return int(conv_id)
     if "/" not in conv_id:
@@ -389,20 +389,20 @@ async def conversation_messages_alias(conv_id: str, principal: Principal = Depen
     if not rows:
         raise HTTPException(status_code=404, detail="conversation has no messages")
     first = rows[0]
-    # D-111: kind='ask_human' — badge needs-you so dispara em ask humano,
-    # nao em ask_agent (agente target responde, silencioso pra humano).
+    # D-111: kind='ask_human' — the needs-you badge only fires on a human ask,
+    # not on ask_agent (the target agent answers, silent for the human).
     pending = await db.fetch_one(
         "SELECT 1 FROM messaging.pending_asks "
         " WHERE conversation_id = $1 AND resolved_at IS NULL "
         "   AND kind = 'ask_human'",
         numeric_id,
     )
-    # D-71: runner_state derivado de telemetry.live_events + pending_asks.
-    # Mesmo shape do endpoint /runner-state standalone.
+    # D-71: runner_state derived from telemetry.live_events + pending_asks.
+    # Same shape as the standalone /runner-state endpoint.
     runner_state = await _compute_runner_state(numeric_id)
-    # D-96: parent_conv_id define read-only sozinho. Toda filha eh read-only
-    # pro humano (D-96 collapsou regra antiga). Frontend deriva direto do
-    # parent_conv_id; campo `read_only_reason` removido.
+    # D-96: parent_conv_id alone defines read-only. Every child is read-only
+    # for the human (D-96 collapsed the old rule). The frontend derives it
+    # directly from parent_conv_id; the `read_only_reason` field was removed.
     parent_conv_id_row = await db.fetch_one(
         "SELECT parent_conv_id FROM messaging.conversations WHERE id = $1",
         numeric_id,
@@ -430,25 +430,25 @@ async def conversation_messages_alias(conv_id: str, principal: Principal = Depen
 
 
 async def _collect_descendant_conv_ids(root_id: int) -> list[int]:
-    """Descobre recursivamente todas as convs descendentes de `root_id`.
+    """Recursively discovers all descendant convs of `root_id`.
 
-    Fonte primaria (D-87): CTE recursivo no FK `parent_conv_id`. Lookup
-    O(depth) em vez de heuristica por topic pattern. Captura netos e
-    bisnetos que o parser legacy perdia (ex: topic
-    `__ask-from-<avo>.<pai>-<uid>` nao batia no pattern
-    `__ask-from-<pai>-%`).
+    Primary source (D-87): recursive CTE on the `parent_conv_id` FK. O(depth)
+    lookup instead of a topic-pattern heuristic. Catches grandchildren and
+    great-grandchildren the legacy parser missed (e.g. topic
+    `__ask-from-<grandparent>.<parent>-<uid>` did not match the pattern
+    `__ask-from-<parent>-%`).
 
-    Fallback legacy: pra convs anteriores a D-87 (parent_conv_id NULL),
-    mantem as heuristicas de D-86:
-      1. ask_agent: convs com topic `__ask-from-<cur.stream>-<uid>` cujo
-         tool_use correspondente em telemetry.live_events foi emitido
-         pela conv corrente.
-      2. task: se cur eh origem de uma task, todas as convs `task-<slug>`
-         sao filhas.
+    Legacy fallback: for convs older than D-87 (parent_conv_id NULL),
+    keeps the D-86 heuristics:
+      1. ask_agent: convs with topic `__ask-from-<cur.stream>-<uid>` whose
+         matching tool_use in telemetry.live_events was emitted by the
+         current conv.
+      2. task: if cur is the origin of a task, all `task-<slug>` convs
+         are children.
 
-    Retorna ids em ordem de descoberta (topdown).
+    Returns ids in discovery order (top-down).
     """
-    # Fonte primaria: CTE recursivo.
+    # Primary source: recursive CTE.
     rows = await db.fetch_all(
         """WITH RECURSIVE tree AS (
                SELECT id FROM messaging.conversations WHERE id = $1
@@ -462,9 +462,9 @@ async def _collect_descendant_conv_ids(root_id: int) -> list[int]:
     descendants: list[int] = [r["id"] for r in rows]
     visited: set[int] = {root_id, *descendants}
 
-    # Fallback legacy: aplica heuristicas apenas em convs sem parent_conv_id
-    # (pre-D-87). Se todas as convs ativas foram criadas pos-D-87, o loop
-    # abaixo nao adiciona nada e o custo e desprezivel (uma query).
+    # Legacy fallback: apply heuristics only to convs without parent_conv_id
+    # (pre-D-87). If all active convs were created post-D-87, the loop
+    # below adds nothing and the cost is negligible (one query).
     legacy_roots_rows = await db.fetch_all(
         """SELECT id FROM messaging.conversations
             WHERE parent_conv_id IS NULL
@@ -485,7 +485,7 @@ async def _collect_descendant_conv_ids(root_id: int) -> list[int]:
         if not cur:
             continue
 
-        # Fase 1 legacy: ask_agent filhas (topic __ask-from-<cur_stream>-*).
+        # Legacy phase 1: ask_agent children (topic __ask-from-<cur_stream>-*).
         pattern = f"__ask-from-{cur['stream']}-%"
         candidates = await db.fetch_all(
             """SELECT c.id, c.created_at, s.name AS stream
@@ -514,7 +514,7 @@ async def _collect_descendant_conv_ids(root_id: int) -> list[int]:
                 descendants.append(cand["id"])
                 legacy_queue.append(cand["id"])
 
-        # Fase 2 legacy: task siblings.
+        # Legacy phase 2: task siblings.
         task_row = await db.fetch_one(
             """SELECT slug FROM tasks.tasks
                 WHERE origin_stream = $1 AND origin_topic = $2""",
@@ -545,20 +545,20 @@ async def conversations_close_all_alias(principal: Principal = Depends(get_princ
 
 
 async def _cancel_runners_for_convs(conv_ids: list[int], silent: bool = False) -> None:
-    """Dispara `pg_notify('agent_ctrl', cancel_topic)` pra cada conversation.
-    Agente listening no stream correspondente manda SIGTERM no processo
-    Claude CLI ativo do topic (fallback SIGKILL apos 3s, via dispatcher).
+    """Fires `pg_notify('agent_ctrl', cancel_topic)` for each conversation.
+    The agent listening on the matching stream sends SIGTERM to the topic's
+    active Claude CLI process (SIGKILL fallback after 3s, via dispatcher).
 
-    Chamado em archive/delete cascata — sem isso, runners ativos em convs
-    removidas ficam fantasmas segurando slots de pool, travando tarefas
-    futuras (D-72 bugfix).
+    Called on cascading archive/delete — without it, active runners in
+    removed convs become ghosts holding pool slots, blocking future tasks
+    (D-72 bugfix).
 
-    `silent=True` instrui o dispatcher a NAO postar a mensagem de
-    confirmacao ("Cancelado pelo usuario" / "Nada pra cancelar"). Usado
-    pelos callers archive/delete: a conv ja foi arquivada/apagada pelo
-    humano, a notificacao seria ruido na tab Closed. Cancel manual via
-    POST /api/conversations/{id}/cancel mantem `silent=False` — o
-    feedback ali e util pra confirmar que o sinal foi processado.
+    `silent=True` tells the dispatcher NOT to post the confirmation
+    message ("cancelled by user" / "nothing to cancel"). Used by the
+    archive/delete callers: the conv was already archived/deleted by the
+    human, so the notification would be noise in the Closed tab. Manual
+    cancel via POST /api/conversations/{id}/cancel keeps `silent=False` —
+    the feedback there is useful to confirm the signal was processed.
     """
     if not conv_ids:
         return
@@ -586,10 +586,10 @@ async def conversation_patch(
     payload: dict,
     _: Principal = Depends(get_principal),
 ):
-    """Atualiza metadata editavel da conversa. Hoje aceita so `custom_title`
-    (titulo amigavel definido pelo humano via PWA — display rule no frontend
-    e `custom_title || task.title || topic`). Passar string vazia ou null
-    apaga o override (volta pro fallback). Migration 027."""
+    """Updates the conversation's editable metadata. Currently only accepts
+    `custom_title` (friendly title set by the human via the PWA — the frontend
+    display rule is `custom_title || task.title || topic`). Passing an empty
+    string or null clears the override (back to the fallback). Migration 027."""
     if "custom_title" not in payload:
         raise HTTPException(status_code=400, detail="custom_title is required")
     raw = payload.get("custom_title")
@@ -617,19 +617,20 @@ async def conversation_patch(
 
 @app.post("/api/conversations/{conv_id:path}/archive")
 async def conversation_archive(conv_id: str, principal: Principal = Depends(get_principal)):
-    """D-57: soft-delete manual de thread pelo humano. Move pra tab Closed no
-    PWA. Diferente de task archive (que exige status terminal), conversation
-    archive e livre — e decisao do humano, nao da mecanica da task.
+    """D-57: manual soft-delete of a thread by the human. Moves it to the Closed
+    tab in the PWA. Unlike task archive (which requires a terminal status),
+    conversation archive is unrestricted — it is the human's decision, not
+    task mechanics.
 
-    D-72: cascade — descendentes (sub-conversas via ask_agent + convs
-    `task-<slug>` da mesma task) sao arquivadas junto. Runners ativos das
-    convs envolvidas recebem cancel via agent_ctrl pra nao ficarem
-    fantasmas segurando o pool.
+    D-72: cascade — descendants (sub-conversations via ask_agent + `task-<slug>`
+    convs of the same task) are archived along. Active runners of the
+    involved convs get a cancel via agent_ctrl so they don't become ghosts
+    holding the pool.
 
-    Bot caller (MCP `archive_conversation`): adicionalmente bloqueia se
-    o proprio bot tem `pending_ask` aberto na conv — arquivar silenciaria
-    o humano antes da resposta. Humano caller (PWA) nao tem essa regra
-    (decisao livre)."""
+    Bot caller (MCP `archive_conversation`): additionally blocks if the bot
+    itself has an open `pending_ask` in the conv — archiving would silence
+    the human before the answer. A human caller (PWA) has no such rule
+    (free decision)."""
     numeric_id = await _resolve_conv_id(conv_id)
     row = await db.fetch_one(
         "SELECT archived_at FROM messaging.conversations WHERE id = $1",
@@ -640,9 +641,9 @@ async def conversation_archive(conv_id: str, principal: Principal = Depends(get_
     if row["archived_at"] is not None:
         raise HTTPException(status_code=409, detail="conversation is already archived")
     if principal.kind == "bot" and principal.user_id is not None:
-        # D-111: bloqueia archive apenas se ha ask_human pendente proprio.
-        # ask_agent pendente (cross-agent) nao deve bloquear archive — bot
-        # arquivar significa "abandono o ask".
+        # D-111: block archive only if there is an own pending ask_human.
+        # A pending ask_agent (cross-agent) must not block archive — the bot
+        # archiving means "I abandon the ask".
         own_pending = await db.fetch_one(
             """SELECT 1 FROM messaging.pending_asks
                 WHERE conversation_id = $1
@@ -655,9 +656,9 @@ async def conversation_archive(conv_id: str, principal: Principal = Depends(get_
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Voce tem um ask_human aberto nesta conversa — arquivar "
-                    "silenciaria o humano antes da resposta. Aguarde a "
-                    "resposta ou resolva o ask antes de chamar archive."
+                    "You have an open ask_human in this conversation — archiving "
+                    "would silence the human before they answer. Wait for the "
+                    "answer or resolve the ask before calling archive."
                 ),
             )
     descendants = await _collect_descendant_conv_ids(numeric_id)
@@ -686,12 +687,12 @@ async def conversation_archive(conv_id: str, principal: Principal = Depends(get_
 
 @app.post("/api/conversations/{conv_id:path}/unarchive")
 async def conversation_unarchive(conv_id: str, _: Principal = Depends(get_principal)):
-    """Reabre conversa: volta pra Active. Se havia task atrelada em status
-    terminal, a task NAO e reaberta automaticamente — isso e acao explicita
-    (MCP tool reopen_task, D-57 fase 2.5) ou nova task.
+    """Reopens a conversation: back to Active. If a linked task was in a
+    terminal status, the task is NOT reopened automatically — that is an
+    explicit action (MCP tool reopen_task, D-57 phase 2.5) or a new task.
 
-    D-72: cascade — descendentes arquivadas tambem voltam pra Active
-    (idempotente)."""
+    D-72: cascade — archived descendants also go back to Active
+    (idempotent)."""
     numeric_id = await _resolve_conv_id(conv_id)
     row = await db.fetch_one(
         "SELECT archived_at FROM messaging.conversations WHERE id = $1",
@@ -726,26 +727,26 @@ async def conversation_unarchive(conv_id: str, _: Principal = Depends(get_princi
 
 @app.delete("/api/conversations/{conv_id:path}")
 async def conversation_delete_alias(conv_id: str, principal: Principal = Depends(get_principal)):
-    """DELETE permanente. Cascade apaga msgs + pending_asks + closed refs
-    de cada conversation. D-72: agora tambem deleta descendentes em cascata
-    (sub-conversas ask_agent + convs da mesma task). Runners ativos dos
-    topics sao cancelados via agent_ctrl antes do DELETE, pra nao ficarem
-    fantasmas segurando slot de pool do agente."""
+    """Permanent DELETE. Cascade deletes msgs + pending_asks + closed refs
+    of each conversation. D-72: now also deletes descendants in cascade
+    (ask_agent sub-conversations + convs of the same task). Active runners
+    of the topics are cancelled via agent_ctrl before the DELETE, so they
+    don't become ghosts holding the agent's pool slot."""
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="not authenticated")
     numeric_id = await _resolve_conv_id(conv_id)
     descendants = await _collect_descendant_conv_ids(numeric_id)
     all_ids = [numeric_id, *descendants]
-    # Cancela ANTES do DELETE — dispatcher resolve stream+topic pelo payload
-    # do pg_notify, nao precisa que a conv ainda exista quando o SIGTERM
-    # chega, mas pesquisar stream/topic no DB exige conv viva. Ordem importa.
-    # silent=True: conv vai sumir (DELETE), confirmacao seria ruido.
+    # Cancel BEFORE the DELETE — the dispatcher resolves stream+topic from the
+    # pg_notify payload, so the conv need not exist when the SIGTERM arrives,
+    # but looking up stream/topic in the DB requires a live conv. Order matters.
+    # silent=True: the conv is going away (DELETE), a confirmation would be noise.
     await _cancel_runners_for_convs(all_ids, silent=True)
-    # Grava tombstone pra bloquear re-criacao por 5min (D-72 fix): qualquer
-    # msg em voo (agente ainda processando turno, reactor com handoff
-    # pendente, etc) chegando apos o DELETE poderia auto-criar a conv de
-    # novo no broker. Tombstone antes do DELETE garante que o INSERT casa
-    # stream_id/topic_name enquanto a conv ainda existe.
+    # Write a tombstone to block re-creation for 5min (D-72 fix): any
+    # in-flight msg (agent still processing a turn, reactor with a pending
+    # handoff, etc) arriving after the DELETE could auto-create the conv
+    # again in the broker. Tombstone before the DELETE ensures the INSERT
+    # matches stream_id/topic_name while the conv still exists.
     await db.execute(
         """INSERT INTO messaging.deleted_topics (stream_id, topic_name, deleted_at)
             SELECT c.stream_id, c.topic_name, now()
@@ -755,15 +756,15 @@ async def conversation_delete_alias(conv_id: str, principal: Principal = Depends
               DO UPDATE SET deleted_at = now()""",
         all_ids,
     )
-    # Snapshot agregado do trace em telemetry.events.metadata ANTES do DELETE.
-    # Razao: telemetry.live_events tem FK CASCADE pra messaging.conversations
-    # e e apagado junto com a conv. O summary em telemetry.events sobrevive
-    # (FK SET NULL, migration 020) mas o trace bruto some. Aqui preservamos
-    # o agregado ("quantos thinkings, quantos tool_use, quais tools usadas")
-    # em metadata — suficiente pra task detail continuar mostrando effort
-    # pos-delete. O UPDATE casa via conversation_id OU via topic_slug (fallback
-    # pra rows cujo conversation_id ainda nao foi populado — ate o runner ser
-    # rebuildado, a maioria dos rows nao vai ter FK resolvida).
+    # Aggregated trace snapshot into telemetry.events.metadata BEFORE the DELETE.
+    # Reason: telemetry.live_events has an FK CASCADE to messaging.conversations
+    # and is deleted along with the conv. The summary in telemetry.events survives
+    # (FK SET NULL, migration 020) but the raw trace is gone. Here we keep
+    # the aggregate ("how many thinkings, how many tool_use, which tools used")
+    # in metadata — enough for task detail to keep showing effort after the
+    # delete. The UPDATE matches via conversation_id OR via topic_slug (fallback
+    # for rows whose conversation_id is not populated yet — until the runner is
+    # rebuilt, most rows won't have the FK resolved).
     await db.execute(
         """WITH trace_agg AS (
             SELECT le.conversation_id,
@@ -815,13 +816,13 @@ async def conversation_close_alias(conv_id: str, principal: Principal = Depends(
 
 @app.post("/api/conversations/{conv_id:path}/cancel")
 async def conversation_cancel(conv_id: str, principal: Principal = Depends(get_principal)):
-    """Cancela turn pendente no agente (se ainda nao comecou a chamar Claude).
+    """Cancels a pending turn on the agent (if it hasn't started calling Claude yet).
 
-    D-29: dispara NOTIFY no canal Postgres `agent_ctrl` com payload
-    `{type, stream, topic, user_id}`. Agente filtra por stream que escuta,
-    passa pro dispatcher, que decide (nada/tarde demais/cancela + confirma).
-    D-71: quando Claude CLI esta rodando, dispatcher agora faz SIGTERM no
-    proc ao inves de responder "tarde demais".
+    D-29: fires a NOTIFY on the Postgres channel `agent_ctrl` with payload
+    `{type, stream, topic, user_id}`. The agent filters by the stream it
+    listens on and hands it to the dispatcher, which decides (nothing/too
+    late/cancel + confirm). D-71: when the Claude CLI is running, the
+    dispatcher now SIGTERMs the proc instead of answering "too late".
     """
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="not authenticated")
@@ -841,37 +842,37 @@ async def conversation_cancel(conv_id: str, principal: Principal = Depends(get_p
         "topic": row["topic"],
         "user_id": principal.user_id,
     })
-    # `pg_notify` eh fire-and-forget — agente pode nao estar listening
-    # (reply "nada pra cancelar" vem do agente se receber).
+    # `pg_notify` is fire-and-forget — the agent may not be listening
+    # (the "nothing to cancel" reply comes from the agent if it receives it).
     await db.execute("SELECT pg_notify('agent_ctrl', $1)", payload)
     return {"ok": True}
 
 
 # ---------- D-71: runner state + retry ----------
 
-# Threshold pra marcar um turn como "stuck": ultimo live_event (run_start,
-# thinking, tool_use, tool_result) ha mais de X segundos sem run_end. Default
-# 10min — Claude CLI respeita MCP_TOOL_TIMEOUT de 24h pra ask_human/ask_agent,
-# mas esses nao quebram run_start sem eventos intermediarios (thinking/tool_use
-# sao emitidos durante a pausa). 10min cobre ciclo normal de run ativa; alem
-# disso vira candidato a cancel/retry.
+# Threshold to mark a turn as "stuck": last live_event (run_start, thinking,
+# tool_use, tool_result) more than X seconds ago with no run_end. Default
+# 10min — the Claude CLI honors a 24h MCP_TOOL_TIMEOUT for ask_human/ask_agent,
+# but those don't break run_start without intermediate events (thinking/tool_use
+# are emitted during the pause). 10min covers a normal active-run cycle; beyond
+# that it becomes a cancel/retry candidate.
 RUNNER_STUCK_SEC = int(os.environ.get("RUNNER_STUCK_SEC", "600"))
 
 
 async def _compute_runner_state(conv_id: int) -> dict:
-    """Deriva o estado corrente do runner pra uma conversation.
+    """Derives the current runner state for a conversation.
 
-    Fonte: `messaging.runs` (single source of truth, migration 030) +
-    `messaging.pending_asks` (ask_human ativo). O dual-write no handler
-    de telemetry.live_events mantem `runs` em sync; o reaper do scheduler
-    fecha runs orfas como 'stale'.
+    Source: `messaging.runs` (single source of truth, migration 030) +
+    `messaging.pending_asks` (active ask_human). The dual-write in the
+    telemetry.live_events handler keeps `runs` in sync; the scheduler's
+    reaper closes orphan runs as 'stale'.
 
-    Estados:
-      - `idle`: nenhuma run ou ultima run terminou (done/stale).
-      - `running`: ultima run com status='running' e heartbeat fresco.
-      - `errored`: ultima run com status='error'.
-      - `blocked_on_ask_human`: ha pending_ask kind='ask_human' nao resolvido.
-      - `stuck`: status='running' mas heartbeat antigo (> RUNNER_STUCK_SEC).
+    States:
+      - `idle`: no run, or the last run finished (done/stale).
+      - `running`: last run with status='running' and a fresh heartbeat.
+      - `errored`: last run with status='error'.
+      - `blocked_on_ask_human`: there is an unresolved pending_ask kind='ask_human'.
+      - `stuck`: status='running' but an old heartbeat (> RUNNER_STUCK_SEC).
     """
     run = await db.fetch_one(
         """SELECT status, started_at, last_heartbeat_at, finished_at, exit_reason
@@ -881,9 +882,9 @@ async def _compute_runner_state(conv_id: int) -> dict:
             LIMIT 1""",
         conv_id,
     )
-    # D-111: blocked_on_ask_human = literalmente bloqueado em humano.
-    # ask_agent pendente nao gera estado "blocked" pra UI (eh transicao
-    # interna entre agentes, nao espera de humano).
+    # D-111: blocked_on_ask_human = literally blocked on a human.
+    # A pending ask_agent does not produce a "blocked" state for the UI (it is
+    # an internal transition between agents, not a wait on a human).
     pending = await db.fetch_one(
         "SELECT asked_at FROM messaging.pending_asks "
         "WHERE conversation_id = $1 AND resolved_at IS NULL "
@@ -897,9 +898,9 @@ async def _compute_runner_state(conv_id: int) -> dict:
     last_error = None
     stuck = False
 
-    # D-84: awaiting_human tem precedencia absoluta sobre running/stuck.
-    # Quando ha pending_ask, o runner pode estar vivo bloqueado no callback,
-    # mas operacionalmente nada avanca ate o humano responder.
+    # D-84: awaiting_human takes absolute precedence over running/stuck.
+    # When there is a pending_ask, the runner may be alive, blocked in the
+    # callback, but operationally nothing moves until the human answers.
     if pending is not None:
         state = "awaiting_human"
         since = pending["asked_at"]
@@ -919,12 +920,12 @@ async def _compute_runner_state(conv_id: int) -> dict:
         # done / stale → idle (default)
 
     can_retry = state in ("errored", "stuck")
-    # Cancel so faz sentido quando ha computacao em andamento (Claude CLI
-    # ativo, nao bloqueado em ask_human). `blocked_on_ask_human` tem o CLI
-    # vivo mas bloqueado no callback do broker — SIGTERM ali deixaria
-    # pending_ask dangling e confundiria o usuario ("cancelar" soa como
-    # "interromper trabalho", mas nao ha trabalho acontecendo, so espera).
-    # UX correto nesse estado: responder a pergunta ou archive.
+    # Cancel only makes sense while computation is in progress (Claude CLI
+    # active, not blocked on ask_human). `blocked_on_ask_human` has the CLI
+    # alive but blocked in the broker callback — a SIGTERM there would leave
+    # pending_ask dangling and confuse the user ("cancel" sounds like
+    # "interrupt work", but no work is happening, just waiting).
+    # Correct UX in that state: answer the question or archive.
     can_cancel = state in ("running", "stuck")
     return {
         "state": state,
@@ -940,10 +941,10 @@ async def _compute_runner_state(conv_id: int) -> dict:
 async def conversation_runner_state(
     conv_id: str, _: Principal = Depends(get_principal),
 ):
-    """Retorna o estado corrente do runner pra uma conversation.
+    """Returns the current runner state for a conversation.
 
-    Usado pelo PWA pra renderizar badge de estado e habilitar botoes
-    Retry/Cancel. Invalidado via SSE quando chega run_start/run_end/thinking.
+    Used by the PWA to render the state badge and enable the Retry/Cancel
+    buttons. Invalidated via SSE when run_start/run_end/thinking arrives.
     """
     numeric_id = await _resolve_conv_id(conv_id)
     return await _compute_runner_state(numeric_id)
@@ -953,17 +954,17 @@ async def conversation_runner_state(
 async def conversation_retry(
     conv_id: str, principal: Principal = Depends(get_principal),
 ):
-    """Re-processa o ultimo turno do topic como se fosse uma mensagem nova.
+    """Reprocesses the topic's last turn as if it were a new message.
 
-    D-71: busca a ultima mensagem cujo sender nao seja o bot da propria
-    stream (evita loop — nao re-dispara uma resposta do proprio agente como
-    trigger) e reemite `pg_notify('msg_stream_<sid>', <payload>)`. O callback
-    `_on_notify` no agente nao dedup por message_id, entao roda o handler de
-    novo — mesmo prompt, session_id atual no DB (pode estar None apos D-70
-    recovery, que aciona fresh start).
+    D-71: finds the last message whose sender is not the stream's own bot
+    (avoids a loop — does not re-fire the agent's own reply as a trigger)
+    and re-emits `pg_notify('msg_stream_<sid>', <payload>)`. The agent's
+    `_on_notify` callback does not dedup by message_id, so it runs the
+    handler again — same prompt, current session_id in the DB (may be None
+    after D-70 recovery, which triggers a fresh start).
 
-    Guard: so permite se `can_retry` (errored/stuck). Senao 409 — evita
-    double-dispatch acidental em run ativa.
+    Guard: only allowed if `can_retry` (errored/stuck). Otherwise 409 — avoids
+    accidental double-dispatch on an active run.
     """
     if principal.user_id is None:
         raise HTTPException(status_code=401, detail="not authenticated")
@@ -974,9 +975,9 @@ async def conversation_retry(
             status_code=409,
             detail=f"retry unavailable in current state: {state['state']}",
         )
-    # Busca conversation + stream_id + nome do bot da stream (= nome do
-    # agente, convencao). Ignoramos mensagens desse bot pra achar o ultimo
-    # trigger externo.
+    # Fetch conversation + stream_id + the stream's bot name (= agent name,
+    # by convention). We ignore that bot's messages to find the last
+    # external trigger.
     conv = await db.fetch_one(
         """SELECT s.id AS stream_id, s.name AS stream_name, c.topic_name AS topic
              FROM messaging.conversations c
@@ -986,8 +987,8 @@ async def conversation_retry(
     )
     if conv is None:
         raise HTTPException(status_code=404, detail="conversation does not exist")
-    # Ultima msg cujo sender nao seja o proprio agente (bot com agent_name =
-    # stream_name). Fallback: qualquer ultima msg.
+    # Last msg whose sender is not the agent itself (bot with agent_name =
+    # stream_name). Fallback: any last msg.
     trigger = await db.fetch_one(
         """SELECT m.id, m.sender_id, m.conversation_id
              FROM messaging.messages m
@@ -998,8 +999,8 @@ async def conversation_retry(
         numeric_id, conv["stream_name"],
     )
     if trigger is None:
-        # Fallback: ultima msg qualquer (caso de conversa so com msgs do
-        # proprio agente — raro mas possivel em loops de automacao).
+        # Fallback: any last msg (case of a conversation with only the
+        # agent's own msgs — rare but possible in automation loops).
         trigger = await db.fetch_one(
             "SELECT id, sender_id, conversation_id FROM messaging.messages "
             "WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1",
@@ -1010,8 +1011,8 @@ async def conversation_retry(
                 status_code=400,
                 detail="conversation has no messages to reprocess",
             )
-    # Reemite o mesmo shape de payload que o trigger `messaging.notify_message`
-    # produz (ver migrations/007_notify_payload_slim.sql).
+    # Re-emit the same payload shape the `messaging.notify_message` trigger
+    # produces (see migrations/007_notify_payload_slim.sql).
     payload = json.dumps({
         "id": trigger["id"],
         "conversation_id": trigger["conversation_id"],
@@ -1033,27 +1034,27 @@ async def conversation_retry(
 
 # D-95 followup: brute-force throttle.
 #
-# Estado in-memory por email — single-process (uvicorn 1 worker default),
-# perdido em restart (aceito: brute-force quem reinicia o web pra resetar
-# o contador ja teve que entrar no host, jogo perdido). Contador eh lista
-# de timestamps de falhas, com janela deslizante de _LOGIN_WINDOW_SEC.
-# 3+ falhas dentro da janela aplicam delay 2^(count-2)s capado em 30s,
-# antes de retornar 401. Sucesso zera o contador daquele email.
+# In-memory state per email — single-process (uvicorn 1 worker default),
+# lost on restart (accepted: a brute-forcer who restarts web to reset the
+# counter already had to get into the host, game over). The counter is a
+# list of failure timestamps, with a sliding window of _LOGIN_WINDOW_SEC.
+# 3+ failures within the window apply a 2^(count-2)s delay capped at 30s,
+# before returning 401. Success resets that email's counter.
 #
-# Hash dummy abaixo eh usado pra constant-time response quando o email
-# nao existe — sem isso, atacante mede latencia (no-bcrypt vs bcrypt) e
-# enumera quais emails tem conta.
-_LOGIN_WINDOW_SEC = 900  # 15 minutos
+# The dummy hash below is used for a constant-time response when the email
+# does not exist — without it, an attacker measures latency (no-bcrypt vs
+# bcrypt) and enumerates which emails have an account.
+_LOGIN_WINDOW_SEC = 900  # 15 minutes
 _LOGIN_THROTTLE_AFTER = 3
 _LOGIN_DELAY_CAP_SEC = 30
 _login_failures: dict[str, list[float]] = {}
-# bcrypt hash de string aleatoria — nunca bate com password real do user
+# bcrypt hash of a random string — never matches a real user password
 _DUMMY_PWD_HASH = bcrypt.hashpw(os.urandom(32), bcrypt.gensalt()).decode()
 
 
 def _login_failure_count(email: str) -> int:
-    """Quantas falhas consecutivas dentro da janela. Side-effect: prune
-    entries antigas do email."""
+    """How many consecutive failures within the window. Side effect: prunes
+    the email's old entries."""
     now = time.time()
     cutoff = now - _LOGIN_WINDOW_SEC
     fails = [t for t in _login_failures.get(email, []) if t > cutoff]
@@ -1065,7 +1066,7 @@ def _login_failure_count(email: str) -> int:
 
 
 def _record_login_failure(email: str) -> int:
-    """Registra falha e retorna count atualizado."""
+    """Records a failure and returns the updated count."""
     now = time.time()
     fails = _login_failures.get(email, [])
     cutoff = now - _LOGIN_WINDOW_SEC
@@ -1080,17 +1081,17 @@ def _clear_login_failures(email: str) -> None:
 
 
 def _real_client_ip(request: Request) -> str:
-    """Extrai IP real do cliente.
+    """Extracts the client's real IP.
 
-    Atras de cloudflared, request.client.host eh o IP do container
-    cloudflared (rede docker bridge); o IP real vem no header
-    `CF-Connecting-IP`. Sem cloudflared (acesso direto a 9090),
-    request.client.host JA eh o IP real.
+    Behind cloudflared, request.client.host is the cloudflared container's
+    IP (docker bridge network); the real IP comes in the `CF-Connecting-IP`
+    header. Without cloudflared (direct access to 9090),
+    request.client.host ALREADY is the real IP.
 
-    Trust de header eh CONDICIONAL: so confiamos em CF-Connecting-IP
-    / X-Forwarded-For quando o source eh private/loopback (cloudflared
-    no docker network ou localhost). Se o request veio de um IP publico
-    direto, ignoramos o header — qualquer um podia spoofar.
+    Header trust is CONDITIONAL: we only trust CF-Connecting-IP
+    / X-Forwarded-For when the source is private/loopback (cloudflared
+    on the docker network or localhost). If the request came directly from
+    a public IP, we ignore the header — anyone could spoof it.
     """
     direct = request.client.host if request.client else None
     trust_proxy_headers = False
@@ -1113,11 +1114,11 @@ def _real_client_ip(request: Request) -> str:
 
 @app.post("/api/auth/login")
 async def auth_login(payload: dict, request: Request, response: Response):
-    """Login humano: bcrypt check + cria session + set cookie HttpOnly.
+    """Human login: bcrypt check + create session + set HttpOnly cookie.
 
-    Anti-brute (D-95): contador in-memory por email aplica delay
-    progressivo apos 3 falhas dentro de janela de 15min. Constant-time
-    bcrypt (roda mesmo quando user nao existe) elimina enumeracao via
+    Anti-brute-force (D-95): an in-memory counter per email applies a
+    progressive delay after 3 failures within a 15min window. Constant-time
+    bcrypt (runs even when the user does not exist) removes enumeration via
     timing.
     """
     email = (payload.get("email") or "").strip().lower()
@@ -1125,7 +1126,7 @@ async def auth_login(payload: dict, request: Request, response: Response):
     if not email or not password:
         raise HTTPException(status_code=400, detail="email and password are required")
 
-    # Throttle ANTES da query/bcrypt — atacante nao acelera com 50 reqs/seg.
+    # Throttle BEFORE the query/bcrypt — an attacker gains nothing from 50 reqs/sec.
     fail_count = _login_failure_count(email)
     if fail_count >= _LOGIN_THROTTLE_AFTER:
         delay = min(2 ** (fail_count - _LOGIN_THROTTLE_AFTER + 1), _LOGIN_DELAY_CAP_SEC)
@@ -1141,9 +1142,9 @@ async def auth_login(payload: dict, request: Request, response: Response):
             WHERE LOWER(email) = $1 AND kind = 'human'""",
         email,
     )
-    # Constant-time: roda bcrypt mesmo se user nao existe ou hash NULL.
-    # Resposta 401 sempre passa por ~100ms de bcrypt, indistinguivel do
-    # caso "user existe, senha errada".
+    # Constant-time: run bcrypt even if the user does not exist or hash is NULL.
+    # A 401 response always goes through ~100ms of bcrypt, indistinguishable
+    # from the "user exists, wrong password" case.
     target_hash = row["password_hash"] if (row and row["password_hash"]) else _DUMMY_PWD_HASH
     try:
         bcrypt_ok = bcrypt.checkpw(password.encode(), target_hash.encode())
@@ -1203,9 +1204,9 @@ async def auth_set_password(
     payload: dict,
     principal: Principal = Depends(auth_mod.require_admin),
 ):
-    """Define ou atualiza a senha do admin atual. Quando senha eh setada,
-    desabilita dev_bypass automaticamente — sem isso a senha nao tem
-    efeito (bypass concede admin sem login)."""
+    """Sets or updates the current admin's password. When a password is set,
+    dev_bypass is disabled automatically — otherwise the password has no
+    effect (the bypass grants admin without login)."""
     pwd = (payload.get("password") or "").strip()
     if len(pwd) < 8:
         raise HTTPException(status_code=400, detail="password must be at least 8 chars")
@@ -1222,11 +1223,11 @@ async def auth_set_password(
 
 
 # ---------- Tasks (unified view across conversations) ----------
-# Schema vive em Postgres (tasks.tasks + tasks.phases + tasks.worktrees,
-# migration 006 — D-53). Artifacts (.md) continuam em company/tasks/<slug>/
-# porque agentes escrevem via Write tool e PWA renderiza. Arquivamento eh
-# soft-delete (archived_at); delete purga a task + phases (CASCADE) +
-# orchestrator.events + diretorio de artifacts.
+# Schema lives in Postgres (tasks.tasks + tasks.phases + tasks.worktrees,
+# migration 006 — D-53). Artifacts (.md) stay in company/tasks/<slug>/
+# because agents write them via the Write tool and the PWA renders them.
+# Archiving is a soft-delete (archived_at); delete purges the task + phases
+# (CASCADE) + orchestrator.events + the artifacts directory.
 
 _TASKS_ARTIFACT_DIR = Path("/workspace/company/tasks")
 
@@ -1258,10 +1259,10 @@ async def tasks_list(
     include_archived: int = 0,
     _: Principal = Depends(get_principal),
 ):
-    """Lista tasks do Postgres (schema tasks.*, migration 006). Ordenado por
-    updated_at desc. `include_archived=1` inclui tambem as soft-deleted
-    (archived_at IS NOT NULL). Campos compativeis com o shape legacy do PWA
-    pra zero mudanca no frontend."""
+    """Lists tasks from Postgres (schema tasks.*, migration 006). Ordered by
+    updated_at desc. `include_archived=1` also includes the soft-deleted ones
+    (archived_at IS NOT NULL). Fields compatible with the PWA's legacy shape
+    for zero frontend changes."""
     where_clause = "" if include_archived else "WHERE t.archived_at IS NULL"
     rows = await db.fetch_all(
         f"""SELECT t.slug, t.title, t.status, t.current_step, t.current_agent,
@@ -1291,9 +1292,9 @@ async def tasks_list(
 
 @app.post("/api/tasks/{slug}/archive")
 async def task_archive(slug: str, _: Principal = Depends(get_principal)):
-    """Soft-delete: marca archived_at = now() se status eh terminal.
-    Task viva (in_progress) nao pode ser arquivada — orquestrador ainda
-    pode estar despachando."""
+    """Soft-delete: sets archived_at = now() if the status is terminal.
+    A live task (in_progress) cannot be archived — the orchestrator may
+    still be dispatching."""
     row = await _fetch_task_row(slug)
     if row is None:
         raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
@@ -1330,9 +1331,9 @@ async def task_unarchive(slug: str, _: Principal = Depends(get_principal)):
 
 @app.delete("/api/tasks/{slug}")
 async def task_delete(slug: str, _: Principal = Depends(get_principal)):
-    """Delete permanente. Só permitido se a task estiver ARQUIVADA.
-    Apaga row (CASCADE em phases/worktrees), purga orchestrator.events da
-    task, e remove o diretorio de artifacts do filesystem."""
+    """Permanent delete. Only allowed if the task is ARCHIVED.
+    Deletes the row (CASCADE on phases/worktrees), purges the task's
+    orchestrator.events, and removes the artifacts directory from the filesystem."""
     import shutil as _shutil
     row = await _fetch_task_row(slug)
     if row is None:
@@ -1347,9 +1348,9 @@ async def task_delete(slug: str, _: Principal = Depends(get_principal)):
         slug,
     )
     await db.execute("DELETE FROM tasks.tasks WHERE slug = $1", slug)
-    # Remove artifacts dir (se existir). Safety: path resolvido tem que
-    # comecar pelo prefix — defesa contra slug com .. (ja validado por
-    # _SLUG_RE, mas backup em profundidade).
+    # Remove the artifacts dir (if it exists). Safety: the resolved path must
+    # start with the prefix — defense against a slug with .. (already validated
+    # by _SLUG_RE, but defense in depth).
     artifacts = _TASKS_ARTIFACT_DIR / slug
     if artifacts.is_dir() and str(artifacts.resolve()).startswith(
         str(_TASKS_ARTIFACT_DIR.resolve()) + os.sep
@@ -1359,11 +1360,11 @@ async def task_delete(slug: str, _: Principal = Depends(get_principal)):
     return {"ok": True, "slug": slug, "deleted": True}
 
 
-# ---------- Workflows (D-57 — progress bar dinamica no PWA) ----------
-# Expõe o yaml de workflows da instancia pra o frontend renderizar
-# progress bar sem conhecer o vocabulario. Framework permanece agnostico:
-# so resolve estrutura (ordem happy-path, terminais), nunca hardcoda
-# nomes de step.
+# ---------- Workflows (D-57 — dynamic progress bar in the PWA) ----------
+# Exposes the instance's workflows yaml so the frontend can render the
+# progress bar without knowing the vocabulary. The framework stays agnostic:
+# it only resolves structure (happy-path order, terminals), never hardcodes
+# step names.
 
 import yaml as _yaml
 
@@ -1371,17 +1372,17 @@ _WORKFLOWS_YAML_PATH = Path("/workspace/company/workflows.yaml")
 _WORKFLOW_TERMINALS = {"done", "halt", "human_review"}
 _WORKFLOW_NAME_RE = _re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _WORKFLOW_VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-_WORKFLOWS_YAML_MAX_BYTES = 256 * 1024  # cap mais alto que company files — workflow yaml cresce com steps
+_WORKFLOWS_YAML_MAX_BYTES = 256 * 1024  # higher cap than company files — workflow yaml grows with steps
 _WORKFLOWS_YAML_HEADER = (
-    "# workflows.yaml — taxonomia de fases desta instancia.\n"
+    "# workflows.yaml — this instance's phase taxonomy.\n"
     "#\n"
-    "# Este arquivo eh gerenciado pelo PWA (Settings -> Workflows). Edicao\n"
-    "# direta no disco funciona, mas comentarios e formatacao serao\n"
-    "# reescritos no proximo save via UI. Prefira usar a interface.\n"
+    "# This file is managed by the PWA (Settings -> Workflows). Editing it\n"
+    "# directly on disk works, but comments and formatting will be\n"
+    "# rewritten on the next save via the UI. Prefer the interface.\n"
     "#\n"
-    "# Framework so conhece os terminais (done | halt | human_review). Tudo\n"
-    "# mais (nomes de step, agentes default, artifacts, transicoes) eh\n"
-    "# convencao desta instancia.\n"
+    "# The framework only knows the terminals (done | halt | human_review).\n"
+    "# Everything else (step names, default agents, artifacts, transitions)\n"
+    "# is this instance's convention.\n"
     "\n"
 )
 
@@ -1395,9 +1396,9 @@ def _load_workflows_raw() -> dict:
 
 
 def _load_workflows_full() -> dict:
-    """Retorna o documento YAML inteiro (nao so a chave `workflows`).
-    Usado pelos endpoints de write, que precisam preservar metadados
-    fora de `workflows:` se a instancia tiver adicionado algum."""
+    """Returns the whole YAML document (not only the `workflows` key).
+    Used by the write endpoints, which must preserve metadata outside
+    `workflows:` if the instance added any."""
     if not _WORKFLOWS_YAML_PATH.exists():
         return {"workflows": {}}
     with _WORKFLOWS_YAML_PATH.open("r", encoding="utf-8") as f:
@@ -1411,9 +1412,9 @@ def _load_workflows_full() -> dict:
 
 
 class _WorkflowYamlDumper(_yaml.SafeDumper):
-    """SafeDumper custom que renderiza strings multilinha em block style (`|`)
-    em vez de fluxo com `\\n` escapado. Usado pra `instructions` (markdown
-    multilinha) ficar legivel no yaml em disco."""
+    """Custom SafeDumper that renders multiline strings in block style (`|`)
+    instead of flow style with escaped `\\n`. Used so `instructions`
+    (multiline markdown) stays readable in the on-disk yaml."""
 
 
 def _str_representer(dumper, data: str):
@@ -1426,8 +1427,8 @@ _WorkflowYamlDumper.add_representer(str, _str_representer)
 
 
 def _dump_workflows_yaml(full: dict) -> str:
-    """Serializa com header fixo + dumper custom preservando ordem e
-    rendering markdown multilinha como block scalar."""
+    """Serializes with a fixed header + custom dumper, preserving order and
+    rendering multiline markdown as a block scalar."""
     body = _yaml.dump(
         full,
         Dumper=_WorkflowYamlDumper,
@@ -1452,24 +1453,24 @@ def _write_workflows_yaml(full: dict) -> int:
 
 
 def _normalize_workflow_body(body: dict) -> dict:
-    """Normaliza o dict de entrada pra serializacao yaml determinista.
+    """Normalizes the input dict for deterministic yaml serialization.
 
-    - Dropa campos desconhecidos no topo, mantendo apenas `initial_step`,
-      `steps` e `description` (opcional).
-    - Em cada step, mantem apenas `agent`, `artifact`, `next`, `instructions`.
-    - `agent`/`artifact`/`instructions` ausentes ou string vazia => omitidos
-      no yaml (equivalem a None => "exige next_agent explicito" / "sem artifact
-      default" / "sem bloco de instrucoes da fase").
-    - `next` sempre lista de strings unicas, ordem preservada.
-    - `instructions` aceita string multilinha (markdown). Cap em 32 KB pra
-      evitar payload abusivo no prompt.
+    - Drops unknown top-level fields, keeping only `initial_step`,
+      `steps` and `description` (optional).
+    - In each step, keeps only `agent`, `artifact`, `next`, `instructions`.
+    - Missing or empty-string `agent`/`artifact`/`instructions` => omitted
+      from the yaml (equivalent to None => "requires explicit next_agent" /
+      "no default artifact" / "no phase instructions block").
+    - `next` is always a list of unique strings, order preserved.
+    - `instructions` accepts a multiline string (markdown). Capped at 32 KB to
+      avoid an abusive payload in the prompt.
     """
     out: dict = {}
     if isinstance(body.get("description"), str) and body["description"].strip():
         out["description"] = body["description"].strip()
-    # orchestrator (D-110): agente dono da conv-supervisora; raiz fixa
-    # da hierarquia de convs durante a vida da task. Opcional — sem ele,
-    # framework cai pro initial_step.agent (compat com workflows pre-D-110).
+    # orchestrator (D-110): agent that owns the supervisor conv; fixed root
+    # of the conv hierarchy for the task's lifetime. Optional — without it,
+    # the framework falls back to initial_step.agent (compat with pre-D-110 workflows).
     orchestrator = body.get("orchestrator")
     if isinstance(orchestrator, str) and orchestrator.strip():
         out["orchestrator"] = orchestrator.strip()
@@ -1479,7 +1480,7 @@ def _normalize_workflow_body(body: dict) -> dict:
     if isinstance(steps_in, dict):
         iterator = steps_in.items()
     elif isinstance(steps_in, list):
-        # aceita [{name, agent, artifact, next, instructions}, ...] pra facilitar o front
+        # accepts [{name, agent, artifact, next, instructions}, ...] to make the frontend easier
         iterator = [(s.get("name"), s) for s in steps_in if isinstance(s, dict)]
     else:
         iterator = []
@@ -1528,11 +1529,11 @@ def _normalize_workflow_body(body: dict) -> dict:
 
 
 def _normalize_step_overrides(raw: Any) -> dict:
-    """Normaliza o sub-dict `overrides` de um step.
+    """Normalizes a step's `overrides` sub-dict.
 
-    Whitelist nested: model, effort, memory.{enabled, auto_inject_limit}.
-    Drop silencioso de chaves desconhecidas. Strings strip + empty => omitido.
-    Numero/bool preservados as-is — validacao semantica em _validate_step_overrides.
+    Nested whitelist: model, effort, memory.{enabled, auto_inject_limit}.
+    Unknown keys are silently dropped. Strings stripped + empty => omitted.
+    Numbers/bools kept as-is — semantic validation in _validate_step_overrides.
     """
     if not isinstance(raw, dict):
         return {}
@@ -1556,7 +1557,7 @@ def _normalize_step_overrides(raw: Any) -> dict:
 
 
 def _validate_workflow_body(name: str, body: dict) -> None:
-    """Valida o corpo normalizado. Levanta HTTPException(400) em erro."""
+    """Validates the normalized body. Raises HTTPException(400) on error."""
     if not isinstance(name, str) or not _WORKFLOW_NAME_RE.match(name):
         raise HTTPException(
             status_code=400,
@@ -1610,10 +1611,11 @@ def _validate_workflow_body(name: str, body: dict) -> None:
 
 
 def _validate_step_overrides(s_name: str, overrides: Any) -> None:
-    """Valida valores semanticos no overrides ja-normalizado. 400 em erro.
+    """Validates semantic values in the already-normalized overrides. 400 on error.
 
-    Workflow autoritario: nao confere se model existe no agente nem se
-    effort excede teto — runtime resolve. Aqui so checa shape/enum.
+    The workflow is authoritative: it does not check whether the model exists
+    on the agent or whether effort exceeds a ceiling — runtime resolves that.
+    Here we only check shape/enum.
     """
     if not isinstance(overrides, dict):
         raise HTTPException(
@@ -1633,8 +1635,8 @@ def _validate_step_overrides(s_name: str, overrides: Any) -> None:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"step {s_name!r}: overrides.effort {effort!r} invalido. "
-                    f"Valores aceitos: {list(_WORKFLOW_VALID_EFFORTS)}"
+                    f"step {s_name!r}: overrides.effort {effort!r} is invalid. "
+                    f"Accepted values: {list(_WORKFLOW_VALID_EFFORTS)}"
                 ),
             )
     if "memory" in overrides:
@@ -1659,13 +1661,13 @@ def _validate_step_overrides(s_name: str, overrides: Any) -> None:
 
 
 def _happy_path_order(initial_step: str, steps_raw: dict) -> list[str]:
-    """Topo-sort do happy-path: do initial_step, segue o primeiro `next` que
-    nao seja terminal, para ao bater terminal ou loop. Ordem da lista `next`
-    do yaml e preservada (yaml.safe_load retorna list, nao set).
+    """Happy-path topo-sort: from initial_step, follow the first `next` that is
+    not a terminal, stopping on a terminal or a loop. The order of the yaml
+    `next` list is preserved (yaml.safe_load returns a list, not a set).
 
-    Se o grafo diverge (next tem varios steps nao-terminais), pegamos o
-    primeiro — e so uma heuristica pra renderizar linear; a autoridade real
-    sobre "proximo" continua vindo do agente via complete_phase."""
+    If the graph branches (next has several non-terminal steps), we take the
+    first — it is only a heuristic to render linearly; the real authority
+    over "next" still comes from the agent via complete_phase."""
     ordered: list[str] = []
     visited: set[str] = set()
     current: str | None = initial_step
@@ -1685,8 +1687,8 @@ def _happy_path_order(initial_step: str, steps_raw: dict) -> list[str]:
 
 
 def _serialize_workflow(name: str, wf_body: dict) -> dict:
-    """Converte o dict lido do yaml no shape que o frontend consome
-    (mesmo shape de GET /api/workflows/{name}): inclui steps_ordered."""
+    """Converts the dict read from yaml into the shape the frontend consumes
+    (same shape as GET /api/workflows/{name}): includes steps_ordered."""
     steps_raw = wf_body.get("steps") or {}
     initial_step = wf_body.get("initial_step") or ""
     steps_out: dict[str, dict] = {}
@@ -1713,9 +1715,9 @@ def _serialize_workflow(name: str, wf_body: dict) -> dict:
 
 @app.get("/api/workflows")
 async def workflows_list(expand: int = 0, _: Principal = Depends(get_principal)):
-    """Lista workflows. `expand=1` retorna corpo completo (steps+transicoes)
-    inline, senao retorna so nomes — padrao antigo preservado pra clientes
-    existentes (progress bar)."""
+    """Lists workflows. `expand=1` returns the full body (steps+transitions)
+    inline, otherwise only names — old default kept for existing clients
+    (progress bar)."""
     wfs = _load_workflows_raw()
     if expand:
         items = [_serialize_workflow(n, b) for n, b in wfs.items() if isinstance(b, dict)]
@@ -1725,10 +1727,10 @@ async def workflows_list(expand: int = 0, _: Principal = Depends(get_principal))
 
 @app.get("/api/workflows/{name}")
 async def workflow_get(name: str, _: Principal = Depends(get_principal)):
-    """Retorna a definicao do workflow da instancia (sem semantica hardcoded).
-    Frontend renderiza progress bar iterando sobre `steps_ordered`.
-    Terminais (`done`/`halt`/`human_review`) sao retornados a parte porque
-    sao invariantes do framework, nao da instancia."""
+    """Returns the instance's workflow definition (no hardcoded semantics).
+    The frontend renders the progress bar by iterating over `steps_ordered`.
+    Terminals (`done`/`halt`/`human_review`) are returned separately because
+    they are framework invariants, not instance ones."""
     wfs = _load_workflows_raw()
     wf = wfs.get(name)
     if not wf:
@@ -1742,10 +1744,10 @@ async def workflow_upsert(
     payload: dict,
     _: Principal = Depends(get_principal),
 ):
-    """Cria ou atualiza um workflow. Body:
+    """Creates or updates a workflow. Body:
       { initial_step: str, steps: {name: {agent?, artifact?, next: [...]}}, description?: str }
-    Valida estrutura, escreve no disco. WorkflowRegistry rele a cada
-    load(), entao a mudanca vale imediatamente — sem restart/reconcile."""
+    Validates structure, writes to disk. WorkflowRegistry re-reads on every
+    load(), so the change applies immediately — no restart/reconcile."""
     normalized = _normalize_workflow_body(payload)
     _validate_workflow_body(name, normalized)
     full = _load_workflows_full()
@@ -1792,7 +1794,7 @@ async def workflow_rename(
         raise HTTPException(status_code=404, detail=f"workflow '{name}' does not exist")
     if new_name in wfs:
         raise HTTPException(status_code=409, detail=f"workflow '{new_name}' already exists")
-    # Preserva a ordem: substitui a chave in-place em vez de append no final.
+    # Preserve order: replace the key in place instead of appending at the end.
     renamed: dict = {}
     for k, v in wfs.items():
         if k == name:
@@ -1806,8 +1808,8 @@ async def workflow_rename(
 
 
 # ---------- Backlog (D-53) ----------
-# CRUD simples no schema tasks.backlog. Acesso: admin (criacao/edit/promocao
-# são acoes humanas) via PWA. Agentes usam via MCP tools backlog_*.
+# Simple CRUD on the tasks.backlog schema. Access: admin (create/edit/promote
+# are human actions) via the PWA. Agents use it via the backlog_* MCP tools.
 
 @app.get("/api/backlog")
 async def backlog_list(
@@ -1815,8 +1817,8 @@ async def backlog_list(
     include_all: int = 0,
     _: Principal = Depends(get_principal),
 ):
-    """Lista items do backlog. Default: só status='aberto'. Passe status=X
-    pra filtrar ou include_all=1 pra retornar tudo. Ordenado por priority
+    """Lists backlog items. Default: only status='aberto'. Pass status=X
+    to filter or include_all=1 to return everything. Ordered by priority
     desc, updated_at desc.
     """
     if include_all:
@@ -1928,17 +1930,17 @@ async def backlog_delete(slug: str, _: Principal = Depends(get_principal)):
 
 @app.post("/api/backlog/{slug}/promote")
 async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principal = Depends(get_principal)):
-    """Promove item do backlog a task e dispatcha pro primeiro agente.
+    """Promotes a backlog item to a task and dispatches it to the first agent.
 
     Body: { task_slug?, workflow?, next_agent?, initial_topic?, initial_step? }
 
-    Espelha a logica do MCP tool backlog_promote (server.py). Hierarquia
-    de convs eh ancorada no `orchestrator` declarado pelo workflow:
-    a conv-supervisora vive em `<orchestrator>/task-<slug>` (root) e a
-    conv da fase inicial fica como filha (Caminho A) ou unifica com a
-    supervisora se `next_agent == orchestrator` (Caminho B). Workflow
-    sem `orchestrator` declarado faz fallback pro `next_agent`/`initial_step.agent`
-    — comportamento equivalente ao pre-D-110.
+    Mirrors the logic of the backlog_promote MCP tool (server.py). The conv
+    hierarchy is anchored on the `orchestrator` declared by the workflow:
+    the supervisor conv lives in `<orchestrator>/task-<slug>` (root) and the
+    initial phase's conv becomes a child (Path A) or merges with the
+    supervisor if `next_agent == orchestrator` (Path B). A workflow without
+    a declared `orchestrator` falls back to `next_agent`/`initial_step.agent`
+    — behavior equivalent to pre-D-110.
     """
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
@@ -1949,7 +1951,7 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
     next_agent = payload.get("next_agent")
     initial_topic = (payload.get("initial_topic") or f"task-{task_slug}").strip()
     initial_step = payload.get("initial_step")
-    # Resolve initial_step + next_agent default + orchestrator do workflow.
+    # Resolve initial_step + default next_agent + the workflow's orchestrator.
     orchestrator: str | None = None
     if workflow:
         wfs = _load_workflows_raw()
@@ -1968,7 +1970,7 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
             status_code=400,
             detail="next_agent is required (pass explicitly or define workflow with initial_step.agent)",
         )
-    # orchestrator: campo do workflow > fallback pro next_agent.
+    # orchestrator: workflow field > fallback to next_agent.
     if not orchestrator:
         orchestrator = next_agent
     origin_stream = orchestrator
@@ -2006,7 +2008,7 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
                 "from_step": None,
                 "from_agent": principal.username or "user",
                 "artifact": None,
-                "summary": f"promovido do backlog: {item['title']}",
+                "summary": f"promoted from backlog: {item['title']}",
                 "next": "start",
                 "next_agent": next_agent,
                 "next_topic": initial_topic,
@@ -2031,17 +2033,17 @@ async def backlog_promote_endpoint(slug: str, payload: dict, principal: Principa
 
 @app.post("/api/backlog/{slug}/revert")
 async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_principal)):
-    """Desfaz promocao de um item do backlog. Usado quando o humano
-    percebe que despachou pro agente errado e quer re-promover — em
-    vez de responder no topic ativo ou rodar SQL na mao.
+    """Undoes a backlog item's promotion. Used when the human realizes
+    they dispatched to the wrong agent and wants to re-promote — instead
+    of replying in the active topic or running SQL by hand.
 
-    Safety gate: recusa se a task ja tem phases completadas OU se ja
-    houve mensagem de humano na conv (humano engajou = nao eh erro de
-    dispatch, eh trabalho em andamento). Auto-cancela pending_asks,
-    apaga conv da task (cascade msgs), deleta task row e volta backlog
-    pra status='aberto'. Worktrees so sao deletadas do banco — arquivos
-    no filesystem sao responsabilidade do agent (register_worktree nao
-    cria automatico).
+    Safety gate: refuses if the task already has completed phases OR if
+    a human already posted in the conv (human engaged = not a dispatch
+    mistake, it is work in progress). Auto-cancels pending_asks, deletes
+    the task's conv (cascade msgs), deletes the task row and sets the
+    backlog back to status='aberto'. Worktrees are only deleted from the
+    database — files on the filesystem are the agent's responsibility
+    (register_worktree does not create them automatically).
     """
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
@@ -2066,8 +2068,8 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                 task_slug,
             )
             if task is not None:
-                # Safety: task com phases completas OU com participacao
-                # humana nao pode ser revertida sem perda de trabalho.
+                # Safety: a task with completed phases OR with human
+                # participation cannot be reverted without losing work.
                 phases_done = await conn.fetchval(
                     "SELECT count(*) FROM tasks.phases WHERE task_id = $1 AND completed_at IS NOT NULL",
                     task["id"],
@@ -2093,7 +2095,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                         detail="human already posted in task conversation — reply there instead of reverting",
                     )
 
-                # Cancela pending_asks de todas as convs da task.
+                # Cancel pending_asks of all the task's convs.
                 await conn.execute(
                     """UPDATE messaging.pending_asks pa
                           SET resolved_at = now()
@@ -2103,7 +2105,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                          ) AND pa.resolved_at IS NULL""",
                     f"task-{task_slug}",
                 )
-                # Apaga convs da task (cascade apaga messages + pending_asks).
+                # Delete the task's convs (cascade deletes messages + pending_asks).
                 await conn.execute(
                     """DELETE FROM messaging.messages
                         WHERE conversation_id IN (
@@ -2124,7 +2126,7 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
                     "DELETE FROM messaging.conversations WHERE topic_name = $1",
                     f"task-{task_slug}",
                 )
-                # Apaga phases/worktrees + task.
+                # Delete phases/worktrees + task.
                 await conn.execute("DELETE FROM tasks.phases WHERE task_id = $1", task["id"])
                 await conn.execute("DELETE FROM tasks.worktrees WHERE task_id = $1", task["id"])
                 await conn.execute("DELETE FROM tasks.tasks WHERE id = $1", task["id"])
@@ -2141,22 +2143,22 @@ async def backlog_revert_endpoint(slug: str, principal: Principal = Depends(get_
 
 @app.post("/api/backlog/{slug}/force-reset")
 async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends(get_principal)):
-    """D-101: Aniquila uma task em qualquer estado e devolve o item do backlog
-    pra 'aberto', pronto pra ser re-promovido. Diferente de /revert, ignora
-    safety gates (phases completas, mensagem humana) — uso explicito quando
-    o humano quer recomecar do zero apos descobrir falha de design ou
-    desviar pra outra abordagem.
+    """D-101: Wipes out a task in any state and returns the backlog item
+    to 'aberto', ready to be re-promoted. Unlike /revert, it ignores the
+    safety gates (completed phases, human message) — explicit use when
+    the human wants to start over after finding a design flaw or
+    switching to another approach.
 
-    Operacoes (transacao):
-      1. Cancela pending_asks, deleta messages/conversations da task
-         (topic-name match em todos os streams).
-      2. Deleta tasks.phases, tasks.worktrees, tasks.tasks (CASCADE +
-         explicit pra resilience).
-      3. Purga orchestrator.events com task_slug match.
-      4. Apaga company/tasks/<task_slug>/ no filesystem.
-      5. Reverte backlog row pra status='aberto', promoted_task_slug=NULL.
+    Operations (transaction):
+      1. Cancel pending_asks, delete the task's messages/conversations
+         (topic-name match across all streams).
+      2. Delete tasks.phases, tasks.worktrees, tasks.tasks (CASCADE +
+         explicit for resilience).
+      3. Purge orchestrator.events matching task_slug.
+      4. Delete company/tasks/<task_slug>/ on the filesystem.
+      5. Revert the backlog row to status='aberto', promoted_task_slug=NULL.
 
-    Frontend deve confirmar via modal — endpoint nao tem soft mode."""
+    The frontend must confirm via a modal — the endpoint has no soft mode."""
     import shutil as _shutil
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
@@ -2171,9 +2173,9 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
                 raise HTTPException(status_code=404, detail=f"backlog '{slug}' does not exist")
             task_slug = bl["promoted_task_slug"]
             if not task_slug:
-                # Item nao foi promovido (ou ja foi resetado antes). Devolve pra
-                # 'aberto' como no-op idempotente — operador pode estar limpando
-                # leftover de tentativa anterior que falhou no meio.
+                # Item was not promoted (or was already reset). Return it to
+                # 'aberto' as an idempotent no-op — the operator may be cleaning
+                # up leftovers from a previous attempt that failed midway.
                 await conn.execute(
                     """UPDATE tasks.backlog
                           SET status = 'aberto', promoted_task_slug = NULL, updated_at = now()
@@ -2189,8 +2191,8 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
             )
 
             topic_name = f"task-{task_slug}"
-            # Convs cobertas: a task topic em todos os streams + subconvs com
-            # parent na conv da task (ask_agent gera __child-* com parent = root).
+            # Covered convs: the task topic across all streams + subconvs whose
+            # parent is the task conv (ask_agent creates __child-* with parent = root).
             await conn.execute(
                 """UPDATE messaging.pending_asks pa
                       SET resolved_at = now()
@@ -2205,9 +2207,9 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
                        )""",
                 topic_name,
             )
-            # CASCADE em messaging.conversations apaga messages e pending_asks
-            # filhas; o ON DELETE CASCADE em parent_conv_id (migration 019)
-            # remove subconvs ask_agent automaticamente.
+            # CASCADE on messaging.conversations deletes child messages and
+            # pending_asks; the ON DELETE CASCADE on parent_conv_id (migration 019)
+            # removes ask_agent subconvs automatically.
             await conn.execute(
                 "DELETE FROM messaging.conversations WHERE topic_name = $1",
                 topic_name,
@@ -2226,7 +2228,7 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
                     WHERE slug = $1""",
                 slug,
             )
-    # Filesystem cleanup fora da transacao DB. Safety: validar prefix.
+    # Filesystem cleanup outside the DB transaction. Safety: validate the prefix.
     artifacts = _TASKS_ARTIFACT_DIR / task_slug
     fs_removed = False
     if artifacts.is_dir() and str(artifacts.resolve()).startswith(
@@ -2250,12 +2252,12 @@ async def backlog_force_reset_endpoint(slug: str, principal: Principal = Depends
 
 @app.post("/api/backlog/{slug}/reopen")
 async def backlog_reopen_endpoint(slug: str, principal: Principal = Depends(get_principal)):
-    """Volta item de `descartado` pra `aberto`. Ao contrario de /revert,
-    nao ha task/conv/fases pra limpar — descarte nao cria nada. Usado
-    quando o humano mudou de ideia depois de descartar uma ideia do
-    backlog.
+    """Moves an item from `descartado` back to `aberto`. Unlike /revert,
+    there is no task/conv/phases to clean up — discarding creates nothing.
+    Used when the human changed their mind after discarding a backlog
+    idea.
 
-    Aceita apenas status='descartado'. Usa /revert pra promovido→aberto.
+    Only accepts status='descartado'. Use /revert for promovido→aberto.
     """
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
@@ -2279,13 +2281,13 @@ async def backlog_reopen_endpoint(slug: str, principal: Principal = Depends(get_
 
 
 async def _resolve_task_conversation_ids(task_row: dict, phases: list[dict]) -> list[int]:
-    """Coleta conversation_ids de TODAS as conversas envolvidas numa task:
-      1. origem (onde o humano pediu a task, primeira complete_phase).
-      2. next_agent/next_topic de cada orchestrator.event (um por handoff).
-      3. terminal stream ($TERMINAL_NOTIFY_STREAM/task-<slug>-final) se configurado.
-      4. subconversas de ask_agent (`__ask-from-<agent>-*`) durante a janela da task.
+    """Collects conversation_ids of ALL conversations involved in a task:
+      1. origin (where the human requested the task, first complete_phase).
+      2. next_agent/next_topic of each orchestrator.event (one per handoff).
+      3. terminal stream ($TERMINAL_NOTIFY_STREAM/task-<slug>-final) if configured.
+      4. ask_agent sub-conversations (`__ask-from-<agent>-*`) during the task window.
 
-    Usado por /timeline e /stats. Refatorado pra evitar duplicacao.
+    Used by /timeline and /stats. Refactored to avoid duplication.
     """
     slug = task_row["slug"]
     pairs: set[tuple[str, str]] = set()
@@ -2360,13 +2362,14 @@ async def _resolve_task_conversation_ids(task_row: dict, phases: list[dict]) -> 
 
 @app.get("/api/tasks/{slug}/stats")
 async def task_stats(slug: str, _: Principal = Depends(get_principal)):
-    """Agregacao de custo/duracao/turns/runs da task inteira, somando
-    telemetry.events (event_type='run_end') de todas as conversations
-    envolvidas (mesmo conjunto usado por /timeline).
+    """Aggregates cost/duration/turns/runs for the whole task, summing
+    telemetry.events (event_type='run_end') across all involved
+    conversations (same set used by /timeline).
 
-    Resposta pequena: PWA pode chamar junto com /api/conversations sem dor
-    de payload. Agregacao vale pra thread com task — chat livre (sem task)
-    cai no calculo local do ConversationPanel baseado em live events.
+    Small response: the PWA can call it together with /api/conversations
+    without payload pain. The aggregate applies to threads with a task —
+    free chat (no task) falls back to ConversationPanel's local calculation
+    based on live events.
     """
     task_row = await _fetch_task_row(slug)
     if task_row is None:
@@ -2379,9 +2382,9 @@ async def task_stats(slug: str, _: Principal = Depends(get_principal)):
     phases = [dict(r) for r in phase_rows]
     conv_ids = await _resolve_task_conversation_ids(task_row, phases)
 
-    # Fonte primaria: telemetry.events via task_slug (migration 019). Sobrevive
-    # a delete de conv. `turns` continua vindo de live_events pq o summary nao
-    # agrega — mas cai pra 0 se todas as convs foram deletadas (trace some).
+    # Primary source: telemetry.events via task_slug (migration 019). Survives
+    # conv deletion. `turns` still comes from live_events because the summary
+    # doesn't aggregate it — but it drops to 0 if all convs were deleted (trace gone).
     row = await db.fetch_one(
         """SELECT COUNT(*)                                   AS runs,
                   COALESCE(SUM(cost_usd), 0)::float          AS cost_usd,
@@ -2411,10 +2414,10 @@ async def task_stats(slug: str, _: Principal = Depends(get_principal)):
 
 @app.get("/api/tasks/{slug}/telemetry")
 async def task_telemetry(slug: str, _: Principal = Depends(get_principal)):
-    """Breakdown detalhado de telemetria por task (B4 do plano). Sobrevive ao
-    delete das conversas da task (via task_slug em telemetry.events, migration
-    019). Retorna totais + by_model + by_agent + trace_snapshot agregado das
-    rows cujas convs ja foram deletadas."""
+    """Detailed telemetry breakdown per task (plan item B4). Survives the
+    deletion of the task's conversations (via task_slug in telemetry.events,
+    migration 019). Returns totals + by_model + by_agent + the aggregated
+    trace_snapshot of rows whose convs were already deleted."""
     task_row = await _fetch_task_row(slug)
     if task_row is None:
         raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
@@ -2451,8 +2454,8 @@ async def task_telemetry(slug: str, _: Principal = Depends(get_principal)):
             GROUP BY agent ORDER BY cost_usd DESC""",
         slug,
     )
-    # Snapshots de trace pre-delete: somamos o que sobrou em metadata.trace_snapshot
-    # pra mostrar "effort" mesmo pos-delete das convs.
+    # Pre-delete trace snapshots: we sum what is left in metadata.trace_snapshot
+    # to show "effort" even after the convs are deleted.
     snap_row = await db.fetch_one(
         """SELECT COALESCE(SUM((metadata->'trace_snapshot'->>'thinking_count')::int), 0) AS thinking_count,
                   COALESCE(SUM((metadata->'trace_snapshot'->>'tool_use_count')::int), 0) AS tool_use_count,
@@ -2472,14 +2475,14 @@ async def task_telemetry(slug: str, _: Principal = Depends(get_principal)):
 
 @app.get("/api/tasks/{slug}/timeline")
 async def task_timeline(slug: str, _: Principal = Depends(get_principal)):
-    """Timeline unificada de uma task: mensagens + live events de TODAS as
-    conversas envolvidas (origem + cada handoff + terminal stream), sorted
-    por timestamp. Pra PWA renderizar tudo num feed so.
+    """Unified timeline of a task: messages + live events from ALL involved
+    conversations (origin + each handoff + terminal stream), sorted by
+    timestamp. So the PWA can render everything in a single feed.
     """
     task_row = await _fetch_task_row(slug)
     if task_row is None:
         raise HTTPException(status_code=404, detail=f"task '{slug}' not found")
-    # Carrega phases do banco (schema tasks).
+    # Load phases from the database (tasks schema).
     phase_rows = await db.fetch_all(
         """SELECT step, agent, started_at, completed_at, artifact, summary
              FROM tasks.phases WHERE task_id = $1 ORDER BY idx ASC""",
@@ -2506,10 +2509,10 @@ async def task_timeline(slug: str, _: Principal = Depends(get_principal)):
         ],
     }
 
-    # Coleta (stream, topic) envolvidos:
-    #   1. origem capturada no banco (primeira complete_phase do coord).
-    #   2. next_agent/next_topic de cada orchestrator.event da task.
-    #   3. terminal stream (TERMINAL_NOTIFY_STREAM + task-<slug>-final) se configurado.
+    # Collect the involved (stream, topic) pairs:
+    #   1. origin captured in the database (the coordinator's first complete_phase).
+    #   2. next_agent/next_topic of each of the task's orchestrator.events.
+    #   3. terminal stream (TERMINAL_NOTIFY_STREAM + task-<slug>-final) if configured.
     pairs: set[tuple[str, str]] = set()
     if task_row["origin_stream"] and task_row["origin_topic"]:
         pairs.add((task_row["origin_stream"], task_row["origin_topic"]))
@@ -2534,10 +2537,10 @@ async def task_timeline(slug: str, _: Principal = Depends(get_principal)):
     if terminal:
         pairs.add((terminal, f"task-{slug}-final"))
 
-    # 4. ask_agent subconversas: cada agente que PARTICIPOU da task pode ter
-    #    feito ask_agent durante sua vez. Topic: `__ask-from-<chain>-<uid>`
-    #    onde a chain comeca com o agente asker. Escopo: conversas criadas
-    #    durante o window da task (>= primeiro event, <= ultimo + 1h de folga).
+    # 4. ask_agent sub-conversations: each agent that TOOK PART in the task may
+    #    have called ask_agent during its turn. Topic: `__ask-from-<chain>-<uid>`
+    #    where the chain starts with the asking agent. Scope: conversations
+    #    created during the task window (>= first event, <= last + 1h slack).
     from datetime import datetime as _dt
     agents_in_task = {p["agent"] for p in phases if p.get("agent")}
 
@@ -2590,7 +2593,7 @@ async def task_timeline(slug: str, _: Principal = Depends(get_principal)):
     if not conv_ids:
         return {"slug": slug, "meta": meta, "conversations": [], "items": []}
 
-    # Busca msgs + live_events em todas.
+    # Fetch msgs + live_events across all of them.
     msgs = await db.fetch_all(
         """SELECT m.id, m.conversation_id, u.username AS sender, u.kind AS sender_kind,
                   m.content, EXTRACT(EPOCH FROM m.sent_at)::bigint AS ts,
@@ -2644,7 +2647,7 @@ async def task_timeline(slug: str, _: Principal = Depends(get_principal)):
             "summary": e["summary"],
             "data": data,
         })
-    # Ordena por ts asc; empate: msg antes de event.
+    # Sort by ts asc; tie: msg before event.
     items.sort(key=lambda x: (x["ts"], 0 if x["kind"] == "msg" else 1))
 
     worktree_rows = await db.fetch_all(
@@ -2689,33 +2692,33 @@ async def health():
 
 
 # SvelteKit build output (Phase 6 of big-bang). `static/` (sw.js, manifest,
-# icons) e `build/` (SPA gerada pelo Vite) sao servidos lado a lado.
+# icons) and `build/` (SPA generated by Vite) are served side by side.
 def _index_file() -> Path:
     return BUILD_DIR / "index.html"
 
 
-# D-96 Cache strategy. Sem isto, FastAPI/Starlette nao envia
-# Cache-Control e o browser cacheia via heuristica (10% do age) — em dev
-# isso faz o user ver bundles velhos apos rebuild. Estrategia:
+# D-96 Cache strategy. Without this, FastAPI/Starlette sends no
+# Cache-Control and the browser caches heuristically (10% of age) — in dev
+# that makes the user see old bundles after a rebuild. Strategy:
 #
-#   /                       no-cache, must-revalidate  (entry HTML — pequeno,
-#                                                       referencia bundles
-#                                                       hashed; tem que ser
-#                                                       fresco)
+#   /                       no-cache, must-revalidate  (entry HTML — small,
+#                                                       references hashed
+#                                                       bundles; must be
+#                                                       fresh)
 #   /sw.js                  no-cache                   (service worker —
-#                                                       browser ja faz checagem
-#                                                       periodica, mas
-#                                                       garante zero stale)
-#   /manifest.webmanifest   no-cache                   (depende do .env, pode
-#                                                       mudar em runtime)
-#   /manifest-icon/*.png    public, max-age=300        (icones mudam raro, 5min
-#                                                       de cache eh seguro)
-#   /_app/*                 public, max-age=31536000,  (bundles hashed pelo
-#                           immutable                   Vite — hash novo = URL
-#                                                       novo, conteudo nunca
-#                                                       muda no mesmo URL)
-#   /static/*               public, max-age=3600       (icons fallback, sw fonte
-#                                                       — fresco em 1h)
+#                                                       the browser already
+#                                                       checks periodically,
+#                                                       but ensures zero stale)
+#   /manifest.webmanifest   no-cache                   (depends on .env, may
+#                                                       change at runtime)
+#   /manifest-icon/*.png    public, max-age=300        (icons rarely change,
+#                                                       5min of cache is safe)
+#   /_app/*                 public, max-age=31536000,  (bundles hashed by
+#                           immutable                   Vite — new hash = new
+#                                                       URL, content never
+#                                                       changes at the same URL)
+#   /static/*               public, max-age=3600       (fallback icons, sw source
+#                                                       — fresh within 1h)
 _NO_CACHE = {"Cache-Control": "no-cache, must-revalidate"}
 _LONG_CACHE = {"Cache-Control": "public, max-age=300"}
 _IMMUTABLE_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
@@ -2725,15 +2728,15 @@ _IMMUTABLE_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
 async def index():
     f = _index_file()
     if not f.exists():
-        return JSONResponse({"error": "frontend nao instalado"}, status_code=503)
+        return JSONResponse({"error": "frontend not installed"}, status_code=503)
     return FileResponse(f, media_type="text/html", headers=_NO_CACHE)
 
 
 @app.get("/manifest.webmanifest", include_in_schema=False)
 async def manifest():
-    """D-94: manifest renderizado dinamicamente do env. Permite que cada
-    instancia configure nome/cor/etc sem rebuild da imagem. Defaults
-    genericos pra funcionar fora da caixa."""
+    """D-94: manifest rendered dynamically from the env. Lets each instance
+    configure name/color/etc without rebuilding the image. Generic defaults
+    so it works out of the box."""
     body = {
         "id": os.environ.get("PWA_ID", "/ai-company"),
         "name": os.environ.get("PWA_NAME", "Agents"),
@@ -2764,8 +2767,8 @@ async def manifest():
 
 @app.get("/manifest-icon/{size}.png", include_in_schema=False)
 async def manifest_icon(size: int):
-    """D-94: serve icone do PWA — prioriza override por instancia em
-    `instance/web/icons/icon-<size>.png`, cai pro default do framework."""
+    """D-94: serves the PWA icon — prefers the per-instance override at
+    `instance/web/icons/icon-<size>.png`, falls back to the framework default."""
     if size not in (192, 512):
         raise HTTPException(status_code=404, detail="invalid size")
     instance_path = INSTANCE_WEB_DIR / "icons" / f"icon-{size}.png"
@@ -2781,11 +2784,11 @@ async def service_worker():
     )
 
 
-# D-96: middleware setta Cache-Control nos mounts /_app e /static que
-# StaticFiles do Starlette serve sem header de cache. Bundle em /_app/*
-# eh hashed pelo Vite — conteudo no mesmo URL nunca muda, podemos ser
-# agressivos (immutable, 1 ano). /static/* contem icone fallback e
-# sw fonte — 1h eh seguro.
+# D-96: middleware sets Cache-Control on the /_app and /static mounts, which
+# Starlette's StaticFiles serves without a cache header. The /_app/* bundle
+# is hashed by Vite — content at the same URL never changes, so we can be
+# aggressive (immutable, 1 year). /static/* holds the fallback icon and the
+# sw source — 1h is safe.
 @app.middleware("http")
 async def _cache_control_static(request, call_next):
     response = await call_next(request)
@@ -2948,14 +2951,14 @@ async def transcribe_preview(
 
 # ---------- App Settings (web.app_settings) ----------
 #
-# Settings de instancia editaveis via PWA Settings -> System tab. Substitui
-# (com fallback transparente) WEB_DEFAULT_STREAM + VAPID_* env vars.
+# Instance settings editable via PWA Settings -> System tab. Replaces
+# (with transparent fallback) the WEB_DEFAULT_STREAM + VAPID_* env vars.
 # Migration 031: web.app_settings.
 
 @app.get("/api/web-settings/general")
 async def web_settings_general(_: Principal = Depends(get_principal)):
-    """Retorna config visivel pro PWA. Private key VAPID NUNCA sai daqui —
-    so o flag 'configured' + public_key + email."""
+    """Returns the config visible to the PWA. The VAPID private key NEVER
+    leaves here — only the 'configured' flag + public_key + email."""
     from . import app_settings as _s
     default_stream = await _s.get_default_stream()
     vapid = await _s.get_vapid()
@@ -2971,8 +2974,8 @@ async def web_settings_general(_: Principal = Depends(get_principal)):
 
 @app.put("/api/web-settings/general")
 async def web_settings_update(payload: dict, principal: Principal = Depends(auth_mod.require_admin)):
-    """Atualiza default_stream e/ou vapid.contact_email. Nao mexe em
-    keypair — pra isso ha endpoint dedicado /vapid/generate."""
+    """Updates default_stream and/or vapid.contact_email. Does not touch
+    the keypair — there is a dedicated /vapid/generate endpoint for that."""
     from . import app_settings as _s
     if "default_stream" in payload:
         await _s.set_default_stream(
@@ -2991,11 +2994,11 @@ async def web_settings_vapid_generate(
     payload: dict | None = None,
     principal: Principal = Depends(auth_mod.require_admin),
 ):
-    """Gera novo keypair VAPID e salva em web.app_settings.
+    """Generates a new VAPID keypair and saves it in web.app_settings.
 
-    Recusa por default se ja existem push subscriptions (rotacao de chaves
-    invalida TODAS as subscriptions existentes — clients precisam re-subscribe).
-    Caller passa {"force": true} pra confirmar a rotacao destrutiva.
+    Refuses by default if push subscriptions already exist (key rotation
+    invalidates ALL existing subscriptions — clients must re-subscribe).
+    The caller passes {"force": true} to confirm the destructive rotation.
     """
     from . import app_settings as _s
     payload = payload or {}
@@ -3025,14 +3028,14 @@ async def web_settings_vapid_generate(
         user_id=principal.user_id,
     )
 
-    # Rotacao destrutiva: limpa subscriptions antigas — proximo subscribe
-    # do client criara um novo registro com a nova chave.
+    # Destructive rotation: clear old subscriptions — the client's next
+    # subscribe will create a new record with the new key.
     invalidated = 0
     if force and sub_count:
         await db.execute("DELETE FROM web.push_subscriptions")
         invalidated = sub_count
 
-    # Hot-reload do dispatcher pro novo keypair entrar em vigor sem restart.
+    # Hot-reload the dispatcher so the new keypair takes effect without a restart.
     await _reload_push_dispatcher()
 
     log.info(
@@ -3050,8 +3053,8 @@ async def web_settings_vapid_generate(
 
 @app.delete("/api/web-settings/vapid")
 async def web_settings_vapid_clear(principal: Principal = Depends(auth_mod.require_admin)):
-    """Remove keypair VAPID + invalida subscriptions. Push fica desabilitado
-    ate que generate seja chamado de novo."""
+    """Removes the VAPID keypair + invalidates subscriptions. Push stays
+    disabled until generate is called again."""
     from . import app_settings as _s
     await _s.clear_vapid()
     invalidated_row = await db.fetch_one(
@@ -3144,12 +3147,12 @@ async def push_test(delay_seconds: float = 0.0):
 
 # ---------- Telemetry ----------
 
-# ---------- Search global em mensagens ----------
+# ---------- Global search across messages ----------
 
 @app.get("/api/search")
 async def search_messages(q: str = "", limit: int = 30, _: Principal = Depends(get_principal)):
-    """FTS em messaging.messages. Retorna {items: [{stream, topic, conv_id,
-    message_id, sender, snippet, ts}]} ordenado por ts_rank desc."""
+    """FTS over messaging.messages. Returns {items: [{stream, topic, conv_id,
+    message_id, sender, snippet, ts}]} ordered by ts_rank desc."""
     q = (q or "").strip()
     if len(q) < 2:
         return {"items": []}
@@ -3194,39 +3197,39 @@ async def search_messages(q: str = "", limit: int = 30, _: Principal = Depends(g
 
 
 # ---------- Live trace ----------
-# Agentes postam eventos do stream-json do claude (run_start/thinking/tool_use/
-# tool_result/run_end) por conversation. PWA assina via SSE pra ver atividade
-# em tempo real. Cleanup via scheduler (cleanup_live_events).
+# Agents post claude stream-json events (run_start/thinking/tool_use/
+# tool_result/run_end) per conversation. The PWA subscribes via SSE to see
+# activity in real time. Cleanup via scheduler (cleanup_live_events).
 
 @app.post("/api/telemetry/live-event")
 async def telemetry_live_event(payload: dict, principal: Principal = Depends(get_principal)):
-    """Aceita {stream, topic, kind, summary?, data?, agent?}. Resolve conv_id
-    via stream+topic; INSERT dispara pg_notify pro SSE.
+    """Accepts {stream, topic, kind, summary?, data?, agent?}. Resolves conv_id
+    via stream+topic; the INSERT fires pg_notify for SSE.
 
-    Dual-write (D-NN, migration 030): mantém messaging.runs em sync com o
-    stream de live_events na mesma transaction:
-      * run_start  → INSERT row com status='running' (ON CONFLICT bate
-                     heartbeat se ja existir running pra mesma conv).
-      * run_end    → UPDATE running row pra done/error conforme subtype.
-      * qualquer   → bumps last_heartbeat_at na running row (heartbeat
-                     piggyback, granularidade fina sem timer separado).
-    Se a parte do runs falhar, rollback leva o live_event junto — eh
-    aceitavel: fire-and-forget do runner re-emite ou reaper compensa.
+    Dual-write (D-NN, migration 030): keeps messaging.runs in sync with the
+    live_events stream in the same transaction:
+      * run_start  → INSERT row with status='running' (ON CONFLICT bumps the
+                     heartbeat if a running row already exists for the conv).
+      * run_end    → UPDATE the running row to done/error depending on subtype.
+      * anything   → bumps last_heartbeat_at on the running row (piggyback
+                     heartbeat, fine granularity without a separate timer).
+    If the runs part fails, the rollback takes the live_event with it — that
+    is acceptable: the runner's fire-and-forget re-emits or the reaper compensates.
     """
     stream = payload.get("stream")
     topic = payload.get("topic")
     kind = payload.get("kind")
     if not (stream and topic and kind):
         raise HTTPException(status_code=400, detail="stream, topic, kind are required")
-    # thinking pode ser multi-paragrafo; cap alto mas existente pra evitar
-    # payload absurdo chegando do runner. UI renderiza o texto cheio como bubble.
+    # thinking can be multi-paragraph; a high but real cap avoids an absurd
+    # payload coming from the runner. The UI renders the full text as a bubble.
     summary = payload.get("summary")
     if summary and len(summary) > 8000:
         summary = summary[:7997] + "..."
-    # seq_num (migration 018): gerado no agente pra tie-break determinista
-    # quando 2 eventos compartilham ts. Opcional — clientes antigos e
-    # synthetic events do mcp.server.py nao mandam; fallback pro id via
-    # COALESCE nas leituras.
+    # seq_num (migration 018): generated in the agent for a deterministic
+    # tie-break when 2 events share a ts. Optional — old clients and
+    # synthetic events from mcp.server.py don't send it; reads fall back to
+    # the id via COALESCE.
     seq_num = payload.get("seq_num")
     if seq_num is not None:
         try:
@@ -3260,15 +3263,15 @@ async def _runs_apply_event(
     conn, conv_id: int, agent: str, stream: str, topic: str,
     kind: str, data: dict,
 ) -> None:
-    """Mantem messaging.runs em sync com o evento. Chamado dentro da txn
-    do telemetry_live_event handler."""
+    """Keeps messaging.runs in sync with the event. Called inside the
+    telemetry_live_event handler's txn."""
     if kind == "run_start":
-        # Idempotente: se ja ha row 'running' pra essa conv (re-emit do
-        # runner ou jitter de POSTs duplicados), so bate o heartbeat.
-        # Caso normal: cria nova row 'running'. Reaper transiciona pra
-        # 'stale' caso o run anterior tenha morrido sem run_end — quando
-        # isso ocorre, o INSERT abaixo nao bate o partial unique index
-        # (que so cobre status='running') e cria row nova como esperado.
+        # Idempotent: if there is already a 'running' row for this conv
+        # (runner re-emit or duplicate-POST jitter), only bump the heartbeat.
+        # Normal case: create a new 'running' row. The reaper moves it to
+        # 'stale' if the previous run died without run_end — when that
+        # happens, the INSERT below doesn't hit the partial unique index
+        # (which only covers status='running') and creates a new row as expected.
         await conn.execute(
             """INSERT INTO messaging.runs
                  (conversation_id, agent, topic_slug, status, metadata)
@@ -3279,13 +3282,13 @@ async def _runs_apply_event(
             json.dumps({"start_summary": data} if data else {}),
         )
     elif kind == "run_end":
-        # Convencao Claude CLI: subtype None ou 'success' = ok; senao erro.
-        # synthetic run_end (D-71, claude_runner.py:1290) tambem manda
-        # subtype; tratamos igual.
+        # Claude CLI convention: subtype None or 'success' = ok; otherwise error.
+        # The synthetic run_end (D-71, claude_runner.py:1290) also sends a
+        # subtype; we treat it the same.
         subtype = data.get("subtype") if isinstance(data, dict) else None
         new_status = "done" if subtype in (None, "success") else "error"
-        # Update the most recent running row pra essa conv. Subquery por
-        # PK pra UPDATE conseguir ORDER BY/LIMIT.
+        # Update the most recent running row for this conv. Subquery by
+        # PK so the UPDATE can use ORDER BY/LIMIT.
         await conn.execute(
             """UPDATE messaging.runs
                   SET status = $2,
@@ -3301,8 +3304,8 @@ async def _runs_apply_event(
         )
     else:
         # thinking / tool_use / tool_result / etc → heartbeat free.
-        # No-op se nao houver row 'running' (defensivo; pode acontecer se
-        # run_start foi perdido no fire-and-forget).
+        # No-op if there is no 'running' row (defensive; can happen if
+        # run_start was lost in the fire-and-forget).
         await conn.execute(
             """UPDATE messaging.runs
                   SET last_heartbeat_at = now()
@@ -3343,8 +3346,8 @@ async def conversation_live_recent(conv_id: str, limit: int = 50, _: Principal =
 
 @app.get("/api/conversations/{conv_id:path}/live/stream")
 async def conversation_live_stream(conv_id: str, _: Principal = Depends(get_principal)):
-    """SSE LISTEN no channel `live_event_<conv_id>`. Conexao fica aberta
-    enquanto cliente nao desconecta. Heartbeat a cada 25s pra evitar idle close."""
+    """SSE LISTEN on the `live_event_<conv_id>` channel. The connection stays
+    open until the client disconnects. Heartbeat every 25s to avoid idle close."""
     numeric_id = await _resolve_conv_id(conv_id)
     channel = f"live_event_{numeric_id}"
     dsn = os.environ["DATABASE_URL"]
@@ -3357,17 +3360,17 @@ async def conversation_live_stream(conv_id: str, _: Principal = Depends(get_prin
             queue.put_nowait(payload)
 
         await conn.add_listener(channel, _cb)
-        # Sinaliza ready ao cliente
+        # Signal ready to the client
         yield f": connected to {channel}\n\n"
         try:
             while True:
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=25.0)
-                    # Trigger envia so id/agent/ts/kind/summary (cabe no limite
-                    # 8KB do pg_notify). Front precisa de `data` (tool name,
-                    # input) pra renderizar tool_use sem fallback '?'. Hidrata
-                    # via lookup; +1 query por evento, mas SSE de live events
-                    # e baixa frequencia.
+                    # The trigger only sends id/agent/ts/kind/summary (fits the
+                    # 8KB pg_notify limit). The frontend needs `data` (tool name,
+                    # input) to render tool_use without the '?' fallback. Hydrate
+                    # via lookup; +1 query per event, but live-event SSE is
+                    # low frequency.
                     try:
                         evt = json.loads(payload)
                         row = await conn.fetchrow(
@@ -3388,8 +3391,8 @@ async def conversation_live_stream(conv_id: str, _: Principal = Depends(get_prin
                             evt["seq_num"] = row["seq_num"]
                             payload = json.dumps(evt)
                     except Exception:
-                        # Fallback: envia payload bruto do trigger se hidratacao
-                        # falhar (row sumiu, JSON invalido, etc).
+                        # Fallback: send the trigger's raw payload if hydration
+                        # fails (row gone, invalid JSON, etc).
                         pass
                     yield f"data: {payload}\n\n"
                 except asyncio.TimeoutError:
@@ -3417,11 +3420,11 @@ async def conversation_live_stream(conv_id: str, _: Principal = Depends(get_prin
 
 @app.get("/api/live_events/{event_id}/full")
 async def live_event_full(event_id: int, _: Principal = Depends(get_principal)):
-    """Retorna o `data` completo de um live_event (incluindo `output_full`
-    que o trigger strip-a do NOTIFY pra caber em 8KB). Usado pelo PWA
-    quando o usuario clica em "View full" num tool_result truncado.
-    JSONB no banco nao tem cap pratico — limite real eh o
-    OUTPUT_FULL_CAP do claude_runner (~200KB)."""
+    """Returns the full `data` of a live_event (including `output_full`,
+    which the trigger strips from the NOTIFY to fit in 8KB). Used by the PWA
+    when the user clicks "View full" on a truncated tool_result.
+    JSONB in the database has no practical cap — the real limit is
+    claude_runner's OUTPUT_FULL_CAP (~200KB)."""
     row = await db.fetch_one(
         "SELECT id, agent, kind, summary, ts, data FROM telemetry.live_events WHERE id = $1",
         event_id,
@@ -3448,10 +3451,10 @@ async def live_event_full(event_id: int, _: Principal = Depends(get_principal)):
 
 @app.get("/api/tasks/events")
 async def tasks_events_stream(_: Principal = Depends(get_principal)):
-    """SSE LISTEN no channel `task_changed` (trigger `tasks.tasks` AFTER
-    INSERT/UPDATE, migration 012). Payload slim: slug+status+current_agent.
-    Consumer no PWA faz refetch da lista — derivacoes (phases_count etc)
-    vem do endpoint REST que ja existe."""
+    """SSE LISTEN on the `task_changed` channel (trigger `tasks.tasks` AFTER
+    INSERT/UPDATE, migration 012). Slim payload: slug+status+current_agent.
+    The PWA consumer refetches the list — derived fields (phases_count etc)
+    come from the existing REST endpoint."""
     dsn = os.environ["DATABASE_URL"]
 
     async def event_generator():
@@ -3492,9 +3495,9 @@ async def tasks_events_stream(_: Principal = Depends(get_principal)):
 
 @app.get("/api/scheduler/events")
 async def scheduler_events_stream(_: Principal = Depends(get_principal)):
-    """SSE LISTEN no channel `scheduler_event`. Emitido pelo container
-    scheduler via `_pg_notify` (orchestrator/scheduler.py) ao final de cada
-    dispatch_job — payload contem job_id, action, status, last_fire_at."""
+    """SSE LISTEN on the `scheduler_event` channel. Emitted by the scheduler
+    container via `_pg_notify` (orchestrator/scheduler.py) at the end of each
+    dispatch_job — the payload has job_id, action, status, last_fire_at."""
     dsn = os.environ["DATABASE_URL"]
 
     async def event_generator():
@@ -3535,19 +3538,19 @@ async def scheduler_events_stream(_: Principal = Depends(get_principal)):
 
 @app.post("/api/telemetry/event")
 async def telemetry_event(payload: dict, principal: Principal = Depends(get_principal)):
-    # task_slug: runner envia explicito. Fallback server-side pra telemetria
-    # de clientes antigos: topic_slug vem como '<stream>__<topic>', parte 2
-    # costuma ser o topic_name; se comeca com 'task-', extrai o slug.
+    # task_slug: the runner sends it explicitly. Server-side fallback for
+    # telemetry from old clients: topic_slug comes as '<stream>__<topic>',
+    # part 2 is usually the topic_name; if it starts with 'task-', extract the slug.
     task_slug = payload.get("task_slug")
     if not task_slug:
         topic = payload.get("topic_slug") or ""
         topic_name = topic.split("__", 1)[1] if "__" in topic else topic
         if topic_name.startswith("task-"):
             task_slug = topic_name[5:]
-    # conversation_id: runner novo envia stream+topic; resolve via mesma
-    # pratica do /live-event. Best-effort — se a conv nao existir mais (ex:
-    # run emite telemetry apos delete), fica NULL. Tambem aceita
-    # conversation_id explicito no payload (testes/migration backfill).
+    # conversation_id: the new runner sends stream+topic; resolve the same
+    # way as /live-event. Best-effort — if the conv no longer exists (e.g.
+    # a run emits telemetry after a delete), it stays NULL. Also accepts an
+    # explicit conversation_id in the payload (tests/migration backfill).
     conversation_id = payload.get("conversation_id")
     if conversation_id is None:
         stream = payload.get("stream")
@@ -3561,15 +3564,15 @@ async def telemetry_event(payload: dict, principal: Principal = Depends(get_prin
             )
             if row is not None:
                 conversation_id = row["id"]
-    # Fallback final pra task_slug quando topic nao tem prefixo `task-`
-    # (caso do mega-agente: ops opera no topic original do humano,
-    # ex: `2026-05-05 15:16`, sem prefixo). Se conversation_id resolveu,
-    # cruza com tasks.tasks por origin_stream/origin_topic — pega a task
-    # mais recente com aquela origem. Para o multi-agente classico esse
-    # branch nao executa porque o prefixo `task-` ja resolveu task_slug
-    # acima. Edge: se varias tasks compartilham a mesma origem (mesma conv
-    # rodou X depois Y), atribui pra Y (mais recente) — comportamento
-    # desejado ("task atualmente ativa nesta conv").
+    # Final task_slug fallback when the topic has no `task-` prefix
+    # (the single mega-agent case: it operates in the human's original topic,
+    # e.g. `2026-05-05 15:16`, no prefix). If conversation_id resolved,
+    # join with tasks.tasks on origin_stream/origin_topic — take the most
+    # recent task with that origin. For the classic multi-agent setup this
+    # branch doesn't run because the `task-` prefix already resolved task_slug
+    # above. Edge: if several tasks share the same origin (the same conv
+    # ran X then Y), attribute to Y (most recent) — the desired behavior
+    # ("task currently active in this conv").
     if not task_slug and conversation_id is not None:
         row = await db.fetch_one(
             """SELECT t.slug
@@ -3615,10 +3618,10 @@ async def telemetry_summary(
 ):
     window_map = {"1h": "1 hour", "24h": "24 hours", "7d": "7 days", "30d": "30 days"}
     interval = window_map.get(window, "24 hours")
-    # Os 3 contadores de input sao disjuntos (semantica Anthropic): input_tokens
-    # = nao-cacheado, cache_creation = escrito no cache, cache_read = lido do cache.
-    # Cada um com preco proprio. Expomos os 3 somados no window + um `cache_tokens`
-    # derivado (creation+read) pro breakdown continuar facil no PWA.
+    # The 3 input counters are disjoint (Anthropic semantics): input_tokens
+    # = uncached, cache_creation = written to cache, cache_read = read from cache.
+    # Each has its own price. We expose the 3 summed over the window + a derived
+    # `cache_tokens` (creation+read) so the breakdown stays easy in the PWA.
     filters = [f"ts > now() - INTERVAL '{interval}'"]
     params: list = []
     if agent:
@@ -3682,7 +3685,7 @@ async def telemetry_timeseries(
     agent: str | None = None,
     model: str | None = None,
 ):
-    """Series agregadas pra grafico time-series. Bucket tamanho automatico."""
+    """Aggregated series for the time-series chart. Bucket size is automatic."""
     cfg = {
         "1h":  ("1 hour",   "5 minutes"),
         "24h": ("24 hours", "1 hour"),
@@ -3776,7 +3779,7 @@ async def telemetry_recent(
 
 COMPANY_CONTEXT_PATH = Path("/workspace/company/CONTEXT.md")
 COMPANY_PHILOSOPHY_PATH = Path("/workspace/company/philosophy.md")
-COMPANY_FILE_MAX_BYTES = 64 * 1024  # cap 64KB cada (system prompt enxuga depois)
+COMPANY_FILE_MAX_BYTES = 64 * 1024  # 64KB cap each (the system prompt trims later)
 
 
 def _read_company_file(path: Path) -> str:
@@ -3830,7 +3833,7 @@ PHILOSOPHIES_TEMPLATES_DIR = Path("/app/templates/philosophies")
 
 @app.get("/api/philosophies/templates")
 async def list_philosophy_templates(_: Principal = Depends(get_principal)):
-    """Lista templates de filosofia disponiveis (framework/templates/philosophies/)."""
+    """Lists the available philosophy templates (framework/templates/philosophies/)."""
     if not PHILOSOPHIES_TEMPLATES_DIR.is_dir():
         return {"items": []}
     items = []
@@ -3839,7 +3842,7 @@ async def list_philosophy_templates(_: Principal = Depends(get_principal)):
             continue
         try:
             text = f.read_text(encoding="utf-8")
-            # extrai title da 1a linha "# X" e summary do bloco
+            # extract the title from the 1st line "# X" and the summary from the block
             lines = text.splitlines()
             title = lines[0].lstrip("# ").strip() if lines else f.stem
             summary = ""
@@ -3860,10 +3863,10 @@ async def list_philosophy_templates(_: Principal = Depends(get_principal)):
 
 @app.get("/api/agents")
 async def list_agents_meta(_: Principal = Depends(get_principal)):
-    """Lista agentes ativos (kind=bot, is_active=true) com metadata pra UI
-    de policies/onboard. Bots desativados via reconcile/soft-delete (agente
-    saiu do agents.yaml) ficam fora — convs antigas continuam acessiveis
-    mas o agente nao reaparece como peer chamavel."""
+    """Lists active agents (kind=bot, is_active=true) with metadata for the
+    policies/onboard UI. Bots deactivated via reconcile/soft-delete (agent
+    removed from agents.yaml) are left out — old convs stay accessible but
+    the agent no longer shows up as a callable peer."""
     rows = await db.fetch_all(
         """SELECT u.username, u.full_name, u.agent_name
              FROM messaging.users u
@@ -3902,8 +3905,8 @@ async def list_agent_policies(_: Principal = Depends(get_principal)):
 @app.post("/api/agent-policies")
 async def upsert_agent_policy(payload: dict, _: Principal = Depends(get_principal)):
     """Upsert policy. Body: {agent, can_ask?, can_be_asked_by?}.
-    can_ask=null OR ausente => sem restricao (pode pedir a qualquer um).
-    can_ask=[] => bloqueado de pedir a qualquer um.
+    can_ask=null OR missing => no restriction (may ask anyone).
+    can_ask=[] => blocked from asking anyone.
     can_ask=['x','y'] => whitelist."""
     agent = (payload.get("agent") or "").strip()
     if not agent:
@@ -3913,7 +3916,7 @@ async def upsert_agent_policy(payload: dict, _: Principal = Depends(get_principa
         if v is None:
             return None
         if not isinstance(v, list):
-            raise HTTPException(status_code=400, detail="can_ask/can_be_asked_by devem ser listas ou null")
+            raise HTTPException(status_code=400, detail="can_ask/can_be_asked_by must be lists or null")
         return [str(x).strip() for x in v if str(x).strip()]
 
     can_ask = _norm(payload.get("can_ask"))
@@ -3937,8 +3940,8 @@ async def delete_agent_policy(agent: str, _: Principal = Depends(get_principal))
 
 
 # ---------- System prompts (D-63) ----------
-# Tudo que vai pro --append-system-prompt do `claude -p` mora aqui — editavel
-# pelo PWA, lido a cada invocacao por claude_runner (sem restart).
+# Everything that goes into `claude -p`'s --append-system-prompt lives here —
+# editable via the PWA, read on every invocation by claude_runner (no restart).
 
 import yaml  # noqa: E402
 
@@ -3947,20 +3950,20 @@ SYSTEM_PROMPTS_DIR = Path("/workspace/company/system_prompts")
 # instance volume. Mirrors claude_runner._PLATFORM_PROMPT_PATH.
 PLATFORM_PROMPT_PATH = Path("/app/system_prompts/platform.md")
 SYSTEM_PROMPTS_CONFIG_PATH = SYSTEM_PROMPTS_DIR / "config.yaml"
-# No container web, AGENTS_DIR e bind-montado em /workspace/agents (vs /app/agents
-# nos containers de agente — paths diferentes por container, propositais).
+# In the web container, AGENTS_DIR is bind-mounted at /workspace/agents (vs /app/agents
+# in the agent containers — different paths per container, on purpose).
 AGENTS_CONTAINER_DIR = Path("/workspace/agents")
 
-SYSTEM_PROMPT_SECTION_FILE = 64 * 1024  # cap por arquivo (igual CONTEXT)
+SYSTEM_PROMPT_SECTION_FILE = 64 * 1024  # per-file cap (same as CONTEXT)
 
-# Defaults aplicados se chave faltar no config.yaml — espelha claude_runner.
+# Defaults applied if a key is missing from config.yaml — mirrors claude_runner.
 SYSTEM_PROMPT_TOGGLE_DEFAULTS: dict[str, bool] = {
     "include_platform_prompt": True,
     "include_company_context": True,
     "include_company_philosophy": True,
     "include_agent_claude_md": True,
     "include_team_block": True,
-    # Blocos dinamicos contextuais (D-110+):
+    # Contextual dynamic blocks (D-110+):
     "include_invocation_context": True,
     "include_task_state": True,
     "include_step_instructions": True,
@@ -3992,16 +3995,16 @@ def _read_system_prompt_config() -> dict[str, bool]:
 def _write_system_prompt_config(toggles: dict[str, bool]) -> None:
     SYSTEM_PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
     header = (
-        "# system_prompts/config.yaml — toggles globais do system prompt.\n"
-        "# Editado pelo PWA (Empresa > System Prompts). claude_runner re-le a\n"
-        "# cada invocacao — mudancas valem na proxima task, sem restart.\n\n"
+        "# system_prompts/config.yaml — global system prompt toggles.\n"
+        "# Edited by the PWA (Company > System Prompts). claude_runner re-reads it\n"
+        "# on every invocation — changes apply to the next task, no restart.\n\n"
     )
     body = yaml.safe_dump(toggles, default_flow_style=False, sort_keys=False)
     SYSTEM_PROMPTS_CONFIG_PATH.write_text(header + body, encoding="utf-8")
 
 
 def _agent_claude_md_path(agent: str) -> Path:
-    # Valida nome (mesma regex do reconcile NAME_RE) pra evitar path traversal.
+    # Validate the name (same regex as reconcile NAME_RE) to avoid path traversal.
     import re
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", agent):
         raise HTTPException(status_code=400, detail=f"invalid agent name: {agent!r}")
@@ -4009,7 +4012,7 @@ def _agent_claude_md_path(agent: str) -> Path:
 
 
 def _read_section(key: str) -> tuple[Path, str]:
-    """Resolve a section key para (path, conteudo). Suporta `agent:<name>`."""
+    """Resolves a section key to (path, content). Supports `agent:<name>`."""
     if key == "platform":
         path = PLATFORM_PROMPT_PATH
     elif key == "context":
@@ -4019,7 +4022,7 @@ def _read_section(key: str) -> tuple[Path, str]:
     elif key.startswith("agent:"):
         path = _agent_claude_md_path(key.split(":", 1)[1])
     else:
-        raise HTTPException(status_code=404, detail=f"section desconhecida: {key!r}")
+        raise HTTPException(status_code=404, detail=f"unknown section: {key!r}")
     try:
         return path, path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -4044,7 +4047,7 @@ def _write_section(key: str, content: str) -> int:
             status_code=413,
             detail=f"content > {SYSTEM_PROMPT_SECTION_FILE} bytes",
         )
-    path, _ = _read_section(key)  # valida key (e checa traversal pra agent:)
+    path, _ = _read_section(key)  # validates key (and checks traversal for agent:)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     return path.stat().st_size
@@ -4052,11 +4055,11 @@ def _write_section(key: str, content: str) -> int:
 
 @app.get("/api/system-prompts")
 async def system_prompts_index(_: Principal = Depends(get_principal)):
-    """Lista metadata das secoes editaveis + toggles globais.
+    """Lists metadata for the editable sections + global toggles.
 
-    Cada secao: key, title, source_path (relativo a /workspace), present, size,
-    toggle_key (chave em config.yaml que liga/desliga essa secao), generated
-    (true se o conteudo eh montado dinamicamente, sem arquivo)."""
+    Each section: key, title, source_path (relative to /workspace), present, size,
+    toggle_key (config.yaml key that turns the section on/off), generated
+    (true if the content is assembled dynamically, with no file)."""
     toggles = _read_system_prompt_config()
     sections: list[dict] = []
     # (key, title, path, toggle_key, generated, read_only)
@@ -4117,7 +4120,7 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
         "generated": True,
         "read_only": True,
     })
-    # Por-agente: 1 entry por agente bot ativo (is_active=true).
+    # Per agent: 1 entry per active bot agent (is_active=true).
     rows = await db.fetch_all(
         """SELECT u.agent_name AS name, u.full_name AS display_name
              FROM messaging.users u
@@ -4161,7 +4164,7 @@ async def system_prompts_config_set(payload: dict, _: Principal = Depends(get_pr
     current = _read_system_prompt_config()
     for key, val in toggles_in.items():
         if key not in SYSTEM_PROMPT_TOGGLE_DEFAULTS:
-            raise HTTPException(status_code=400, detail=f"toggle desconhecido: {key!r}")
+            raise HTTPException(status_code=400, detail=f"unknown toggle: {key!r}")
         if not isinstance(val, bool):
             raise HTTPException(status_code=400, detail=f"{key}: must be boolean")
         current[key] = val
@@ -4316,8 +4319,8 @@ async def _preview_task_state_block(slug: str | None) -> str:
 
 
 def _format_step_overrides_footer(overrides: dict | None) -> str:
-    """Rodape de debug visual: mostra quais campos o step esta sobrescrevendo
-    no claude_runner. Vazio se overrides ausente/vazio."""
+    """Visual debug footer: shows which fields the step overrides in
+    claude_runner. Empty if overrides is missing/empty."""
     if not isinstance(overrides, dict) or not overrides:
         return ""
     bits: list[str] = []
@@ -4390,18 +4393,18 @@ async def system_prompts_preview(
     task_slug: str | None = None,
     _: Principal = Depends(get_principal),
 ):
-    """Monta o system prompt completo como sera enviado ao `claude -p` —
-    respeita toggles atuais e simula contexto de invocacao via params.
+    """Assembles the full system prompt as it will be sent to `claude -p` —
+    honors the current toggles and simulates the invocation context via params.
 
-    Params (opcionais, pra simular bloco contextual):
-    - `mode`: `root` ou `child`. Sem ele, bloco "## Modo de invocacao" mostra dica.
-    - `parent`: nome do agente pai (so faz sentido com `mode=child`).
-    - `task_slug`: slug de uma task existente. Quando informado, blocos
-      "## Estado da task" e "## Instrucoes da fase atual" sao populados a
-      partir do DB + workflows.yaml.
+    Params (optional, to simulate the contextual blocks):
+    - `mode`: `root` or `child`. Without it, the "## Invocation mode" block shows a hint.
+    - `parent`: parent agent name (only meaningful with `mode=child`).
+    - `task_slug`: slug of an existing task. When given, the
+      "## Task state" and "## Current phase instructions" blocks are filled
+      from the DB + workflows.yaml.
 
-    Reproduz a logica de claude_runner._build_system_prompt — mantenha
-    sincronizado se aquela mudar."""
+    Reproduces the logic of claude_runner._build_system_prompt — keep it
+    in sync if that changes."""
     toggles = _read_system_prompt_config()
     parts: list[str] = []
 
@@ -4452,10 +4455,10 @@ async def system_prompts_preview(
             parts.append("\n\n# Operational philosophy\n\n" + phi)
 
     if toggles["include_team_block"] and agent and mode != "child":
-        # Reproduz _team_block do runner — mesma SQL, mesma whitelist por
-        # agent_policies. Em filha, runner omite (filha nao pode chamar
-        # ninguem; listar peers seria desinformacao). Se a logica do
-        # runner mudar, sincronize aqui.
+        # Reproduces the runner's _team_block — same SQL, same whitelist from
+        # agent_policies. In a child, the runner omits it (a child cannot call
+        # anyone; listing peers would be misinformation). If the runner's
+        # logic changes, sync it here.
         policy = await db.fetch_one(
             "SELECT can_ask FROM messaging.agent_policies WHERE agent = $1",
             agent,
@@ -4496,7 +4499,7 @@ async def system_prompts_preview(
 
 @app.get("/api/cost-budgets")
 async def cost_budgets_list(_: Principal = Depends(get_principal)):
-    """Lista budgets configurados + gasto de hoje (UTC) por agente."""
+    """Lists configured budgets + today's (UTC) spend per agent."""
     rows = await db.fetch_all(
         """
         WITH today_spend AS (
@@ -4660,23 +4663,23 @@ ONBOARDED_FLAG = Path("/workspace/company/.onboarded")
 
 @app.get("/api/onboard/status")
 async def onboard_status(_: Principal = Depends(get_principal)):
-    """Detecta se o sistema precisa de onboarding inicial. Fresh =
-    flag /workspace/.onboarded NAO existe. Tambem retorna count atual
-    de agentes pra UI exibir.
+    """Detects whether the system needs initial onboarding. Fresh =
+    the /workspace/.onboarded flag does NOT exist. Also returns the current
+    agent count for the UI to display.
 
-    Side-effect: pre-warm assincrono do agent-executor pro step 3 do
-    wizard ja achar container running quando user clicar Generate.
-    Fire-and-forget — nao bloqueia o status response.
+    Side effect: async pre-warm of the agent-executor so step 3 of the
+    wizard already finds the container running when the user clicks Generate.
+    Fire-and-forget — does not block the status response.
     """
     rows = await db.fetch_all(
         "SELECT COUNT(*) AS c FROM messaging.users WHERE kind='bot'"
     )
     agents_count = int(rows[0]["c"]) if rows else 0
 
-    # Pre-warm: dispara em background sem bloquear response. So pra
-    # fresh setups (sem onboarded flag) — caso ja onboardado, hire-host
-    # provavelmente ja esta up via compose/scheduler. Slug vem de
-    # hire.HIRE_AGENT pra cobrir COMPOSE_PROJECT_NAME customizado.
+    # Pre-warm: fires in the background without blocking the response. Only for
+    # fresh setups (no onboarded flag) — if already onboarded, the hire host
+    # is probably already up via compose/scheduler. The slug comes from
+    # hire.HIRE_AGENT to cover a custom COMPOSE_PROJECT_NAME.
     if not ONBOARDED_FLAG.exists():
         from . import agent_bootstrap as _ab, hire as _hire
         async def _prewarm():
@@ -4695,9 +4698,9 @@ async def onboard_status(_: Principal = Depends(get_principal)):
 
 @app.post("/api/onboard/propose-agents")
 async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_principal)):
-    """Chama LLM (via container executor) pra propor agentes alinhados
-    com empresa+filosofia. Body: {company_md, philosophy_md}.
-    Retorna {agents: [{slug, display_name, role, why, draft_claude_md}]}."""
+    """Calls the LLM (via the executor container) to propose agents aligned
+    with the company+philosophy. Body: {company_md, philosophy_md}.
+    Returns {agents: [{slug, display_name, role, why, draft_claude_md}]}."""
     company_md = (payload.get("company_md") or "").strip()
     philosophy_md = (payload.get("philosophy_md") or "").strip()
     if not company_md:
@@ -4707,46 +4710,46 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     agent_slug = _hire.HIRE_AGENT
     container_name = _hire._hire_container_name()
     prompt = (
-        "Voce eh um arquiteto de empresa virtual baseada em agentes Claude Code.\n\n"
-        "EMPRESA (CONTEXT.md):\n"
+        "You are an architect of a virtual company built on Claude Code agents.\n\n"
+        "COMPANY (CONTEXT.md):\n"
         f"```markdown\n{company_md}\n```\n\n"
-        "FILOSOFIA OPERACIONAL ATIVA:\n"
-        f"```markdown\n{philosophy_md or '(nenhuma)'}\n```\n\n"
-        "TAREFA: proponha 3-7 agentes que essa empresa deveria ter, "
-        "alinhados com a filosofia.\n\n"
-        "Pra cada agente:\n"
-        "- slug: lowercase, sem espacos, [a-z0-9-], comeca com letra, max 30 chars\n"
-        "- display_name: capitalizado em pt-BR\n"
-        "- role: 1 frase do que faz\n"
-        "- why: 1 frase justificando essa empresa precisar dele\n"
-        "- draft_claude_md: CLAUDE.md pronto pra usar (~200-400 palavras), "
-        "incluindo papel, responsabilidades, NAO-responsabilidades, estilo, "
-        "alinhado com a filosofia.\n\n"
-        "OUTPUT estrito JSON valido (nada antes ou depois):\n"
+        "ACTIVE OPERATIONAL PHILOSOPHY:\n"
+        f"```markdown\n{philosophy_md or '(none)'}\n```\n\n"
+        "TASK: propose 3-7 agents this company should have, "
+        "aligned with the philosophy.\n\n"
+        "For each agent:\n"
+        "- slug: lowercase, no spaces, [a-z0-9-], starts with a letter, max 30 chars\n"
+        "- display_name: capitalized, in the language of the company description\n"
+        "- role: 1 sentence on what it does\n"
+        "- why: 1 sentence justifying why this company needs it\n"
+        "- draft_claude_md: ready-to-use CLAUDE.md (~200-400 words), "
+        "including role, responsibilities, NON-responsibilities, style, "
+        "aligned with the philosophy.\n\n"
+        "OUTPUT strictly valid JSON (nothing before or after):\n"
         "{\"agents\":[{\"slug\":\"...\",\"display_name\":\"...\",\"role\":\"...\","
         "\"why\":\"...\",\"draft_claude_md\":\"...\"}]}"
     )
 
-    # Mock pra E2E (CLAUDE_MOCK no executor) ou se container morto
+    # Mock for E2E (CLAUDE_MOCK in the executor) or if the container is dead
     if os.environ.get("CLAUDE_MOCK"):
         return {
             "agents": [
                 {
                     "slug": "po", "display_name": "Product Owner",
-                    "role": "Define prioridades e mantém backlog", "why": "Toda empresa precisa de direcao",
+                    "role": "Sets priorities and maintains the backlog", "why": "Every company needs direction",
                     "draft_claude_md": "# PO\n\n_(mock)_\n",
                 },
                 {
                     "slug": "dev", "display_name": "Developer",
-                    "role": "Implementa features", "why": "Quem escreve codigo",
+                    "role": "Implements features", "why": "Someone has to write the code",
                     "draft_claude_md": "# Dev\n\n_(mock)_\n",
                 },
             ],
         }
 
-    # Auto-bootstrap: garantee que o executor esteja running antes de
-    # tentar exec'ar claude nele. Cobre fresh setup (container nunca
-    # criado) + restart cycles (parado mas existente).
+    # Auto-bootstrap: make sure the executor is running before trying to
+    # exec claude in it. Covers a fresh setup (container never created) +
+    # restart cycles (stopped but existing).
     from . import agent_bootstrap as _ab
     try:
         await _ab.ensure_agent_running(agent_slug, timeout=45.0)
@@ -4777,7 +4780,7 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     try:
         wrapper = json.loads(out)
         result_text = wrapper.get("result", "")
-        # Extrai bloco JSON do result_text (pode vir com ```json ... ```)
+        # Extract the JSON block from result_text (may come wrapped in ```json ... ```)
         import re as _re
         m = _re.search(r"\{[\s\S]*\"agents\"[\s\S]*\}", result_text)
         if not m:
@@ -4790,10 +4793,10 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
 
 @app.post("/api/onboard/apply")
 async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
-    """Aplica wizard: salva CONTEXT.md + philosophy.md + cria N agentes
-    em batch via hire.apply (skip draft, usa drafts ja gerados).
+    """Applies the wizard: saves CONTEXT.md + philosophy.md + creates N agents
+    in batch via hire.apply (skips drafting, uses the already-generated drafts).
     Body: {company_md, philosophy_md, agents: [{slug, display_name, role, draft_claude_md}]}.
-    Marca /workspace/.onboarded."""
+    Marks /workspace/.onboarded."""
     from . import hire as _hire
     company_md = payload.get("company_md", "")
     philosophy_md = payload.get("philosophy_md", "")
@@ -4801,25 +4804,25 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
     if not isinstance(agents, list) or not agents:
         raise HTTPException(status_code=400, detail="agents is required (non-empty list)")
 
-    # Salva docs primeiro
+    # Save docs first
     if company_md:
         _write_company_file(COMPANY_CONTEXT_PATH, company_md)
     if philosophy_md:
         _write_company_file(COMPANY_PHILOSOPHY_PATH, philosophy_md)
 
-    # Cria cada agente via hire.apply com draft pronto. apply gera o yaml_entry
-    # do agent.yaml.example padrao + o CLAUDE.md fornecido.
-    # Reconcile eh DEFERRED por agente (skip_reconcile=True) e rodado UMA
-    # vez no final — rodar reconcile N vezes em sequencia rapida cria
-    # race-conditions transientes no broker (criacao concorrente de
-    # users/streams), causando "0 created" mesmo com agents.yaml correto.
+    # Create each agent via hire.apply with a ready draft. apply generates the
+    # yaml_entry from the default agent.yaml.example + the given CLAUDE.md.
+    # Reconcile is DEFERRED per agent (skip_reconcile=True) and run ONCE
+    # at the end — running reconcile N times in quick succession causes
+    # transient race conditions in the broker (concurrent creation of
+    # users/streams), resulting in "0 created" even with a correct agents.yaml.
     created: list[str] = []
     errors: list[dict] = []
     for a in agents:
         slug = (a.get("slug") or "").strip()
         display = (a.get("display_name") or slug).strip()
         claude_md = a.get("draft_claude_md") or f"# {display}\n\n{a.get('role','')}\n"
-        # yaml_entry minimo (memory + ask_human + ask_agent permitidos)
+        # minimal yaml_entry (memory + ask_human + ask_agent allowed)
         yaml_entry = (
             f"  - name: {slug}\n"
             f"    display_name: \"{display}\"\n"
@@ -4849,9 +4852,9 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
             log.exception("onboard.agent_apply_failed", slug=slug)
             errors.append({"slug": slug, "error": str(e)[:300]})
 
-    # Reconcile uma unica vez ao final, depois que todos os arquivos foram
-    # escritos — broker ve um batch coerente e cria N users/streams numa
-    # passada so. Falha aqui fica em errors mas nao desfaz arquivos.
+    # Reconcile a single time at the end, after all files were written —
+    # the broker sees a coherent batch and creates N users/streams in one
+    # pass. A failure here goes into errors but does not undo the files.
     if created:
         try:
             await asyncio.to_thread(_hire.run_reconcile)
@@ -4859,7 +4862,7 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
             log.exception("onboard.reconcile_failed", created=created)
             errors.append({"slug": "*reconcile*", "error": str(e)[:500]})
 
-    # Marca onboarded mesmo com erros parciais (idempotent)
+    # Mark onboarded even with partial errors (idempotent)
     try:
         ONBOARDED_FLAG.parent.mkdir(parents=True, exist_ok=True)
         ONBOARDED_FLAG.write_text(
@@ -4887,10 +4890,10 @@ async def hire_apply(payload: dict):
 
 
 # ---------- SPA fallback ----------
-# DEPOIS de todas as rotas API e mounts: rotas nao reservadas voltam
-# index.html pra deep links do client-side router (?ask=<id>, futuras
-# rotas /conv/<id>, etc). FastAPI processa rotas em ordem de registro,
-# entao precisa ser a ULTIMA.
+# AFTER all API routes and mounts: non-reserved routes return index.html
+# for the client-side router's deep links (?ask=<id>, future routes
+# /conv/<id>, etc). FastAPI processes routes in registration order, so
+# this must be the LAST one.
 
 _RESERVED_PREFIXES = ("api/", "static/", "_app/", "health", "sw.js", "manifest.webmanifest", "docs", "openapi", "redoc")
 
@@ -4902,7 +4905,7 @@ async def spa_fallback(full_path: str):
     f = _index_file()
     if not f.exists():
         raise HTTPException(status_code=503, detail="frontend not installed")
-    # D-96: mesma estrategia do `/` — index.html nao deve cachear
-    # (referencia bundles hashed; se cachear, app trava em versao velha
-    # mesmo apos rebuild). Bundles `/_app/*` sao immutable via middleware.
+    # D-96: same strategy as `/` — index.html must not be cached
+    # (it references hashed bundles; if cached, the app sticks to an old
+    # version even after a rebuild). `/_app/*` bundles are immutable via middleware.
     return FileResponse(f, media_type="text/html", headers=_NO_CACHE)

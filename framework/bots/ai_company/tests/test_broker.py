@@ -1,4 +1,4 @@
-"""Tests do McpBroker — resolve, persistencia pending_questions."""
+"""McpBroker tests — resolve, pending_questions persistence."""
 from __future__ import annotations
 
 import asyncio
@@ -20,7 +20,7 @@ async def test_register_and_lookup(broker: McpBroker):
     key = TopicKey(stream="debug", topic="t1")
     slug = broker.register_topic(key)
     assert broker.topic_for_slug(slug) == key
-    assert broker.topic_for_slug("nao-existe") is None
+    assert broker.topic_for_slug("does-not-exist") is None
 
 
 async def test_ask_human_resolves(broker: McpBroker):
@@ -35,19 +35,19 @@ async def test_ask_human_resolves(broker: McpBroker):
     broker.set_on_ask(on_ask)
 
     async def resolver():
-        # da um pouco de tempo pra ask_human registrar o future
+        # give ask_human a moment to register the future
         for _ in range(50):
             if broker.has_pending(key):
-                broker.resolve(key, "minha resposta")
+                broker.resolve(key, "my answer")
                 return
             await asyncio.sleep(0.01)
-        pytest.fail("broker nunca teve pending")
+        pytest.fail("broker never had a pending ask")
 
     resolver_task = asyncio.create_task(resolver())
-    result = await broker.ask_human(key, "qual cor?", context="teste")
+    result = await broker.ask_human(key, "which color?", context="test")
     await resolver_task
-    assert result == "minha resposta"
-    assert received == [("qual cor?", "teste", True)]
+    assert result == "my answer"
+    assert received == [("which color?", "test", True)]
 
 
 async def test_ask_human_persists_then_cleans(broker: McpBroker):
@@ -56,7 +56,7 @@ async def test_ask_human_persists_then_cleans(broker: McpBroker):
     broker.set_on_ask(_noop)
 
     async def observe_and_resolve():
-        # espera o arquivo aparecer
+        # wait for the file to appear
         path = broker.pending_question_path(key)
         for _ in range(50):
             if path.exists():
@@ -65,12 +65,12 @@ async def test_ask_human_persists_then_cleans(broker: McpBroker):
                 broker.resolve(key, "resp")
                 return
             await asyncio.sleep(0.01)
-        pytest.fail("arquivo nunca apareceu")
+        pytest.fail("file never appeared")
 
     t = asyncio.create_task(observe_and_resolve())
     await broker.ask_human(key, "Q")
     await t
-    # Depois limpa
+    # Then it is cleaned up
     assert not broker.pending_question_path(key).exists()
 
 

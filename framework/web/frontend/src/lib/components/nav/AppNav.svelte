@@ -21,10 +21,10 @@
   }
   let { variant }: Props = $props();
 
-  // Cast: SvelteKit tipa pathname como uniao restrita das rotas conhecidas.
+  // Cast: SvelteKit types pathname as a narrow union of the known routes.
   let pathname = $derived($page.url.pathname as string);
 
-  // Active-tab: drawer em primeiro lugar; depois matching por pathname.
+  // Active tab: drawer first; then matching by pathname.
   let convActive = $derived(
     !$drawerOpen && (pathname === '/' || pathname.startsWith('/c/'))
   );
@@ -72,13 +72,13 @@
     <NavItem icon={Menu} label="More" onclick={openDrawer} active={moreActive} variant="rail" />
   </nav>
 {:else}
-  <!-- Mobile bottom nav: 5 itens (Memory/Files/Settings ficam no drawer no mobile).
-       fixed bottom-0 (em vez de membro do flex-col do shell) eh defensivo
-       contra quirks de h-dvh em mobile real (Android Chrome, iOS Safari): em
-       certos timings pos-reload/pos-PWA-launch o dvh mede maior que o
-       visivel, empurrando o nav embaixo da fold. fixed garante que sempre
-       ancora na borda inferior. z-30 fica acima do conteudo mas abaixo de
-       overlays/drawer. pb-safe respeita home indicator/gesture bar. -->
+  <!-- Mobile bottom nav: 5 items (Memory/Files/Settings live in the drawer on mobile).
+       fixed bottom-0 (instead of a member of the shell's flex-col) is defensive
+       against h-dvh quirks on real mobile (Android Chrome, iOS Safari): at
+       certain timings after reload/PWA launch the dvh measures larger than the
+       visible area, pushing the nav below the fold. fixed guarantees it always
+       anchors to the bottom edge. z-30 sits above content but below
+       overlays/drawer. pb-safe respects the home indicator/gesture bar. -->
   <nav
     aria-label="Primary navigation"
     class="fixed inset-x-0 bottom-0 z-30 flex h-bottomNav shrink-0 items-stretch border-t border-border bg-panel pb-safe md:hidden"

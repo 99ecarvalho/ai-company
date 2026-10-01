@@ -68,7 +68,7 @@
     return head === 'company' || head === 'agents';
   }
 
-  // Map de extensoes simples -> language pra hljs (alias dos suportados).
+  // Map of simple extensions -> language for hljs (aliases of the supported ones).
   const EXT_LANG: Record<string, string> = {
     py: 'python', js: 'javascript', ts: 'typescript', tsx: 'typescript',
     jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
@@ -136,7 +136,7 @@
       await writeFile(currentPath, editContent);
       logEvent(`saved: ${currentPath}`, 'ok');
       editing = false;
-      // re-load pra refletir o novo conteudo (e re-highlight)
+      // re-load to reflect the new content (and re-highlight)
       await load(currentPath);
     } catch (e) {
       saveError = String(e);

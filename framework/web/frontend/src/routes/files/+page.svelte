@@ -11,7 +11,7 @@
     logEvent
   } from '$lib/stores/ui';
 
-  // Tres raizes que o backend aceita (files.py: COMPANY_DIR/REPOS_DIR/AGENTS_DIR).
+  // The three roots the backend accepts (files.py: COMPANY_DIR/REPOS_DIR/AGENTS_DIR).
   const ROOTS = ['company', 'repos', 'agents'] as const;
   type Root = typeof ROOTS[number];
 
@@ -20,13 +20,13 @@
   let entries: FileEntry[] = $state([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
-  // Dotfiles ocultas por default (.git/, .DS_Store, .cache/ etc poluem
-  // mas as vezes precisa ver — toggle persistente em localStorage).
+  // Dotfiles hidden by default (.git/, .DS_Store, .cache/ etc add clutter
+  // but sometimes you need to see them — toggle persisted in localStorage).
   let showHidden = $state<boolean>(
     typeof window !== 'undefined' && window.localStorage.getItem('files.showHidden') === '1'
   );
 
-  // Raiz atual = primeiro segmento; breadcrumb = segmentos restantes.
+  // Current root = first segment; breadcrumb = remaining segments.
   const currentRoot = $derived<Root>((path.split('/')[0] as Root) ?? 'company');
   const segments = $derived(path.split('/').filter(Boolean));
 
@@ -69,7 +69,7 @@
   }
 
   function goSegment(idx: number) {
-    // Click num breadcrumb: navega ate aquele segmento (incluso).
+    // Click on a breadcrumb: navigate to that segment (inclusive).
     const next = segments.slice(0, idx + 1).join('/');
     if (next === path) return;
     path = next;
@@ -104,8 +104,8 @@
     {/snippet}
   </PageHeader>
 
-  <!-- Root selector: Company / Repos / Agents. Substitui o botao "Up"
-       que ciclava entre as duas primeiras e nem expunha agents. -->
+  <!-- Root selector: Company / Repos / Agents. Replaces the "Up" button
+       that cycled between the first two and didn't even expose agents. -->
   <div class="flex border-b border-border bg-panel2/50 text-sm">
     {#each ROOTS as root (root)}
       <button
@@ -124,7 +124,7 @@
   </div>
 
   <div class="flex-1 overflow-y-auto p-4">
-    <!-- Breadcrumb clicavel: cada segmento navega de volta ao seu nivel. -->
+    <!-- Clickable breadcrumb: each segment navigates back to its level. -->
     <nav class="mb-3 flex flex-wrap items-center gap-1 rounded-md border border-border bg-panel2 px-2 py-1.5 font-mono text-xs"
          aria-label="Path breadcrumb">
       <button

@@ -1,28 +1,28 @@
 /**
- * Thin EventSource wrapper used por stores reativos que antes polavam.
+ * Thin EventSource wrapper used by reactive stores that used to poll.
  *
- * Filosofia: SSE eh um *trigger* — handler recebe o payload e decide o que
- * fazer (refetch, append, etc). Auto-reconnect vem do browser nativo; no
- * `onopen` o caller pode re-hidratar estado pra cobrir eventos perdidos
- * durante downtime (o backend `/api/events` nao implementa Last-Event-ID).
+ * Philosophy: SSE is a *trigger* — the handler receives the payload and decides
+ * what to do (refetch, append, etc). Auto-reconnect comes from the native browser;
+ * on `onopen` the caller can re-hydrate state to cover events lost
+ * during downtime (the `/api/events` backend does not implement Last-Event-ID).
  *
- * Usa `credentials: same-origin` implicito do EventSource — a sessao `agf_session`
- * em cookie passa sem config extra.
+ * Uses EventSource's implicit `credentials: same-origin` — the `agf_session`
+ * cookie goes through without extra config.
  */
 
 export interface SSEClientOptions<T> {
-  /** URL absoluta ou relativa do endpoint SSE. */
+  /** Absolute or relative URL of the SSE endpoint. */
   url: string;
-  /** Handler pra cada evento recebido. Payload eh JSON ja parseado. */
+  /** Handler for each received event. Payload is already-parsed JSON. */
   onMessage: (data: T) => void;
-  /** Disparado em cada (re)conexao bem sucedida. Use pra re-hidratar estado. */
+  /** Fired on each successful (re)connection. Use it to re-hydrate state. */
   onOpen?: () => void;
-  /** Disparado em erro de conexao (o EventSource em si auto-reconecta). */
+  /** Fired on connection error (EventSource itself auto-reconnects). */
   onError?: (ev: Event) => void;
 }
 
 export interface SSEClient {
-  /** Fecha a conexao; idempotente. */
+  /** Closes the connection; idempotent. */
   close(): void;
 }
 
@@ -62,9 +62,9 @@ export function createSSEClient<T = unknown>(opts: SSEClientOptions<T>): SSEClie
 }
 
 /**
- * Coalesce de refreshes: se um refresh esta em voo, marca trailing pra rodar
- * mais um logo depois. Evita perder o "ultimo" evento num burst (problema do
- * `inFlight` simples como lock) e ao mesmo tempo nao dispara N paralelos.
+ * Refresh coalescing: if a refresh is in flight, mark a trailing one to run
+ * right after. Avoids losing the "last" event in a burst (the problem with a
+ * plain `inFlight` lock) while not firing N in parallel.
  */
 export function coalesceRefresh(fn: () => Promise<void>): () => void {
   let inFlight = false;
@@ -81,7 +81,7 @@ export function coalesceRefresh(fn: () => Promise<void>): () => void {
       inFlight = false;
       if (pending) {
         pending = false;
-        // Trailing tick com pequeno delay pra agrupar eventos proximos.
+        // Trailing tick with a small delay to group nearby events.
         setTimeout(run, 50);
       }
     }

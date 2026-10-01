@@ -1,22 +1,22 @@
--- 010: reverte a soma que 004 fez em telemetry.events.input_tokens
+-- 010: reverts the sum that 004 applied to telemetry.events.input_tokens
 --
--- Contexto: migration 004 e claude_runner passaram a armazenar
--- `input_tokens = base + cache_creation + cache_read` pra "IN" do PWA
--- refletir o total cobrado. Na pratica isso criou duas distorcoes:
---   1. Nome colide com a semantica da API da Anthropic, onde `input_tokens`
---      significa APENAS tokens nao-cacheados (os outros dois contadores sao
---      disjuntos e tem preco proprio).
---   2. Como cache domina >99% na maioria dos runs, a coluna IN e a coluna
---      cache aparecem identicas no PWA, escondendo quanto e realmente input
---      novo.
+-- Context: migration 004 and claude_runner started storing
+-- `input_tokens = base + cache_creation + cache_read` so the PWA "IN" would
+-- reflect the total billed. In practice this created two distortions:
+--   1. The name clashes with the Anthropic API semantics, where `input_tokens`
+--      means ONLY non-cached tokens (the other two counters are
+--      disjoint and have their own price).
+--   2. Since cache dominates >99% in most runs, the IN column and the
+--      cache column look identical in the PWA, hiding how much is really new
+--      input.
 --
--- Daqui pra frente claude_runner grava so o base (nao-cacheado) em
--- input_tokens, e o PWA pode mostrar os 3 contadores separados quando quiser
--- soma. Este backfill restaura os registros existentes ao mesmo formato.
+-- From now on claude_runner stores only the base (non-cached) in
+-- input_tokens, and the PWA can show the 3 counters separately when it wants
+-- the sum. This backfill restores existing records to the same format.
 --
--- Seguro: GREATEST(..., 0) cobre eventuais linhas onde a aritmetica nao
--- fecharia exato (raro, por arredondamento do CLI). NULL cache permanece
--- NULL e input_tokens fica intocado.
+-- Safe: GREATEST(..., 0) covers any rows where the arithmetic would not
+-- come out exact (rare, due to CLI rounding). NULL cache stays
+-- NULL and input_tokens is left untouched.
 
 UPDATE telemetry.events
    SET input_tokens = GREATEST(

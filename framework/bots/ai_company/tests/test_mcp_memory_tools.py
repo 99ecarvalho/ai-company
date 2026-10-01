@@ -1,7 +1,7 @@
-"""Tests dos handlers MCP memory_edit e memory_delete.
+"""Tests for the memory_edit and memory_delete MCP handlers.
 
-Usa McpServer real + broker real (vazio) + fake MemoryStore in-memory. Nao precisa
-de Postgres.
+Uses a real McpServer + real (empty) broker + fake in-memory MemoryStore. Does not
+need Postgres.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class FakeMemory:
 
     async def edit(self, *, key: str, value=None, tags=None) -> dict:
         if value is None and tags is None:
-            raise ValueError("value ou tags obrigatorio")
+            raise ValueError("value or tags required")
         if key not in self._facts:
             raise KeyError(key)
         if value is not None:

@@ -20,12 +20,12 @@ async function deleteFact(
   agent: string,
   key: string
 ): Promise<void> {
-  // Cleanup best-effort — nao falha se ja foi removido.
+  // Best-effort cleanup — doesn't fail if already removed.
   await request.delete(`/api/memory/${agent}/${encodeURIComponent(key)}`);
 }
 
 test.describe('MemoryOverlay', () => {
-  test('abre overlay sem erros; estrutura de form esta presente', async ({ page }) => {
+  test('opens overlay without errors; form structure is present', async ({ page }) => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Memory' }).click();
 
@@ -39,9 +39,9 @@ test.describe('MemoryOverlay', () => {
     await expect(dialog.getByPlaceholder('tags (comma-separated)')).toBeVisible();
   });
 
-  test('add fact via UI aparece na lista', async ({ page, request }) => {
-    // Seed um fact pre-existente pra garantir que o agent aparece no dropdown.
-    // (agents vem via GET /api/memory/agents que so lista quem tem facts).
+  test('add fact via UI shows up in the list', async ({ page, request }) => {
+    // Seed a pre-existing fact to make sure the agent shows up in the dropdown.
+    // (agents come from GET /api/memory/agents, which only lists agents with facts).
     const seedKey = `e2e-seed-${Date.now()}`;
     await seedFact(request, AGENT, seedKey, 'seed value', ['e2e']);
 
@@ -50,17 +50,17 @@ test.describe('MemoryOverlay', () => {
     const dialog = page.getByRole('dialog', { name: 'Memory' });
     await expect(dialog).toBeVisible();
 
-    // Garante agent selecionado
+    // Make sure the agent is selected
     await dialog.getByLabel('Agent').selectOption(AGENT);
 
-    // Adiciona fact via UI
+    // Add fact via UI
     const newKey = `e2e-add-${Date.now()}`;
     await dialog.getByPlaceholder('key').fill(newKey);
     await dialog.getByPlaceholder('value').fill('ui-added value');
     await dialog.getByPlaceholder('tags (comma-separated)').fill('e2e,ui');
     await dialog.getByRole('button', { name: 'Save' }).click();
 
-    // Aparece na lista (espera ate card renderizar)
+    // Shows up in the list (waits until the card renders)
     const added = dialog.locator(`[data-fact-key="${newKey}"]`);
     await expect(added).toBeVisible();
     await expect(added).toContainText('ui-added value');
@@ -71,7 +71,7 @@ test.describe('MemoryOverlay', () => {
     await deleteFact(request, AGENT, seedKey);
   });
 
-  test('edit fact via UI atualiza valor', async ({ page, request }) => {
+  test('edit fact via UI updates value', async ({ page, request }) => {
     const key = `e2e-edit-${Date.now()}`;
     await seedFact(request, AGENT, key, 'original value', ['orig']);
 
@@ -81,19 +81,19 @@ test.describe('MemoryOverlay', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByLabel('Agent').selectOption(AGENT);
 
-    // Encontra o card e clica em Edit
+    // Find the card and click Edit
     const card = dialog.locator(`[data-fact-key="${key}"]`);
     await expect(card).toBeVisible();
     await card.getByLabel('Edit fact').click();
 
-    // Edita e salva
+    // Edit and save
     const editValue = card.getByLabel('Edit value');
     await expect(editValue).toBeVisible();
     await editValue.fill('edited value');
     await card.getByLabel('Edit tags').fill('edited');
     await card.getByRole('button', { name: 'Save' }).click();
 
-    // Espera voltar pra view mode com conteudo novo
+    // Wait for it to return to view mode with the new content
     await expect(card).toContainText('edited value');
     await expect(card).toContainText('edited');
     await expect(card).not.toContainText('original value');
@@ -101,7 +101,7 @@ test.describe('MemoryOverlay', () => {
     await deleteFact(request, AGENT, key);
   });
 
-  test('edit cancel descarta mudancas', async ({ page, request }) => {
+  test('edit cancel discards changes', async ({ page, request }) => {
     const key = `e2e-cancel-${Date.now()}`;
     await seedFact(request, AGENT, key, 'keep me', []);
 
@@ -115,14 +115,14 @@ test.describe('MemoryOverlay', () => {
     await card.getByLabel('Edit value').fill('should not persist');
     await card.getByRole('button', { name: 'Cancel' }).click();
 
-    // Volta pra view mode, valor original preservado
+    // Back to view mode, original value preserved
     await expect(card).toContainText('keep me');
     await expect(card).not.toContainText('should not persist');
 
     await deleteFact(request, AGENT, key);
   });
 
-  test('delete fact via UI remove da lista', async ({ page, request }) => {
+  test('delete fact via UI removes it from the list', async ({ page, request }) => {
     const key = `e2e-del-${Date.now()}`;
     await seedFact(request, AGENT, key, 'to be deleted', []);
 
@@ -134,14 +134,14 @@ test.describe('MemoryOverlay', () => {
     const card = dialog.locator(`[data-fact-key="${key}"]`);
     await expect(card).toBeVisible();
 
-    // confirm() → aceita via dialog handler
+    // confirm() → accepted via dialog handler
     page.once('dialog', (d) => d.accept());
     await card.getByLabel('Delete fact').click();
 
     await expect(card).toHaveCount(0);
   });
 
-  test('filtro por tag reduz a lista', async ({ page, request }) => {
+  test('tag filter narrows the list', async ({ page, request }) => {
     const stamp = Date.now();
     const keyA = `e2e-tagA-${stamp}`;
     const keyB = `e2e-tagB-${stamp}`;
@@ -155,11 +155,11 @@ test.describe('MemoryOverlay', () => {
     const dialog = page.getByRole('dialog', { name: 'Memory' });
     await dialog.getByLabel('Agent').selectOption(AGENT);
 
-    // Ambos visiveis antes do filtro
+    // Both visible before the filter
     await expect(dialog.locator(`[data-fact-key="${keyA}"]`)).toBeVisible();
     await expect(dialog.locator(`[data-fact-key="${keyB}"]`)).toBeVisible();
 
-    // Aplica filtro de tag unica
+    // Apply the unique tag filter
     await dialog.getByLabel('Filter by tag').fill(uniqTag);
     // debounce 300ms
     await expect(dialog.locator(`[data-fact-key="${keyA}"]`)).toBeVisible({ timeout: 2000 });
@@ -169,7 +169,7 @@ test.describe('MemoryOverlay', () => {
     await deleteFact(request, AGENT, keyB);
   });
 
-  test('search full-text encontra por conteudo do value', async ({ page, request }) => {
+  test('full-text search finds by value content', async ({ page, request }) => {
     const stamp = Date.now();
     const needle = `uniqueneedle${stamp}`;
     const hitKey = `e2e-search-hit-${stamp}`;
@@ -191,7 +191,7 @@ test.describe('MemoryOverlay', () => {
     await deleteFact(request, AGENT, missKey);
   });
 
-  test('edit em key inexistente retorna 404 via API', async ({ request }) => {
+  test('edit on nonexistent key returns 404 via API', async ({ request }) => {
     const r = await request.put(`/api/memory/${AGENT}/ghost-key-never-existed`, {
       data: { value: 'x' }
     });

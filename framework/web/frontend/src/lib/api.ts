@@ -19,9 +19,9 @@ export class ApiError extends Error {
 }
 
 /**
- * Hook chamado quando uma chamada autenticada retorna 401. Default: redirect
- * pra /login, exceto se ja estamos la ou se a propria chamada eh login/me.
- * +layout.svelte pode sobrescrever pra coordenar com o auth store.
+ * Hook called when an authenticated call returns 401. Default: redirect
+ * to /login, unless we're already there or the call itself is login/me.
+ * +layout.svelte can override it to coordinate with the auth store.
  */
 export let onUnauthorized: (url: string) => void = (url: string) => {
   if (typeof window === 'undefined') return;
@@ -111,11 +111,11 @@ export interface ConversationTaskRef {
 }
 
 export interface ChildrenStats {
-  /** D-96: filhas (1 nivel) que ainda estao ativas (running/stuck/awaiting). */
+  /** D-96: children (1 level) that are still active (running/stuck/awaiting). */
   active: number;
-  /** D-96: filhas com is_stuck=true (turno aberto sem atividade). */
+  /** D-96: children with is_stuck=true (open turn with no activity). */
   stuck: number;
-  /** D-96: filhas que terminaram seu turno (idle, terminal task status, etc). */
+  /** D-96: children that finished their turn (idle, terminal task status, etc). */
   resolved: number;
 }
 
@@ -125,30 +125,30 @@ export interface ConversationSummary {
   agent: string;
   stream: string;
   topic: string;
-  /** Migration 027: titulo customizavel pelo humano. `null` = sem override
-   *  (fallback no frontend: `custom_title ?? task?.title ?? topic`). */
+  /** Migration 027: title customizable by the human. `null` = no override
+   *  (frontend fallback: `custom_title ?? task?.title ?? topic`). */
   custom_title: string | null;
   last_activity: number;
   last_message_at: string;
   archived_at: string | null;
   msg_count: number;
   last_msg: LastMsg;
-  /** D-84 (ex `has_pending_ask`): agente bloqueado em `ask_human` aguardando
-   *  resposta do humano. Precedencia absoluta sobre is_running/is_stuck. */
+  /** D-84 (formerly `has_pending_ask`): agent blocked in `ask_human` waiting
+   *  for the human's answer. Absolute precedence over is_running/is_stuck. */
   awaiting_human: boolean;
   participating: boolean;
   closed: boolean;
   /** db_id of parent conversation (D-96: only one level deep); null = root. */
   parent_conv_id: number | null;
   children_stats: ChildrenStats;
-  /** D-84: turno em voo (run_start sem run_end) e atividade dentro do
-   *  threshold de stuck. Exclui awaiting_human e is_stuck. */
+  /** D-84: turn in flight (run_start without run_end) and activity within the
+   *  stuck threshold. Excludes awaiting_human and is_stuck. */
   is_running: boolean;
-  /** D-84: turno aberto sem atividade ha > RUNNER_STUCK_SEC. Mesma
-   *  semantica do `state=stuck` do header — paridade entre sidebar e header. */
+  /** D-84: open turn with no activity for > RUNNER_STUCK_SEC. Same
+   *  semantics as the header's `state=stuck` — parity between sidebar and header. */
   is_stuck: boolean;
-  /** D-84: ultimo turno encerrou em erro (run_end com subtype != success)
-   *  e nao ha novo turno depois. Vence so se nao houver awaiting_human. */
+  /** D-84: last turn ended in error (run_end with subtype != success)
+   *  and there is no newer turn. Wins only if there is no awaiting_human. */
   is_errored: boolean;
   /** D-79: for `task-<slug>` conversations in secondary streams — true when
    *  the task has moved on and `current_agent != this.stream`. Signals the
@@ -174,8 +174,8 @@ export interface Message {
   timestamp: number; // seconds
 }
 
-// D-71/D-84: estado derivado do runner (de telemetry.live_events + pending_asks).
-// Modelo unificado com sidebar — mesmos nomes e precedencia.
+// D-71/D-84: state derived from the runner (from telemetry.live_events + pending_asks).
+// Model unified with the sidebar — same names and precedence.
 export type RunnerState =
   | 'idle'
   | 'running'
@@ -197,7 +197,7 @@ export interface ConversationDetail {
   agent: string;
   stream: string;
   topic: string;
-  /** Migration 027: titulo customizavel pelo humano. Mesmo fallback do summary. */
+  /** Migration 027: title customizable by the human. Same fallback as the summary. */
   custom_title: string | null;
   pending_ask_id: number | null;
   runner_state?: RunnerStateInfo;
@@ -214,8 +214,8 @@ export const deleteConversation = (convId: string) =>
     `/api/conversations/${encodeConvId(convId)}`
   );
 
-/** Migration 027: define ou apaga (passando null/'') o titulo customizavel
- *  da conversa. Display rule: `custom_title ?? task?.title ?? topic`. */
+/** Migration 027: sets or clears (by passing null/'') the conversation's
+ *  custom title. Display rule: `custom_title ?? task?.title ?? topic`. */
 export const setConversationTitle = (convId: string, customTitle: string | null) =>
   api.patch<{ ok: boolean; id: number; custom_title: string | null }>(
     `/api/conversations/${encodeConvId(convId)}`,
@@ -232,7 +232,7 @@ export const unarchiveConversation = (convId: string) =>
     `/api/conversations/${encodeConvId(convId)}/unarchive`
   );
 
-// D-71: action endpoints + standalone fetch do runner_state.
+// D-71: action endpoints + standalone fetch of runner_state.
 export const getRunnerState = (convId: string) =>
   api.get<RunnerStateInfo>(
     `/api/conversations/${encodeConvId(convId)}/runner-state`
@@ -248,9 +248,9 @@ export const retryConversation = (convId: string) =>
 
 // ---------- Workflows (D-57) ----------
 
-/** Overrides aplicados pelo claude_runner quando o agente esta executando
- *  este step. Workflow autoritario: ausencia de campo = herda config do
- *  agente em agents.yaml. */
+/** Overrides applied by claude_runner while the agent is executing
+ *  this step. Workflow is authoritative: a missing field = inherits the
+ *  agent's config from agents.yaml. */
 export interface WorkflowStepOverrides {
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -271,9 +271,9 @@ export interface WorkflowStep {
 export interface WorkflowDef {
   name: string;
   initial_step: string;
-  /** D-110: agent que orquestra o workflow — dono da conv-supervisora.
-   *  Quando promove via Caminho A (next_agent != orchestrator), supervisora
-   *  vive em <orchestrator>/task-<slug> e a fase inicial fica como filha. */
+  /** D-110: agent that orchestrates the workflow — owner of the supervisor conv.
+   *  When promoting via Path A (next_agent != orchestrator), the supervisor
+   *  lives in <orchestrator>/task-<slug> and the initial phase becomes a child. */
   orchestrator?: string | null;
   steps_ordered: string[];
   steps: Record<string, WorkflowStep>;
@@ -291,7 +291,7 @@ export const listWorkflowsExpanded = () =>
 
 export interface WorkflowUpsertBody {
   initial_step: string;
-  /** D-110: opcional. Sem ele, framework cai pro initial_step.agent. */
+  /** D-110: optional. Without it, the framework falls back to initial_step.agent. */
   orchestrator?: string | null;
   steps: Record<
     string,
@@ -377,6 +377,7 @@ export interface StreamInfo {
   id: number;
   name: string;
   description?: string | null;
+  is_active?: boolean;
 }
 
 export interface StreamsResponse {
@@ -405,8 +406,8 @@ export const transcribePreview = (file: Blob, filename: string, language?: strin
 // ---------- TTS ----------
 
 /**
- * Synthesize speech via backend proxy. Retorna blob URL pronto pra
- * <audio src=...>. Caller deve revokeObjectURL quando descartar.
+ * Synthesize speech via backend proxy. Returns a blob URL ready for
+ * <audio src=...>. The caller must revokeObjectURL when discarding it.
  */
 export async function synthesizeSpeech(text: string): Promise<string> {
   // MP3 is ~5x smaller than WAV for the same speech; every target browser plays it.
@@ -1070,9 +1071,9 @@ export type LiveEventKind =
 
 export interface LiveEvent {
   id: number;
-  /** Monotônico por conversa, gerado no claude_runner (migration 018).
-   *  Usado como tie-break primário no feed quando `ts` colide; cai pro `id`
-   *  se ausente (eventos pré-migration ou synthetic events do mcp.server). */
+  /** Monotonic per conversation, generated in claude_runner (migration 018).
+   *  Used as the primary tie-break in the feed when `ts` collides; falls back
+   *  to `id` if absent (pre-migration events or synthetic events from mcp.server). */
   seq_num?: number;
   agent: string;
   ts: number;
@@ -1288,7 +1289,7 @@ export interface SearchResult {
   topic: string;
   conv_id: string;            // "stream/topic"
   sender: string;
-  snippet: string;            // pode conter <mark>highlight</mark>
+  snippet: string;            // may contain <mark>highlight</mark>
   ts: number;
 }
 

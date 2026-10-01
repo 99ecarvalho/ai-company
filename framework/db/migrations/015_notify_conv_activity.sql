@@ -1,22 +1,22 @@
--- 015: emite pg_notify `conv_activity` quando telemetry.live_events recebe
--- um `run_start` ou `run_end`. D-81.
+-- 015: emits pg_notify `conv_activity` when telemetry.live_events receives
+-- a `run_start` or `run_end`. D-81.
 --
--- Motivo: o campo `is_queued` em /api/conversations (D-76/D-78) deriva de
--- `last_trigger_at > last_run_activity_at`. Quando o pool libera e o
--- claude_runner spawna, um novo `run_start` é INSERTed em live_events —
--- mas o SSE global /api/events só escuta `msg_all` e `ask_new`, não
--- live_events. Resultado: a sidebar continua mostrando `QUEUED` mesmo
--- depois do runner começar a rodar (tool_uses aparecem no chat mas o
--- card não atualiza), até a próxima msg chegar.
+-- Reason: the `is_queued` field in /api/conversations (D-76/D-78) is derived from
+-- `last_trigger_at > last_run_activity_at`. When the pool frees up and
+-- claude_runner spawns, a new `run_start` is INSERTed into live_events —
+-- but the global SSE /api/events only listens to `msg_all` and `ask_new`, not
+-- live_events. Result: the sidebar keeps showing `QUEUED` even
+-- after the runner starts (tool_uses show up in the chat but the
+-- card does not update), until the next msg arrives.
 --
--- Fix: trigger nova dispara pg_notify no canal `conv_activity` com
--- payload `{conversation_id, kind, ts}` sempre que vier run_start ou
--- run_end. Frontend re-fetcha /api/conversations ao receber essa
--- notificação — is_queued fica sincronizado com runner real.
+-- Fix: a new trigger fires pg_notify on the `conv_activity` channel with
+-- payload `{conversation_id, kind, ts}` whenever a run_start or
+-- run_end arrives. The frontend re-fetches /api/conversations on receiving this
+-- notification — is_queued stays in sync with the real runner.
 --
--- Canal separado de `live_event_<conv_id>` pra não quebrar consumers
--- que só querem eventos da conv ativa (SSE do chat). Canal separado
--- de `msg_all` pra não confundir consumers que esperam payload de msg.
+-- Separate channel from `live_event_<conv_id>` so as not to break consumers
+-- that only want events of the active conv (chat SSE). Separate channel
+-- from `msg_all` so as not to confuse consumers that expect a msg payload.
 
 CREATE OR REPLACE FUNCTION telemetry.notify_conv_activity() RETURNS TRIGGER AS $$
 BEGIN

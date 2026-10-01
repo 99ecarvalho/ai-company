@@ -1,50 +1,50 @@
-# Mobile UI — armadilhas conhecidas
+# Mobile UI — known pitfalls
 
-> Lições compiladas de incidentes reais (D-93, D-94, mobile pass D-XX).
-> Antes de mexer em layout/UI da PWA, leia. Custo de revisar < custo de
-> caçar overflow horizontal num device físico.
+> Lessons compiled from real incidents (D-93, D-94, mobile pass D-XX).
+> Read this before touching PWA layout/UI. The cost of reviewing < the cost of
+> hunting horizontal overflow on a physical device.
 
 ## Breakpoints (Tailwind config)
 
 ```
-xs  480px   — split icon-only / icon+text em botões compactos
-sm  640px   — divisor mobile/desktop principal (a maior parte das media queries)
-md  768px   — sidebar desktop aparece; bottom nav some
-lg  1024px  — só usado em layouts amplos
+xs  480px   — split icon-only / icon+text on compact buttons
+sm  640px   — main mobile/desktop divider (most media queries)
+md  768px   — desktop sidebar appears; bottom nav disappears
+lg  1024px  — only used in wide layouts
 ```
 
-**Default = mobile (<640px).** Sempre escreva os estilos pra mobile primeiro;
-adicione `sm:`/`md:` pra alargar.
+**Default = mobile (<640px).** Always write styles for mobile first;
+add `sm:`/`md:` to widen.
 
-## Armadilhas de layout (mobile)
+## Layout pitfalls (mobile)
 
-### 1. `flex-wrap` + `truncate` é incompatível
+### 1. `flex-wrap` + `truncate` are incompatible
 
-`truncate` aplica `white-space: nowrap` que conflita com wrap. Truncate **só
-em filhos individuais**, nunca no container flex-wrap.
+`truncate` applies `white-space: nowrap`, which conflicts with wrap. Truncate
+**only individual children**, never the flex-wrap container.
 
 ```svelte
-<!-- ✗ errado -->
+<!-- ✗ wrong -->
 <div class="flex flex-wrap truncate">
   <strong>{title}</strong>
   <span>...</span>
 </div>
 
-<!-- ✓ certo -->
+<!-- ✓ right -->
 <div class="flex flex-wrap min-w-0">
   <strong class="min-w-0 truncate">{title}</strong>
   <span class="...">...</span>
 </div>
 ```
 
-### 2. Group de botões com `shrink-0 ml-auto` viola viewport
+### 2. Button group with `shrink-0 ml-auto` breaks the viewport
 
-Padrão antigo "ações sempre alinhadas à direita com `ml-auto shrink-0`"
-estoura em telas estreitas. Botões somam mais que viewport e o pai não
-wrappa.
+The old pattern "actions always right-aligned with `ml-auto shrink-0`"
+overflows on narrow screens. Buttons add up to more than the viewport and the
+parent does not wrap.
 
 ```svelte
-<!-- ✗ errado -->
+<!-- ✗ wrong -->
 <div class="flex items-center gap-2">
   <span class="truncate">{slug}</span>
   <span class="ml-auto flex shrink-0 gap-1">
@@ -52,7 +52,7 @@ wrappa.
   </span>
 </div>
 
-<!-- ✓ certo: row pai wrappa, botões ficam em linha própria em mobile -->
+<!-- ✓ right: parent row wraps, buttons get their own line on mobile -->
 <div class="flex flex-wrap items-center gap-2">
   <span class="min-w-0 flex-1 truncate sm:flex-none">{slug}</span>
   <span class="flex w-full flex-wrap gap-1 sm:ml-auto sm:w-auto sm:shrink-0">
@@ -61,10 +61,10 @@ wrappa.
 </div>
 ```
 
-### 3. Texto de botão hidden em mobile (icon-only)
+### 3. Button text hidden on mobile (icon-only)
 
-Botões com texto + ícone ocupam ~80-100px cada. 4 botões = 400px > viewport.
-Esconda texto < `xs`, mantenha ícone + `aria-label`.
+Buttons with text + icon take ~80-100px each. 4 buttons = 400px > viewport.
+Hide the text below `xs`, keep the icon + `aria-label`.
 
 ```svelte
 <button title="Run" aria-label="Run">
@@ -73,10 +73,10 @@ Esconda texto < `xs`, mantenha ícone + `aria-label`.
 </button>
 ```
 
-### 4. Containers `overflow-y-auto` precisam de `overflow-x-hidden`
+### 4. `overflow-y-auto` containers need `overflow-x-hidden`
 
-Sem isso, qualquer filho mais largo que viewport aciona scroll horizontal
-indesejado (a tela inteira "anda" pro lado).
+Without it, any child wider than the viewport triggers unwanted horizontal
+scroll (the whole screen "slides" sideways).
 
 ```svelte
 <!-- ✗ -->
@@ -86,33 +86,33 @@ indesejado (a tela inteira "anda" pro lado).
 <div class="flex-1 overflow-y-auto overflow-x-hidden">
 ```
 
-### 5. Wrapper de `<aside w-full>` precisa `w-full min-w-0` em mobile
+### 5. Wrapper of `<aside w-full>` needs `w-full min-w-0` on mobile
 
-Aside dentro de flex item sem `w-full` no pai resolve via auto-content
-(cresce com o conteúdo, vaza viewport).
+An aside inside a flex item without `w-full` on the parent resolves via
+auto-content (grows with the content, leaks out of the viewport).
 
 ```svelte
-<!-- +layout.svelte: pattern correto -->
+<!-- +layout.svelte: correct pattern -->
 <div class="flex h-full w-full min-w-0 md:w-auto md:flex">
-  <ConvListPane />  <!-- aside w-full md:w-sidebar dentro -->
+  <ConvListPane />  <!-- aside w-full md:w-sidebar inside -->
 </div>
 ```
 
-### 6. `PageHeader` actions é `shrink-0` por contrato
+### 6. `PageHeader` actions are `shrink-0` by contract
 
-[`PageHeader.svelte`](src/lib/components/ui/PageHeader.svelte) usa
-`shrink-0` no slot de actions. **Não meta 3+ selects ali** — não cabe em
-mobile. Filtros/toolbars pesados vão pra row separada abaixo do header,
-com `flex-wrap`.
+[`PageHeader.svelte`](src/lib/components/ui/PageHeader.svelte) uses
+`shrink-0` on the actions slot. **Don't put 3+ selects there** — they don't fit
+on mobile. Heavy filters/toolbars go in a separate row below the header,
+with `flex-wrap`.
 
 ```svelte
 <PageHeader title="Telemetry">
   {#snippet actions()}
-    <button>Refresh</button>  <!-- só 1-2 itens curtos no header -->
+    <button>Refresh</button>  <!-- only 1-2 short items in the header -->
   {/snippet}
 </PageHeader>
 
-<!-- toolbar separada abaixo, podendo wrappar -->
+<!-- separate toolbar below, allowed to wrap -->
 <div class="flex flex-wrap items-center gap-2 border-b px-3 py-2">
   <select>...</select>
   <select>...</select>
@@ -120,10 +120,10 @@ com `flex-wrap`.
 </div>
 ```
 
-### 7. Tab row com N tabs > viewport
+### 7. Tab row with N tabs > viewport
 
-5 tabs de ~100px cada = 500px > 390px (mobile). Use scroll horizontal
-no row e `shrink-0 whitespace-nowrap` em cada tab.
+5 tabs of ~100px each = 500px > 390px (mobile). Use horizontal scroll
+on the row and `shrink-0 whitespace-nowrap` on each tab.
 
 ```svelte
 <div class="-mx-4 flex gap-1 overflow-x-auto border-b px-4">
@@ -135,45 +135,45 @@ no row e `shrink-0 whitespace-nowrap` em cada tab.
 
 ### 8. `pb-bottomNav` ≠ `pb-safe-nav`
 
-O shell ([`+layout.svelte`](src/routes/+layout.svelte)) reserva espaço
-pra `<AppNav variant="bottom">` (que é `position: fixed`). Use
+The shell ([`+layout.svelte`](src/routes/+layout.svelte)) reserves space
+for `<AppNav variant="bottom">` (which is `position: fixed`). Use
 **`pb-safe-nav`** (`var(--bottom-nav-h) + env(safe-area-inset-bottom)`),
-**não** `pb-bottomNav` (só 56px). Em devices com gesture bar (Android
-nav, iOS home indicator) o inset é > 0 e conteúdo fica cortado debaixo
-da nav se você esqueceu o `safe`.
+**not** `pb-bottomNav` (only 56px). On devices with a gesture bar (Android
+nav, iOS home indicator) the inset is > 0 and content gets cut off under
+the nav if you forgot the `safe`.
 
-A `AppNav` em si tem `pb-safe`, então conteúdo **dentro** dela respeita o
-gesture bar. O reservado pelo pai precisa casar.
+`AppNav` itself has `pb-safe`, so content **inside** it respects the
+gesture bar. The space reserved by the parent has to match.
 
-## Cache em dev (D-96)
+## Cache in dev (D-96)
 
-**Bundles do Vite/SvelteKit já são hash-versioned** (`/_app/0.D_HAVXFH.js`).
-Hash novo = URL novo = sempre fresh.
+**Vite/SvelteKit bundles are already hash-versioned** (`/_app/0.D_HAVXFH.js`).
+New hash = new URL = always fresh.
 
-O `index.html` (entry) **não é versionado** — sem `Cache-Control`, browser
-cacheia via heurística (10% do age) e mostra bundles velhos pós-rebuild.
+`index.html` (entry) **is not versioned** — without `Cache-Control`, the browser
+caches it heuristically (10% of age) and shows old bundles after a rebuild.
 
-[`framework/web/app/main.py`](app/main.py) seta:
+[`framework/web/app/main.py`](app/main.py) sets:
 - `/`, `/sw.js`, `/manifest.webmanifest`, spa fallback → `Cache-Control: no-cache`
 - `/_app/*` → `public, max-age=31536000, immutable` (via middleware)
 - `/static/*` → `public, max-age=3600`
 
-**Não retire esses headers.** Sem eles, qualquer rebuild fica invisível pro
-user até hard-reload.
+**Don't remove these headers.** Without them, any rebuild stays invisible to the
+user until a hard reload.
 
-Em dev, se ainda assim ver versão velha:
+In dev, if you still see an old version:
 ```bash
-# 1. Forçar reload sem cache (recomendado primeiro):
-#    Ctrl+Shift+R (Chrome/Firefox), ou DevTools > Disable cache (com devtools aberto).
-# 2. Limpar service worker + caches do browser:
+# 1. Force reload without cache (recommended first):
+#    Ctrl+Shift+R (Chrome/Firefox), or DevTools > Disable cache (with devtools open).
+# 2. Clear the browser's service worker + caches:
 #    DevTools > Application > Service Workers > Unregister + Clear storage.
-# 3. URL com query string:
+# 3. URL with a query string:
 #    https://your-instance.example.com/?nocache=N
 ```
 
-## Validação
+## Validation
 
-Antes de fechar PR mobile-relacionado, rode em viewport real ou Playwright:
+Before closing a mobile-related PR, run it on a real viewport or Playwright:
 
 ```js
 await page.setViewportSize({ width: 390, height: 844 });  // iPhone 14
@@ -185,12 +185,12 @@ const overflow = await page.evaluate(() => ({
     parent: a.parentElement?.className,
   })),
 }));
-// doc > 0 = page tem scroll horizontal indesejado.
-// aside.w > 390 = aside vazou viewport.
+// doc > 0 = page has unwanted horizontal scroll.
+// aside.w > 390 = aside leaked out of the viewport.
 ```
 
-Confirme também que:
-- bottom da página tem folga até `<AppNav>` (botões de form não cortados).
-- header da página NÃO precisa scroll lateral pra ler título.
-- tabs/toolbars que estouram **scrollam horizontalmente** (não wrappam
-  pra 2ª linha torta nem somem).
+Also confirm that:
+- the bottom of the page has room before `<AppNav>` (form buttons not cut off).
+- the page header does NOT need sideways scroll to read the title.
+- tabs/toolbars that overflow **scroll horizontally** (they don't wrap
+  onto a crooked 2nd line or disappear).

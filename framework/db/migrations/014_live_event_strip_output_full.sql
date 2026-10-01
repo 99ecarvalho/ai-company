@@ -1,14 +1,14 @@
--- 014: trigger telemetry.notify_live_event filtra `output_full` do payload
--- do pg_notify. Motivo: tool_result com saida grande (queries SQL retornando
--- muitas linhas, stdout de testes, etc) precisa ficar acessivel via "View
--- full" no PWA, mas o pg_notify tem limite de 8000 bytes — emitir o
--- output inteiro estoura silenciosamente. Solucao:
---   - claude_runner armazena 5KB inline em `data.output` + cap mais
---     generoso (~200KB) em `data.output_full`.
---   - Este trigger emite NOTIFY com data SEM `output_full` (jsonb -
---     'output_full'), garantindo payload pequeno.
---   - Frontend, ao detectar `output_truncated=true`, busca o full via
---     GET /api/live_events/{id}/full (le do JSONB no banco).
+-- 014: trigger telemetry.notify_live_event strips `output_full` from the
+-- pg_notify payload. Reason: tool_result with large output (SQL queries returning
+-- many rows, test stdout, etc) must stay accessible via "View
+-- full" in the PWA, but pg_notify has an 8000-byte limit — emitting the
+-- whole output overflows silently. Solution:
+--   - claude_runner stores 5KB inline in `data.output` + a more
+--     generous cap (~200KB) in `data.output_full`.
+--   - This trigger emits NOTIFY with data WITHOUT `output_full` (jsonb -
+--     'output_full'), guaranteeing a small payload.
+--   - The frontend, on detecting `output_truncated=true`, fetches the full one via
+--     GET /api/live_events/{id}/full (reads the JSONB from the DB).
 
 CREATE OR REPLACE FUNCTION telemetry.notify_live_event() RETURNS TRIGGER AS $$
 BEGIN

@@ -1,17 +1,17 @@
-"""Mini servidor HTTP /health pros daemons (reactor, scheduler, watchdog).
+"""Tiny /health HTTP server for the daemons (reactor, scheduler, watchdog).
 
-Implementacao em http.server da stdlib + thread daemon — zero deps novas,
-funciona em codigo sync (watchdog) e em loops asyncio (reactor, scheduler)
-sem precisar integrar com o event loop.
+Built on stdlib http.server + a daemon thread — zero new deps, works in
+sync code (watchdog) and in asyncio loops (reactor, scheduler) without
+having to integrate with the event loop.
 
-Uso:
+Usage:
     from .health import start_health_server
 
     def status():
         return {"status": "ok", "last_check_at": ..., "stats": {...}}
 
     start_health_server(port=8811, get_status=status)
-    # ... daemon main loop continua
+    # ... daemon main loop continues
 """
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ GetStatus = Callable[[], dict]
 
 
 def start_health_server(port: int, get_status: GetStatus) -> HTTPServer:
-    """Sobe HTTP server numa thread daemon. Retorna o server (caller pode
-    chamar .shutdown() em cleanup; ou nao — daemon thread morre com processo).
+    """Starts the HTTP server in a daemon thread. Returns the server (the caller
+    may call .shutdown() on cleanup, or not — the daemon thread dies with the process).
     """
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):  # noqa: N802
@@ -47,7 +47,7 @@ def start_health_server(port: int, get_status: GetStatus) -> HTTPServer:
             self.wfile.write(body)
 
         def log_message(self, *args, **kwargs):  # noqa: ARG002
-            return  # silencia access log
+            return  # silence access log
 
     server = HTTPServer(("0.0.0.0", port), Handler)
     thread = threading.Thread(

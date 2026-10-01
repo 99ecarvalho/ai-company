@@ -29,12 +29,13 @@
 
   interface Props {
     conv: ConversationSummary;
-    /** Modo compacto pra filhos na arvore — so 1 linha com agent + sinais
-     *  criticos + age. Titulo omite quando igual ao pai (herdado). Esconde
-     *  badges de task metadata (workflow/step/complexity) e preview. */
+    /** Compact mode for children in the tree — a single line with agent +
+     *  critical signals + age. Title is omitted when equal to the parent's
+     *  (inherited). Hides task metadata badges (workflow/step/complexity)
+     *  and preview. */
     compact?: boolean;
-    /** Titulo do pai (task.title || topic). Quando igual ao do filho, o
-     *  titulo do filho e suprimido pra nao duplicar. So usado se compact. */
+    /** Parent title (task.title || topic). When equal to the child's, the
+     *  child's title is suppressed to avoid duplication. Only used if compact. */
     parentTitle?: string | null;
   }
   let { conv, compact = false, parentTitle = null }: Props = $props();
@@ -58,8 +59,8 @@
     return () => document.removeEventListener('click', onDocClick);
   });
 
-  // Emoji shortcodes comuns usados pelos agentes na comunicacao via broker.
-  // Subset do vocabulario Zulip/GitHub — suficiente pra previews limpos.
+  // Common emoji shortcodes used by agents when communicating via the broker.
+  // Subset of the Zulip/GitHub vocabulary — enough for clean previews.
   const EMOJI_MAP: Record<string, string> = {
     loudspeaker: '📣',
     arrow_right: '→',
@@ -88,9 +89,9 @@
     pushpin: '📌'
   };
 
-  /** Limpa preview pra exibicao compacta: strip HTML, converte shortcodes
-   *  de emoji conhecidos, remove markdown inline pesado (bold/italic/code)
-   *  e colapsa whitespace. Mantem texto legivel. */
+  /** Cleans the preview for compact display: strips HTML, converts known
+   *  emoji shortcodes, removes heavy inline markdown (bold/italic/code)
+   *  and collapses whitespace. Keeps the text readable. */
   function cleanPreview(s: string): string {
     if (!s) return '';
     let out = s;
@@ -114,15 +115,15 @@
     return out;
   }
 
-  // Migration 027: humano pode override do titulo via PWA. Fallback:
-  // custom_title -> task.title -> topic. Apaga override (volta pro fallback)
-  // ao salvar string vazia.
+  // Migration 027: the human can override the title via the PWA. Fallback:
+  // custom_title -> task.title -> topic. Saving an empty string clears the
+  // override (back to the fallback).
   const fallbackTitle = $derived(conv.task?.title || conv.topic);
   const selfTitle = $derived(conv.custom_title || fallbackTitle);
   const showTitle = $derived(!compact || (parentTitle !== null && selfTitle !== parentTitle));
 
-  // Inline edit state. Edit mode entra ao clicar no titulo; save em blur ou
-  // Enter; cancela em Escape. stopPropagation evita disparar onCardClick.
+  // Inline edit state. Edit mode starts on clicking the title; saves on blur
+  // or Enter; cancels on Escape. stopPropagation avoids firing onCardClick.
   let editing = $state(false);
   let editValue = $state('');
   let titleInputEl: HTMLInputElement | null = $state(null);
@@ -141,7 +142,7 @@
     if (!editing) return;
     editing = false;
     const trimmed = editValue.trim();
-    // Se voltou pro fallback ou nao mudou, manda null/no-op respectivamente.
+    // If it went back to the fallback or didn't change, send null/no-op respectively.
     const next: string | null = trimmed && trimmed !== fallbackTitle ? trimmed : null;
     if ((conv.custom_title || null) === next) return;
     try {
@@ -155,7 +156,7 @@
   function onTitleKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
-      titleInputEl?.blur(); // dispara commit via on:blur
+      titleInputEl?.blur(); // triggers commit via on:blur
     } else if (e.key === 'Escape') {
       e.preventDefault();
       editing = false;
@@ -166,29 +167,29 @@
   const isArchived = $derived(!!conv.archived_at);
   const hasTask = $derived(!!conv.task);
 
-  // D-84: modelo unificado de estado proprio. Precedencia (so um vence):
+  // D-84: unified model for own state. Precedence (only one wins):
   //   awaiting_human > is_stuck > is_running > is_errored > idle
-  // Sinais ja vem mutuamente exclusivos do backend (derivacao em broker.py
-  // aplica precedencia), mas por defesa o template tambem usa else-if.
+  // Signals already come mutually exclusive from the backend (derivation in
+  // broker.py applies precedence), but defensively the template uses else-if too.
   const awaitingHumanSelf = $derived(conv.awaiting_human === true);
   const isStuck = $derived(conv.is_stuck === true);
   const isRunning = $derived(conv.is_running === true);
   const isErrored = $derived(conv.is_errored === true);
 
-  // D-96: ConvCard so renderiza pra raizes (filhas viraram chips no header).
-  // Sinal askIsReplied removido — era para topics `__ask-from-*` que sumiram
-  // da sidebar.
+  // D-96: ConvCard only renders for roots (children became chips in the header).
+  // Signal askIsReplied removed — it was for `__ask-from-*` topics that were
+  // dropped from the sidebar.
 
-  // D-96: filha nao tem ask_human (gateado no MCP), entao a cascata
-  // "NEEDS YOU ↓" do descendente saiu — `children_stats.awaiting_human` e
-  // sempre 0. Mantemos so badges de "running" e "stuck" das filhas.
+  // D-96: a child has no ask_human (gated in MCP), so the descendant's
+  // "NEEDS YOU ↓" cascade is gone — `children_stats.awaiting_human` is
+  // always 0. We keep only the children's "running" and "stuck" badges.
   const activeChildren = $derived(conv.children_stats?.active ?? 0);
   const stuckChildren = $derived(conv.children_stats?.stuck ?? 0);
   const runningChildren = $derived(Math.max(0, activeChildren - stuckChildren));
   const runningPulse = $derived(runningChildren > 0);
 
-  // Unread discreto: ultima msg e de bot, sem awaiting_human (que domina
-  // visualmente), nao e a conv ativa, e last_activity > lastSeen.
+  // Subtle unread: last msg is from a bot, no awaiting_human (which dominates
+  // visually), not the active conv, and last_activity > lastSeen.
   const unread = $derived.by(() => {
     if (awaitingHumanSelf) return false;
     if (!isBot) return false;
@@ -201,8 +202,8 @@
     showConvPanel(conv.id);
   }
 
-  // Conta descendentes pra incluir no confirm dialog — somatorio de
-  // active + resolved (ignora awaiting_human que e subset dos outros).
+  // Count descendants to include in the confirm dialog — sum of
+  // active + resolved (ignores awaiting_human, which is a subset of the others).
   const descendantCount = $derived(
     (conv.children_stats?.active ?? 0) + (conv.children_stats?.resolved ?? 0)
   );
@@ -312,12 +313,12 @@
     {#if hasTask}
       <ListChecks class="h-3 w-3 shrink-0 text-accent" aria-label="Task attached" />
     {/if}
-    <!-- D-84: 1 icone por card, precedencia
+    <!-- D-84: 1 icon per card, precedence
          awaiting_human(badge bottom) > stuck > running > errored > askReplied -->
     {#if isStuck}
       <AlertTriangle
         class="h-3 w-3 shrink-0 text-warn"
-        aria-label="Stuck — turno aberto sem atividade"
+        aria-label="Stuck — open turn with no activity"
       />
     {:else if isRunning}
       <Loader2

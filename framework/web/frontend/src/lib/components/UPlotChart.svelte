@@ -30,7 +30,7 @@
 
   function buildOpts(): Options {
     const axisStroke = cssVar('--muted', '#7d8590');
-    const gridStroke = cssVar('--border', '#30363d') + '66'; // ~40% alpha pra grid sutil
+    const gridStroke = cssVar('--border', '#30363d') + '66'; // ~40% alpha for a subtle grid
     const yAxes = Math.max(1, Math.max(...series.map((s) => (s.yAxis ?? 0) + 1)));
     const seriesCfg: UPlotSeries[] = [
       { label: 'time' },

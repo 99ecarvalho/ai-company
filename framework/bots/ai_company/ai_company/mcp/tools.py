@@ -1,10 +1,10 @@
-"""Definicoes de tools MCP expostas pelo framework.
+"""Definitions of the MCP tools exposed by the framework.
 
-Contrato: toda tool retorna texto no campo `content[0].text` do JSON-RPC
-response. Onde a acao tem consequencia de protocolo (complete_phase,
-register_worktree), o texto tambem carrega uma **guidance** curta com o
-que aconteceu e qual o proximo passo esperado. Agentes leem essa guidance
-e nao precisam inferir o protocolo.
+Contract: every tool returns text in the `content[0].text` field of the
+JSON-RPC response. Where the action has protocol consequences (complete_phase,
+register_worktree), the text also carries a short **guidance** saying what
+happened and what the expected next step is. Agents read this guidance
+and do not need to infer the protocol.
 """
 from __future__ import annotations
 
@@ -628,7 +628,7 @@ BACKLOG_ADD_TOOL: dict[str, Any] = {
             },
             "impact": {
                 "type": "string",
-                "description": "Free-form (e.g. 'alto', 'medio', 'baixo').",
+                "description": "Free-form (e.g. 'high', 'medium', 'low').",
             },
             "effort": {
                 "type": "string",
@@ -717,8 +717,8 @@ BACKLOG_PROMOTE_TOOL: dict[str, Any] = {
         "linked via promoted_task_slug.\n\n"
         "The task is created in 'in_progress' status with no phases yet — "
         "use `complete_phase` on the new task to advance it through the "
-        "workflow. Typically called by the human operator via PWA 'executar "
-        "agora' button, but agents can call it too."
+        "workflow. Typically called by the human operator via PWA 'Run "
+        "now' button, but agents can call it too."
     ),
     "inputSchema": {
         "type": "object",

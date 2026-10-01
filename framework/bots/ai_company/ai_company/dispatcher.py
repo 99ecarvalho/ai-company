@@ -1,13 +1,13 @@
-"""Dispatcher: 1 topic = 1 worker exclusivo, 1 queue por topic.
+"""Dispatcher: 1 topic = 1 dedicated worker, 1 queue per topic.
 
-Garante:
-  - Mensagens consecutivas no mesmo topic vao pro mesmo worker em ordem
-  - `pool_size` eh TURN-LEVEL (D-27): limita invocacoes Claude concorrentes,
-    nao topics "vivos". Slot soh eh segurado durante `handler.handle()`.
-  - Topic loop persiste entre turns pra manter workdir e session_id do topic
-    "quentes" — libera soh apos `idle_timeout_sec` sem msgs.
-  - Se pool cheio no inicio de um turn, posta ack no chat antes de aguardar.
-  - Contencao de pool > CONTENTION_LOG_THRESHOLD_SEC vira log `pool.contention`.
+Guarantees:
+  - Consecutive messages in the same topic go to the same worker, in order
+  - `pool_size` is TURN-LEVEL (D-27): it limits concurrent Claude invocations,
+    not "live" topics. The slot is only held during `handler.handle()`.
+  - The topic loop persists across turns to keep the topic's workdir and
+    session_id "warm" — it is released only after `idle_timeout_sec` without msgs.
+  - If the pool is full at the start of a turn, posts an ack in the chat before waiting.
+  - Pool contention > CONTENTION_LOG_THRESHOLD_SEC is logged as `pool.contention`.
 """
 from __future__ import annotations
 
@@ -26,13 +26,13 @@ log = get_logger(__name__)
 
 MENTION_RE = re.compile(r"@\*\*[^*]+\*\*\s*")
 
-# Log `pool.contention` quando um turn espera mais que isso pra adquirir o slot.
+# Log `pool.contention` when a turn waits longer than this to acquire the slot.
 CONTENTION_LOG_THRESHOLD_SEC = 2.0
 
 
 class EventHandler(Protocol):
-    """Protocolo: algo que sabe processar um evento num cwd dado.
-    Implementado por ClaudeRunner ou mocks nos testes.
+    """Protocol: something that can process an event in a given cwd.
+    Implemented by ClaudeRunner or by mocks in the tests.
     """
     async def handle(self, event: dict[str, Any], topic_key: TopicKey, workdir) -> None: ...
 
@@ -46,7 +46,7 @@ class Dispatcher:
         broker_client: BrokerClient | None = None,
         broker: McpBroker | None = None,
         idle_timeout_sec: int = 900,
-        audio_transcriber=None,  # mantido por compat; no-op (PWA transcreve)
+        audio_transcriber=None,  # kept for compat; no-op (the PWA transcribes)
     ):
         self.pool = pool
         self.session_mgr = session_mgr
@@ -57,22 +57,22 @@ class Dispatcher:
         self._queues: dict[TopicKey, asyncio.Queue[dict]] = {}
         self._tasks: dict[TopicKey, asyncio.Task] = {}
         self._running_handler: set[TopicKey] = set()
-        # D-71: handler ativo guarda o proc do Claude CLI aqui pra permitir
-        # cancel em pleno turn (SIGTERM + SIGKILL fallback). Slug → Process.
-        # Life-time == duracao da chamada ao subprocess no claude_runner;
-        # register/unregister vem do proprio runner via handler_register_proc.
+        # D-71: the active handler stores the Claude CLI proc here so a turn
+        # can be cancelled mid-flight (SIGTERM + SIGKILL fallback). Slug → Process.
+        # Lifetime == duration of the subprocess call in claude_runner;
+        # register/unregister comes from the runner itself via handler_register_proc.
         self._topic_procs: dict[str, asyncio.subprocess.Process] = {}
-        # D-72: quando cancel_topic eh invocado pelo humano com SIGTERM bem
-        # sucedido, marcamos o slug aqui. Claude runner consulta via
-        # `consume_user_cancel` no retry loop — se setado, trata como
-        # nao-retriable (evita auto-resume de rc=143). Set limpa no consume.
+        # D-72: when the human invokes cancel_topic and SIGTERM succeeds,
+        # we mark the slug here. The Claude runner checks it via
+        # `consume_user_cancel` in the retry loop — if set, it is treated as
+        # non-retriable (avoids auto-resume on rc=143). Consume clears it.
         self._user_cancelled: set[str] = set()
         self._lock = asyncio.Lock()
 
     def consume_user_cancel(self, key: TopicKey) -> bool:
-        """Check-and-clear: True se houve cancel do humano nesse topic
-        desde a ultima checagem. Usado pelo runner pra nao retentar apos
-        SIGTERM vindo de cancel_topic (D-72)."""
+        """Check-and-clear: True if the human cancelled this topic since
+        the last check. Used by the runner to avoid retrying after a
+        SIGTERM coming from cancel_topic (D-72)."""
         slug = key.slug()
         if slug in self._user_cancelled:
             self._user_cancelled.discard(slug)
@@ -80,43 +80,43 @@ class Dispatcher:
         return False
 
     def handler_register_proc(self, key: TopicKey, proc: asyncio.subprocess.Process) -> None:
-        """Chamado pelo handler (ClaudeRunner) ao spawnar o CLI. D-71.
+        """Called by the handler (ClaudeRunner) when spawning the CLI. D-71.
 
-        Mantem ref do process por topic pra permitir SIGTERM em cancel_topic
-        quando o handler ja esta rodando (pre-D-71 respondia "tarde demais").
+        Keeps a ref to the process per topic so cancel_topic can SIGTERM it
+        while the handler is already running (pre-D-71 answered "too late").
         """
         self._topic_procs[key.slug()] = proc
 
     def handler_unregister_proc(self, key: TopicKey) -> None:
-        """Chamado pelo handler ao encerrar o CLI (finally apos proc.wait).
+        """Called by the handler when the CLI exits (finally after proc.wait).
 
-        Idempotente — pop sem KeyError pra casos de race com cancel.
+        Idempotent — pop without KeyError for races with cancel.
         """
         self._topic_procs.pop(key.slug(), None)
 
     async def _maybe_transcribe_audio(self, event: dict[str, Any], key: TopicKey) -> None:
-        return  # no-op — PWA transcreve localmente via /api/transcribe-preview
+        return  # no-op — the PWA transcribes locally via /api/transcribe-preview
 
     async def dispatch(self, event: dict[str, Any]) -> None:
-        # Eventos de controle (cancel, etc) vem do canal `agent_ctrl` via
-        # InternalClient e nao sao mensagens normais — roteamento separado.
+        # Control events (cancel, etc) come from the `agent_ctrl` channel via
+        # InternalClient and are not normal messages — separate routing.
         if event.get("_ctrl"):
             await self._handle_ctrl(event)
             return
 
         key = TopicKey(stream=event["display_recipient"], topic=event["subject"])
 
-        # Se tem audio anexado, transcreve e enriquece content ANTES de qualquer
-        # roteamento. Util tb pra ask_human: humano pode responder via voz.
+        # If audio is attached, transcribe it and enrich content BEFORE any
+        # routing. Also useful for ask_human: the human can answer by voice.
         await self._maybe_transcribe_audio(event, key)
 
-        # Se tem ask_human OU ask_agent pendente neste topic, a msg eh a resposta.
-        # Resolve o Future direto (nao enfileira pro worker). Echo do proprio
-        # agente ja foi filtrado upstream em internal_client._on_notify via
-        # `sender_id == self.user_id` — qualquer msg que chega aqui e de outro
-        # sender. Pos-D-96 nao ha mais ask_human em conv filha (gateado no
-        # MCP), entao filhas so postam resposta final do Claude. Filtros
-        # emoji `:question:`/`:loudspeaker:`/`:hourglass:` removidos.
+        # If there is a pending ask_human OR ask_agent in this topic, the msg is the answer.
+        # Resolve the Future directly (do not enqueue it for the worker). The agent's own
+        # echo was already filtered upstream in internal_client._on_notify via
+        # `sender_id == self.user_id` — any msg that gets here is from another
+        # sender. Post-D-96 there is no ask_human in child convs anymore (gated in
+        # the MCP), so children only post Claude's final answer. The emoji
+        # filters `:question:`/`:loudspeaker:`/`:hourglass:` were removed.
         if self.broker is not None and self.broker.has_pending(key):
             raw_content = str(event.get("content") or "")
             content = MENTION_RE.sub("", raw_content).strip()
@@ -124,14 +124,14 @@ class Dispatcher:
                 log.info("dispatcher.routed_to_broker", topic=key.slug(), length=len(content))
                 return
 
-        # D-75: evento cuja stream NAO pertence a este agente so deve
-        # servir pra destravar ask_agent/ask_human (path acima). Se chegou
-        # aqui, significa que a conv e filha (via subscribe_to_conversation)
-        # e a msg e irrelevante pro loop do agente — descartar pra nao
-        # criar topic_loop local em topic alheio (causava loops entre pais
-        # e filhos, o pai processava msgs da conv filha como proprias).
-        # `getattr` com default lista vazia: se broker_client nao expoe
-        # owned_streams (stubs de teste), skip o filtro (backward compat).
+        # D-75: an event whose stream does NOT belong to this agent should only
+        # serve to unblock ask_agent/ask_human (path above). If it got
+        # here, the conv is a child (via subscribe_to_conversation)
+        # and the msg is irrelevant to the agent's loop — drop it so we don't
+        # create a local topic_loop in someone else's topic (it caused loops between
+        # parents and children: the parent processed the child conv's msgs as its own).
+        # `getattr` with a default: if broker_client does not expose
+        # owned_streams (test stubs), skip the filter (backward compat).
         owned = getattr(self.broker_client, "owned_streams", None)
         if owned is not None and key.stream not in owned:
             log.info(
@@ -151,9 +151,9 @@ class Dispatcher:
         log.debug("dispatcher.queued", topic=key.slug(), pending=self._queues[key].qsize())
 
     async def _topic_loop(self, key: TopicKey) -> None:
-        """Loop do topic: setup workdir, consome queue ate idle timeout.
+        """Topic loop: set up the workdir, consume the queue until idle timeout.
 
-        NAO segura slot de pool — cada turn adquire o seu em `_run_turn`.
+        Does NOT hold a pool slot — each turn acquires its own in `_run_turn`.
         """
         workdir = self.session_mgr.setup(key)
         log.info("topic.started", topic=key.slug(), workdir=str(workdir))
@@ -168,11 +168,11 @@ class Dispatcher:
                 await self._run_turn(event, key, workdir)
         except asyncio.CancelledError:
             log.info("topic.cancelled", topic=key.slug())
-            # Nao re-levantar — queremos sair limpo via finally
+            # Do not re-raise — we want to exit cleanly via finally
         finally:
             async with self._lock:
-                # Se chegaram eventos novos durante a saida, re-dispara.
-                # Nao aplica quando fomos cancelados (queue ja drenada pelo
+                # If new events arrived during shutdown, restart the loop.
+                # Does not apply when we were cancelled (queue already drained by
                 # `_handle_ctrl`).
                 if key in self._queues and not self._queues[key].empty():
                     leftover = self._queues[key]
@@ -180,7 +180,7 @@ class Dispatcher:
                     self._tasks[key] = asyncio.create_task(
                         self._topic_loop(key), name=f"topic-{key.slug()}"
                     )
-                    # re-enqueue leftovers na nova queue
+                    # re-enqueue leftovers into the new queue
                     while not leftover.empty():
                         await self._queues[key].put(leftover.get_nowait())
                 else:
@@ -189,20 +189,20 @@ class Dispatcher:
             log.info("topic.ended", topic=key.slug())
 
     async def _run_turn(self, event: dict[str, Any], key: TopicKey, workdir) -> None:
-        """Adquire slot do pool, processa 1 evento, libera.
+        """Acquire a pool slot, process 1 event, release it.
 
-        Posta ack "aguardando slot" se pool cheio. Loga `pool.contention`
-        quando espera ultrapassa `CONTENTION_LOG_THRESHOLD_SEC`.
+        Posts a "waiting for a slot" ack if the pool is full. Logs `pool.contention`
+        when the wait exceeds `CONTENTION_LOG_THRESHOLD_SEC`.
         """
         label = f"topic={key.slug()}"
-        # Se pool cheio antes do acquire, avisa no chat.
-        # Filtro: nao posta ack pra topics internos (`__ask-...`) — poluiria.
+        # If the pool is full before acquire, notify in the chat.
+        # Filter: no ack for internal topics (`__ask-...`) — it would add noise.
         if self.pool.free == 0 and self.broker_client is not None and not key.topic.startswith("__"):
             try:
                 await self.broker_client.send_message(
                     key.stream, key.topic,
-                    f"⏳ Aguardando slot — {self.pool.in_use}/{self.pool.size} em uso. "
-                    f"Processarei este turno assim que liberar.",
+                    f"⏳ Waiting for a slot — {self.pool.in_use}/{self.pool.size} in use. "
+                    f"I'll process this turn as soon as one frees up.",
                 )
             except Exception:
                 log.exception("dispatcher.slot_wait_notify_failed")
@@ -224,13 +224,13 @@ class Dispatcher:
                 log.exception("topic.handler_error", topic=key.slug())
             finally:
                 self._running_handler.discard(key)
-                # D-78: avanca cursor DEPOIS do turno, nao no enqueue.
-                # Garante que msgs enfileiradas + nao processadas (pool cheio
-                # + container cai) sao replayadas no proximo start. Chama mesmo
-                # se handler.handle crashou — consideramos a msg "tentada",
-                # senao fica em loop eterno de replay (claude_runner ja faz
-                # MAX_ATTEMPTS retries internos). Fire-and-forget; broker usa
-                # GREATEST pra nao regredir cursor em chamadas concorrentes.
+                # D-78: advance the cursor AFTER the turn, not on enqueue.
+                # Ensures msgs that were queued but not processed (pool full
+                # + container goes down) are replayed on the next start. Called even
+                # if handler.handle crashed — we consider the msg "attempted",
+                # otherwise it loops forever in replay (claude_runner already does
+                # MAX_ATTEMPTS internal retries). Fire-and-forget; the broker uses
+                # GREATEST so concurrent calls don't move the cursor backwards.
                 if self.broker_client is not None:
                     stream = event.get("display_recipient")
                     msg_id = event.get("id")
@@ -240,8 +240,8 @@ class Dispatcher:
                             mark(stream, msg_id)
 
     async def _handle_ctrl(self, event: dict[str, Any]) -> None:
-        """Processa eventos de controle (ex.: cancel_topic) vindos do canal
-        Postgres `agent_ctrl` via InternalClient."""
+        """Process control events (e.g. cancel_topic) coming from the
+        Postgres `agent_ctrl` channel via InternalClient."""
         ctrl_type = event.get("ctrl_type")
         stream = event.get("display_recipient")
         topic = event.get("subject")
@@ -256,22 +256,22 @@ class Dispatcher:
         log.warning("dispatcher.unknown_ctrl_type", type=ctrl_type, topic=key.slug())
 
     async def _cancel_topic(self, key: TopicKey, silent: bool = False) -> None:
-        """Cancela turn — drena queue, mata proc em execucao, ou reporta no-op.
+        """Cancel a turn — drain the queue, kill the running proc, or report a no-op.
 
-        Fluxo (D-71: branch kill_proc estende pre-existente):
-          - Sem task ativa: nada pra cancelar (mensagem info no chat).
-          - Handler ja rodando E proc registrado: SIGTERM no CLI + fallback
-            SIGKILL apos KILL_TIMEOUT_SEC. Runner volta com error_subtype
-            e emite live_event `run_end` naturalmente.
-          - Handler ja rodando mas SEM proc registrado (pre-spawn ou
-            pos-exit): tarde demais.
-          - Task pendurada em queue.get/pool.acquire: drena queue + cancela
-            task (mensagem confirmacao no chat).
+        Flow (D-71: the kill_proc branch extends the pre-existing one):
+          - No active task: nothing to cancel (info message in the chat).
+          - Handler already running AND proc registered: SIGTERM the CLI + SIGKILL
+            fallback after KILL_TIMEOUT_SEC. The runner returns with error_subtype
+            and emits the `run_end` live_event naturally.
+          - Handler already running but WITHOUT a registered proc (pre-spawn or
+            post-exit): too late.
+          - Task waiting on queue.get/pool.acquire: drain the queue + cancel the
+            task (confirmation message in the chat).
 
-        `silent=True` suprime as mensagens de confirmacao no chat. Usado
-        quando o cancel foi disparado por archive/delete da conv: a conv
-        ja sumiu da tab Active do humano, postar feedback so polui a tab
-        Closed.
+        `silent=True` suppresses the confirmation messages in the chat. Used
+        when the cancel was triggered by archiving/deleting the conv: the conv
+        is already gone from the human's Active tab, so posting feedback only
+        clutters the Closed tab.
         """
         too_late = False
         no_task = False
@@ -286,7 +286,7 @@ class Dispatcher:
                 if killed_proc is None:
                     too_late = True
             else:
-                # Safe pra cancelar: drena queue e cancela task.
+                # Safe to cancel: drain the queue and cancel the task.
                 if queue is not None:
                     drained = 0
                     try:
@@ -298,8 +298,8 @@ class Dispatcher:
                     log.info("dispatcher.cancel.queue_drained", topic=key.slug(), count=drained)
                 task.cancel()
 
-        # SIGTERM fora do lock — o proc.wait() dele vai rodar em paralelo
-        # no loop do runner (que segura o lock do pool, nao do dispatcher).
+        # SIGTERM outside the lock — its proc.wait() runs in parallel
+        # in the runner's loop (which holds the pool lock, not the dispatcher's).
         if killed_proc is not None:
             try:
                 killed_proc.terminate()
@@ -308,24 +308,24 @@ class Dispatcher:
                     topic=key.slug(), pid=killed_proc.pid,
                 )
             except ProcessLookupError:
-                # Proc ja terminou entre o check e o terminate — race normal.
+                # Proc already exited between the check and terminate — normal race.
                 log.info("dispatcher.cancel.noop_raced", topic=key.slug())
                 killed_proc = None
             except Exception:
                 log.exception("dispatcher.cancel.sigterm_failed", topic=key.slug())
             else:
-                # D-72: marca o topic como cancelado pelo humano pra runner
-                # nao tratar o rc=143 como retriable erro externo e auto-resumir.
+                # D-72: mark the topic as cancelled by the human so the runner
+                # doesn't treat rc=143 as a retriable external error and auto-resume.
                 self._user_cancelled.add(key.slug())
-                # Agenda SIGKILL como fallback sem bloquear este handler.
+                # Schedule SIGKILL as a fallback without blocking this handler.
                 asyncio.create_task(self._sigkill_fallback(key, killed_proc))
 
-        # Notificacoes fora do lock pra nao segurar estado.
+        # Notifications outside the lock so we don't hold state.
         if self.broker_client is None:
             return
         if silent:
-            # Cancel disparado por archive/delete: estado interno ja foi
-            # tratado, nao postamos nada na conv (que esta sumindo).
+            # Cancel triggered by archive/delete: internal state was already
+            # handled, we post nothing in the conv (which is going away).
             log.info(
                 "dispatcher.cancel.silent",
                 topic=key.slug(),
@@ -369,15 +369,15 @@ class Dispatcher:
         self, key: TopicKey, proc: asyncio.subprocess.Process,
         timeout_sec: float = 3.0,
     ) -> None:
-        """Se o SIGTERM nao derrubou o proc em `timeout_sec`, manda SIGKILL.
+        """If SIGTERM did not bring the proc down within `timeout_sec`, send SIGKILL.
 
-        Claude CLI geralmente respeita SIGTERM (limpa stream-json + emite
-        `result`), mas sob certos estados (tool_use pendurado em network)
-        pode ficar pendurado. SIGKILL garante liberacao do slot do pool.
+        The Claude CLI usually honors SIGTERM (flushes stream-json + emits
+        `result`), but in some states (tool_use stuck on network)
+        it can hang. SIGKILL guarantees the pool slot is released.
         """
         try:
             await asyncio.wait_for(proc.wait(), timeout=timeout_sec)
-            return  # terminou limpo
+            return  # exited cleanly
         except asyncio.TimeoutError:
             pass
         try:

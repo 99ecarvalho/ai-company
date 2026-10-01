@@ -1,20 +1,20 @@
--- 016: scheduler DB-backed — custom_jobs CRUD + native_overrides por instancia.
+-- 016: DB-backed scheduler — custom_jobs CRUD + per-instance native_overrides.
 --
--- Motivacao. Ate aqui, todo job do scheduler vinha do YAML
+-- Motivation. Until now, every scheduler job came from YAML
 -- (`framework/orchestrator/defaults/schedule.yaml` + `agents/schedule.yaml`).
--- Criar/editar exigia edit + `docker compose restart scheduler`. Native
--- defaults (backup, cleanup, cost_budget_check) e custom (post_message)
--- ficavam misturados no mesmo YAML, sem separacao.
+-- Creating/editing required an edit + `docker compose restart scheduler`. Native
+-- defaults (backup, cleanup, cost_budget_check) and custom ones (post_message)
+-- were mixed in the same YAML, with no separation.
 --
--- Nova modelagem:
---   - `scheduler.custom_jobs`: jobs criados via PWA/MCP. Fonte de verdade
---     pros custom. Hot-reload via pg_notify('scheduler_config_reload').
---   - `scheduler.native_overrides`: override por instancia dos jobs nativos
---     (que continuam com defaults no framework YAML). cron_override=NULL
---     significa "use default"; enabled=false desativa o job em runtime.
+-- New model:
+--   - `scheduler.custom_jobs`: jobs created via PWA/MCP. Source of truth
+--     for custom jobs. Hot-reload via pg_notify('scheduler_config_reload').
+--   - `scheduler.native_overrides`: per-instance override of native jobs
+--     (which keep their defaults in the framework YAML). cron_override=NULL
+--     means "use default"; enabled=false disables the job at runtime.
 --
--- O canal `scheduler_config_reload` eh emitido pelos endpoints de write
--- (scheduler_routes.py) e pelo MCP handler — scheduler LISTEN + reschedule
+-- The `scheduler_config_reload` channel is emitted by the write endpoints
+-- (scheduler_routes.py) and by the MCP handler — scheduler LISTENs + reschedules
 -- via APScheduler.add_job(..., replace_existing=True) / remove_job.
 
 CREATE SCHEMA IF NOT EXISTS scheduler;
