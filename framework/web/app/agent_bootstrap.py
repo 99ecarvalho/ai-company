@@ -1,6 +1,6 @@
 """Auto-bootstrap de containers de agente — onboarding magico.
 
-Garante que `agent-framework-agent-<name>-1` esteja rodando, criando-o a
+Garante que `ai-company-agent-<name>-1` esteja rodando, criando-o a
 partir do `docker-compose.override.yml` quando necessario. Three cases:
 
   1. Container ja running -> noop
@@ -28,14 +28,14 @@ OVERRIDE_PATH = Path("/workspace/docker-compose.override.yml")
 
 
 def _compose_project() -> str:
-    """Project name do compose stack. Default `agent-framework` (framework
+    """Project name do compose stack. Default `ai-company` (framework
     default), override pelo .env da instancia (`COMPOSE_PROJECT_NAME=...`)."""
     import os
     env = _load_dot_env()
     return (
         os.environ.get("COMPOSE_PROJECT_NAME")
         or env.get("COMPOSE_PROJECT_NAME")
-        or "agent-framework"
+        or "ai-company"
     )
 
 
@@ -191,7 +191,7 @@ def _expand_env_vars(s: str) -> str:
 
 
 async def ensure_agent_running(agent: str, timeout: float = 45.0) -> None:
-    """Garantee que agent-framework-agent-<name>-1 esteja running. Idempotent.
+    """Garantee que ai-company-agent-<name>-1 esteja running. Idempotent.
 
     Caller usa antes de docker exec'ar no container (ex: hire generation,
     onboard propose-agents). Levanta RuntimeError/TimeoutError em falha.

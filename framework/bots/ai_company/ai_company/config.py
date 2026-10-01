@@ -38,7 +38,17 @@ class BrokerConfig:
 
 # Tools default: apenas a tool ask_human do MCP. Agentes que precisam de file
 # I/O devem sobrescrever em agent.yaml com allowed_tools: [Read, Write, Edit, ...].
-DEFAULT_ALLOWED_TOOLS: list[str] = ["mcp__agent_framework__ask_human"]
+DEFAULT_ALLOWED_TOOLS: list[str] = ["mcp__ai_company__ask_human"]
+
+# The MCP server was called agent_framework before the rename; accept tool
+# names from older agent.yaml files.
+LEGACY_MCP_PREFIX = "mcp__agent_framework__"
+
+
+def _normalize_tool(name: str) -> str:
+    if name.startswith(LEGACY_MCP_PREFIX):
+        return "mcp__ai_company__" + name[len(LEGACY_MCP_PREFIX):]
+    return name
 
 
 @dataclass(frozen=True)
@@ -78,7 +88,7 @@ class AgentConfig:
                 data = loaded
 
         tools = data.get("allowed_tools")
-        allowed_tools = list(tools) if tools else list(DEFAULT_ALLOWED_TOOLS)
+        allowed_tools = [_normalize_tool(t) for t in tools] if tools else list(DEFAULT_ALLOWED_TOOLS)
 
         # model + effort + thinking
         model = data.get("model") or None

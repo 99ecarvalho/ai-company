@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-from agent_framework.claude_runner import ClaudeRunner
-from agent_framework.internal_client import TopicKey
+from ai_company.claude_runner import ClaudeRunner
+from ai_company.internal_client import TopicKey
 
 
 class _FakeConn:

@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-framework"
+name = "ai-company"
 version = "0.1.0"
 description = "Framework compartilhado por todos os agentes Claude Code orquestrados."
 requires-python = ">=3.11"
@@ -25,7 +25,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent_framework*"]
+include = ["ai_company*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]

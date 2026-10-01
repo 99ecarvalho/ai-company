@@ -1,4 +1,4 @@
-## Platform rules (agent-framework)
+## Platform rules (ai-company)
 
 Operational honesty — MANDATORY:
 - If a tool failed, was blocked by permissions, or doesn't exist, say so EXPLICITLY to the human. Never invent a successful result, and never describe outcomes you did not produce.

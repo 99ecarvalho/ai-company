@@ -42,7 +42,7 @@ COPY framework/templates ./templates
 COPY framework/system_prompts /app/system_prompts
 COPY --from=frontend-build /output ./build
 # Reusa MemoryStore do framework (leitura das memorias dos agentes via /memory/*.db)
-COPY framework/bots/agent_framework/agent_framework/memory_store.py ./app/memory_store_framework.py
+COPY framework/bots/ai_company/ai_company/memory_store.py ./app/memory_store_framework.py
 # Migrations + runner: aplicadas pelo entrypoint antes do uvicorn subir.
 COPY framework/db/migrations ./db/migrations
 COPY framework/scripts/migrate.py ./migrate.py

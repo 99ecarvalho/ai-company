@@ -5,7 +5,7 @@ FROM node:20-slim
 ARG DEBIAN_FRONTEND=noninteractive
 
 # Dependencias de sistema:
-# - python3 + venv: runtime do agent_framework (Fase 1+)
+# - python3 + venv: runtime do ai_company (Fase 1+)
 # - git + openssh-client: pro dev fazer operacoes em repos/ (Fase 4+)
 # - gosu: drop-privilege do root (entrypoint) para node (user final)
 # - tzdata: respeitar TZ
@@ -82,17 +82,17 @@ RUN install -d /usr/share/keyrings \
 # Claude Code CLI (global, disponivel como `claude`)
 RUN npm install -g @anthropic-ai/claude-code
 
-# Python venv para o agent_framework. PATH coloca venv na frente.
+# Python venv para o ai_company. PATH coloca venv na frente.
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Deps do agent_framework (cached layer)
-COPY framework/bots/agent_framework/requirements.txt /tmp/requirements.txt
+# Deps do ai_company (cached layer)
+COPY framework/bots/ai_company/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Codigo do framework
-COPY framework/bots/agent_framework /app/agent_framework_src
-RUN pip install --no-cache-dir /app/agent_framework_src
+COPY framework/bots/ai_company /app/ai_company_src
+RUN pip install --no-cache-dir /app/ai_company_src
 
 # Framework-fixed system prompt sections (read-only; not editable per-instance).
 COPY framework/system_prompts /app/system_prompts
@@ -111,4 +111,4 @@ RUN chmod +x /app/entrypoint.sh
 RUN mkdir -p /home/node/.claude && chown -R node:node /home/node/.claude
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["python3", "-m", "agent_framework.main"]
+CMD ["python3", "-m", "ai_company.main"]

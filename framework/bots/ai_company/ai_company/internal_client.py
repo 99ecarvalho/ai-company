@@ -112,7 +112,7 @@ class InternalClient:
             me = await r.json()
             self._profile = {
                 "user_id": me.get("user_id"),
-                "email": me.get("username") + "@internal.agent-framework",
+                "email": me.get("username") + "@internal.ai-company",
                 "full_name": me.get("username"),
                 "username": me.get("username"),
             }
@@ -306,7 +306,7 @@ class InternalClient:
             "type": "stream",
             "sender_id": m["sender_id"],
             "sender_full_name": m["sender_username"],
-            "sender_email": f"{m['sender_username']}@internal.agent-framework",
+            "sender_email": f"{m['sender_username']}@internal.ai-company",
             "sender_is_bot": False,
             "subject": m["topic"],
             "display_recipient": m["stream"],

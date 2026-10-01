@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_framework.memory_store import MemoryStore
+from ai_company.memory_store import MemoryStore
 
 
 def _store_without_pool() -> MemoryStore:

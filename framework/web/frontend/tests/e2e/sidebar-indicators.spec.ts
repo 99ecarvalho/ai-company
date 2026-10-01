@@ -16,14 +16,14 @@ function seedPendingAsk(convDbId: number): void {
     `) ON CONFLICT (conversation_id) DO UPDATE SET ` +
     `  resolved_at=NULL, question=EXCLUDED.question`;
   execSync(
-    `docker compose exec -T postgres psql -U agent_framework -d agent_framework -c "${sql.replace(/"/g, '\\"')}"`,
+    `docker compose exec -T postgres psql -U ${process.env.POSTGRES_USER ?? 'ai_company'} -d ${process.env.POSTGRES_DB ?? 'ai_company'} -c "${sql.replace(/"/g, '\\"')}"`,
     { stdio: 'pipe' }
   );
 }
 
 function clearPendingAsk(convDbId: number): void {
   execSync(
-    `docker compose exec -T postgres psql -U agent_framework -d agent_framework -c "DELETE FROM messaging.pending_asks WHERE conversation_id=${convDbId}"`,
+    `docker compose exec -T postgres psql -U ${process.env.POSTGRES_USER ?? 'ai_company'} -d ${process.env.POSTGRES_DB ?? 'ai_company'} -c "DELETE FROM messaging.pending_asks WHERE conversation_id=${convDbId}"`,
     { stdio: 'pipe' }
   );
 }

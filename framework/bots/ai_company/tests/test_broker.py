@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_framework.mcp.broker import McpBroker
-from agent_framework.internal_client import TopicKey
+from ai_company.mcp.broker import McpBroker
+from ai_company.internal_client import TopicKey
 
 
 @pytest.fixture

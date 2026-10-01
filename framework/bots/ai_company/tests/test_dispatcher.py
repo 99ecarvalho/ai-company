@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from agent_framework.dispatcher import Dispatcher
-from agent_framework.internal_client import TopicKey
-from agent_framework.session_manager import SessionManager
-from agent_framework.worker_pool import WorkerPool
+from ai_company.dispatcher import Dispatcher
+from ai_company.internal_client import TopicKey
+from ai_company.session_manager import SessionManager
+from ai_company.worker_pool import WorkerPool
 
 
 class StubHandler:

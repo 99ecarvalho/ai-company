@@ -1,7 +1,7 @@
-# agent-framework — stack base.
+# ai-company — stack base.
 # Messaging vive em Postgres + broker HTTP no 'web' (sem broker externo).
 
-name: agent-framework
+name: ai-company
 
 services:
 
@@ -11,8 +11,8 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-agent_framework}
-      POSTGRES_USER: ${POSTGRES_USER:-agent_framework}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_company}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_company}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
@@ -20,7 +20,7 @@ services:
       # Schema agora vem via framework/db/migrations/, aplicadas pelo entrypoint
       # do web container antes de subir o uvicorn. Ver framework/scripts/migrate.py.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent_framework}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_company}"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -33,7 +33,7 @@ services:
     build:
       context: .
       dockerfile: framework/web/Dockerfile
-    image: agent-framework/web:0.1.0
+    image: ai-company/web:0.1.0
     restart: unless-stopped
     depends_on:
       postgres:
@@ -41,7 +41,7 @@ services:
     ports:
       - "${WEB_PORT:-9090}:8090"
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}
+      DATABASE_URL: postgres://${POSTGRES_USER:-ai_company}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_company}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN}
       SCHEDULER_TOKEN: ${SCHEDULER_TOKEN}
@@ -68,7 +68,7 @@ services:
       # COMPOSE_PROJECT_NAME automaticamente em alguns contextos, mas
       # passar explicito garante que o web container sempre veja o nome
       # correto, mesmo quando customizado em .env.
-      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-agent-framework}
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-ai-company}
       # Hire/onboard: slug do agente que hospeda claude CLI pra geracao
       # de drafts. Container name eh derivado dinamicamente do slug +
       # COMPOSE_PROJECT_NAME (cobre instancias com project name custom).
@@ -84,7 +84,7 @@ services:
       PWA_DESCRIPTION: ${PWA_DESCRIPTION:-Multi-agent orchestration}
       PWA_THEME_COLOR: ${PWA_THEME_COLOR:-#0b1220}
       PWA_BACKGROUND_COLOR: ${PWA_BACKGROUND_COLOR:-#0b1220}
-      PWA_ID: ${PWA_ID:-/agent-framework}
+      PWA_ID: ${PWA_ID:-/ai-company}
       PWA_LANG: ${PWA_LANG:-en}
       PWA_START_URL: ${PWA_START_URL:-/}
       PWA_ORIENTATION: ${PWA_ORIENTATION:-any}
@@ -110,7 +110,7 @@ services:
 
   # --- Orchestrator reactor: consome orchestrator.events + posta handoffs ---
   orchestrator-reactor:
-    image: agent-framework/agent:0.1.0
+    image: ai-company/agent:0.1.0
     build:
       context: .
       dockerfile: framework/docker/agent.Dockerfile
@@ -121,7 +121,7 @@ services:
       web:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}
+      DATABASE_URL: postgres://${POSTGRES_USER:-ai_company}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_company}
       BROKER_URL: http://web:8090
       BROKER_TOKEN: ${ORCHESTRATOR_TOKEN}
       LOG_LEVEL: INFO
@@ -144,14 +144,14 @@ services:
     build:
       context: ./framework/watchdog
       dockerfile: Dockerfile
-    image: agent-framework/watchdog:0.1.0
+    image: ai-company/watchdog:0.1.0
     restart: unless-stopped
     environment:
       HEARTBEAT_DIR: /heartbeats
       POLL_INTERVAL_SEC: "60"
       STALE_THRESHOLD_SEC: "180"
       RESTART_COOLDOWN_SEC: "600"
-      CONTAINER_PREFIX: "agent-framework-agent-"
+      CONTAINER_PREFIX: "${COMPOSE_PROJECT_NAME:-ai-company}-agent-"
       CONTAINER_SUFFIX: "-1"
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
@@ -167,7 +167,7 @@ services:
   # --- Hot reload (DEV ONLY): watcher de CLAUDE.md/agent.yaml -> docker restart
   # Habilita com: docker compose --profile dev up -d hot-reload
   hot-reload:
-    image: agent-framework/watchdog:0.1.0
+    image: ai-company/watchdog:0.1.0
     build:
       context: ./framework/watchdog
       dockerfile: Dockerfile
@@ -177,7 +177,7 @@ services:
       AGENTS_DIR: /workspace/agents
       POLL_SEC: "5"
       COOLDOWN_SEC: "10"
-      CONTAINER_PREFIX: "agent-framework-agent-"
+      CONTAINER_PREFIX: "${COMPOSE_PROJECT_NAME:-ai-company}-agent-"
       CONTAINER_SUFFIX: "-1"
       WATCH_FILES: "CLAUDE.md,agent.yaml"
       TZ: ${TZ:-America/Sao_Paulo}
@@ -188,7 +188,7 @@ services:
 
   # --- Scheduler: cron jobs (APScheduler) ---
   scheduler:
-    image: agent-framework/agent:0.1.0
+    image: ai-company/agent:0.1.0
     build:
       context: .
       dockerfile: framework/docker/agent.Dockerfile
@@ -199,7 +199,7 @@ services:
       web:
         condition: service_started
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}
+      DATABASE_URL: postgres://${POSTGRES_USER:-ai_company}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_company}
       BROKER_URL: http://web:8090
       BROKER_TOKEN: ${SCHEDULER_TOKEN}
       LOG_LEVEL: INFO
@@ -227,7 +227,7 @@ services:
     build:
       context: ./external/ai-tts
       dockerfile: Dockerfile
-    image: agent-framework/tts:latest
+    image: ai-company/tts:latest
     restart: unless-stopped
     environment:
       DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-pt_BR-faber-medium}
@@ -245,7 +245,7 @@ services:
     build:
       context: ./external/ai-transcriber
       dockerfile: Dockerfile
-    image: agent-framework/transcriber:latest
+    image: ai-company/transcriber:latest
     restart: unless-stopped
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL:-small}

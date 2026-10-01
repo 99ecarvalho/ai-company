@@ -32,7 +32,7 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 AGENT_UID = int(os.environ.get("AGENT_UID", "1000"))
 AGENT_GID = int(os.environ.get("AGENT_GID", "1000"))
 
-COMMIT_NAME = os.environ.get("GIT_AUTHOR_NAME") or "agent-framework"
+COMMIT_NAME = os.environ.get("GIT_AUTHOR_NAME") or "ai-company"
 COMMIT_EMAIL = os.environ.get("GIT_AUTHOR_EMAIL") or "agents@local"
 
 

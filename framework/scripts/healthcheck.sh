@@ -16,6 +16,8 @@ fi
 AGENTS_DIR="${AGENTS_DIR:-./instance/agents}"
 COMPANY_DIR="${COMPANY_DIR:-./instance/company}"
 REPOS_DIR="${REPOS_DIR:-./instance/repos}"
+PROJECT="${COMPOSE_PROJECT_NAME:-ai-company}"
+WEB_PORT="${WEB_PORT:-9090}"
 
 RED='\033[31m' GREEN='\033[32m' YELLOW='\033[33m' RESET='\033[0m'
 pass() { echo -e "  ${GREEN}✓${RESET} $*"; }
@@ -24,12 +26,12 @@ warn() { echo -e "  ${YELLOW}!${RESET} $*"; }
 
 # Stack base (sempre presente). Agentes vem de instance/agents/agents.yaml.
 EXPECTED_BASE=(
-  agent-framework-postgres-1
-  agent-framework-web-1
-  agent-framework-orchestrator-reactor-1
-  agent-framework-scheduler-1
-  agent-framework-watchdog-1
-  agent-framework-transcriber-1
+  "${PROJECT}-postgres-1"
+  "${PROJECT}-web-1"
+  "${PROJECT}-orchestrator-reactor-1"
+  "${PROJECT}-scheduler-1"
+  "${PROJECT}-watchdog-1"
+  "${PROJECT}-transcriber-1"
 )
 
 echo "==> 1. Containers (stack base)"
@@ -43,7 +45,7 @@ echo "==> 2. Containers (agentes da instance)"
 if [ -f "$AGENTS_DIR/agents.yaml" ]; then
   AGENTS=$(grep -E '^[[:space:]]+- name:' "$AGENTS_DIR/agents.yaml" | sed -E 's/.*name:[[:space:]]*//' | tr -d ' ')
   for a in $AGENTS; do
-    name="agent-framework-agent-${a}-1"
+    name="${PROJECT}-agent-${a}-1"
     if echo "$RUNNING" | grep -q "^${name}$"; then pass "$name"; else fail "$name (nao rodando)"; fi
   done
 else
@@ -52,7 +54,7 @@ fi
 
 echo ""
 echo "==> 3. Web/Postgres health"
-WSTATUS=$(curl -fsS http://localhost:9090/health 2>/dev/null || echo "")
+WSTATUS=$(curl -fsS http://localhost:${WEB_PORT}/health 2>/dev/null || echo "")
 if echo "$WSTATUS" | grep -q '"status":"ok"'; then
   VAPID=$(echo "$WSTATUS" | grep -oE '"vapid_enabled":(true|false)' | cut -d':' -f2)
   DB=$(echo "$WSTATUS" | grep -oE '"db":(true|false)' | cut -d':' -f2)
@@ -75,7 +77,7 @@ fi
 
 echo ""
 echo "==> 5. Streams + users no broker"
-STREAMS=$(curl -fsS http://localhost:9090/api/streams 2>/dev/null | grep -oE '"name":"[^"]+"' | wc -l || echo 0)
+STREAMS=$(curl -fsS http://localhost:${WEB_PORT}/api/streams 2>/dev/null | grep -oE '"name":"[^"]+"' | wc -l || echo 0)
 echo "  $STREAMS stream(s) registrada(s)"
 
 echo ""
@@ -88,7 +90,7 @@ echo ""
 echo "==> 7. Tasks em andamento"
 # Tasks vivem em Postgres (schema `tasks`). Consulta direta — sem parse FS.
 TASKS_QUERY="SELECT slug || '|' || status || '|' || COALESCE(current_step,'?') FROM tasks.tasks WHERE status NOT IN ('done','cancelled') ORDER BY updated_at DESC LIMIT 20;"
-TASKS_OUT=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-agent_framework}" -d "${POSTGRES_DB:-agent_framework}" -At -c "$TASKS_QUERY" 2>/dev/null || true)
+TASKS_OUT=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-ai_company}" -d "${POSTGRES_DB:-ai_company}" -At -c "$TASKS_QUERY" 2>/dev/null || true)
 if [ -z "$TASKS_OUT" ]; then
   echo "  0 task(s) ativa(s)"
 else

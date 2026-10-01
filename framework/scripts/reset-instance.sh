@@ -38,6 +38,8 @@ if [ -f .env ]; then
   . .env
   set +a
 fi
+PG_USER="${POSTGRES_USER:-ai_company}"
+PG_DB="${POSTGRES_DB:-ai_company}"
 AGENTS_DIR="${AGENTS_DIR:-./instance/agents}"
 SESSIONS_DIR="${SESSIONS_DIR:-./instance/sessions}"
 
@@ -78,19 +80,19 @@ echo "==> drop + recreate do database"
 docker compose up -d postgres
 # Espera healthy
 for i in $(seq 1 30); do
-  if docker compose exec -T postgres pg_isready -U agent_framework -d agent_framework >/dev/null 2>&1; then
+  if docker compose exec -T postgres pg_isready -U "$PG_USER" -d "$PG_DB" >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
 
-docker compose exec -T postgres psql -U agent_framework -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker compose exec -T postgres psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 -v db="$PG_DB" <<'SQL'
 -- encerra conexoes abertas ao DB alvo
 SELECT pg_terminate_backend(pid)
   FROM pg_stat_activity
- WHERE datname = 'agent_framework' AND pid <> pg_backend_pid();
-DROP DATABASE IF EXISTS agent_framework;
-CREATE DATABASE agent_framework;
+ WHERE datname = :'db' AND pid <> pg_backend_pid();
+DROP DATABASE IF EXISTS :"db";
+CREATE DATABASE :"db";
 SQL
 
 # Migrations: NAO aplicamos manualmente. O container `web` roda

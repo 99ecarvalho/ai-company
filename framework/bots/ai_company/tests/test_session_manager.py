@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_framework.session_manager import SessionManager
-from agent_framework.internal_client import TopicKey
+from ai_company.session_manager import SessionManager
+from ai_company.internal_client import TopicKey
 
 
 @pytest.fixture

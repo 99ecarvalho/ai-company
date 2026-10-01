@@ -49,8 +49,8 @@ shell-%: ## Bash em um serviço (ex: make shell-inbox)
 	docker compose exec $* bash
 
 test: ## Roda testes unitários do framework (pytest dentro do container web)
-	docker cp framework/bots/agent_framework agent-framework-web-1:/tmp/agent_framework_src/
-	docker compose exec -T web bash -c "cd /tmp/agent_framework_src && pip install --quiet -e .[dev] && pytest tests/ -v"
+	docker compose cp framework/bots/ai_company web:/tmp/ai_company_src/
+	docker compose exec -T web bash -c "cd /tmp/ai_company_src && pip install --quiet -e .[dev] && pytest tests/ -v"
 
 test-e2e: ## Roda suite Playwright (sobe agentes com CLAUDE_MOCK=1 + pool grande antes)
 	@echo "==> ativando CLAUDE_MOCK=1 + POOL_SIZE=10 + IDLE_TIMEOUT_SEC=15 (recreate)..."

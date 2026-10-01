@@ -37,7 +37,7 @@ from .workflow import WorkflowManager
 log = get_logger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_NAME = "agent-framework-mcp"
+SERVER_NAME = "ai-company-mcp"
 SERVER_VERSION = "0.1.0"
 
 # Tools que bloqueiam >60s — entregues via SSE pra manter a conexao viva

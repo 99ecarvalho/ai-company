@@ -95,15 +95,15 @@ agents:
       - Edit
       - Glob
       - Grep
-      - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent
-      - mcp__agent_framework__complete_phase    # participates in workflows
-      - mcp__agent_framework__get_task_state
-      - mcp__agent_framework__memory_save
-      - mcp__agent_framework__memory_recall
-      - mcp__agent_framework__memory_list
-      - mcp__agent_framework__memory_edit
-      - mcp__agent_framework__memory_delete
+      - mcp__ai_company__ask_human
+      - mcp__ai_company__ask_agent
+      - mcp__ai_company__complete_phase    # participates in workflows
+      - mcp__ai_company__get_task_state
+      - mcp__ai_company__memory_save
+      - mcp__ai_company__memory_recall
+      - mcp__ai_company__memory_list
+      - mcp__ai_company__memory_edit
+      - mcp__ai_company__memory_delete
 
   # ==== planner: designs the approach before the build ====
   # Appears in: default (plan).
@@ -126,15 +126,15 @@ agents:
       - Edit
       - Glob
       - Grep
-      - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent
-      - mcp__agent_framework__complete_phase
-      - mcp__agent_framework__get_task_state
-      - mcp__agent_framework__memory_save
-      - mcp__agent_framework__memory_recall
-      - mcp__agent_framework__memory_list
-      - mcp__agent_framework__memory_edit
-      - mcp__agent_framework__memory_delete
+      - mcp__ai_company__ask_human
+      - mcp__ai_company__ask_agent
+      - mcp__ai_company__complete_phase
+      - mcp__ai_company__get_task_state
+      - mcp__ai_company__memory_save
+      - mcp__ai_company__memory_recall
+      - mcp__ai_company__memory_list
+      - mcp__ai_company__memory_edit
+      - mcp__ai_company__memory_delete
 
   # ==== executor: implements in code (Bash + worktrees) ====
   # Appears in: default (build — agent omitted from the workflow,
@@ -167,18 +167,18 @@ agents:
       - Glob
       - Grep
       - Bash
-      - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent
-      - mcp__agent_framework__complete_phase
-      - mcp__agent_framework__get_task_state
-      - mcp__agent_framework__init_repo         # creates a brand-new repo (via web, D-115 safe)
-      - mcp__agent_framework__create_worktree   # isolates the task in a worktree
-      - mcp__agent_framework__cleanup_worktrees # cleans up at the end
-      - mcp__agent_framework__memory_save
-      - mcp__agent_framework__memory_recall
-      - mcp__agent_framework__memory_list
-      - mcp__agent_framework__memory_edit
-      - mcp__agent_framework__memory_delete
+      - mcp__ai_company__ask_human
+      - mcp__ai_company__ask_agent
+      - mcp__ai_company__complete_phase
+      - mcp__ai_company__get_task_state
+      - mcp__ai_company__init_repo         # creates a brand-new repo (via web, D-115 safe)
+      - mcp__ai_company__create_worktree   # isolates the task in a worktree
+      - mcp__ai_company__cleanup_worktrees # cleans up at the end
+      - mcp__ai_company__memory_save
+      - mcp__ai_company__memory_recall
+      - mcp__ai_company__memory_list
+      - mcp__ai_company__memory_edit
+      - mcp__ai_company__memory_delete
     # hooks:                              # (optional) per-agent hooks, concatenated with hooks_defaults
     #   PreToolUse:
     #     - matcher: "Bash"
@@ -204,15 +204,15 @@ agents:
       - Glob
       - Grep
       - Bash                           # runs tests/lint to verify
-      - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent
-      - mcp__agent_framework__complete_phase
-      - mcp__agent_framework__get_task_state
-      - mcp__agent_framework__memory_save
-      - mcp__agent_framework__memory_recall
-      - mcp__agent_framework__memory_list
-      - mcp__agent_framework__memory_edit
-      - mcp__agent_framework__memory_delete
+      - mcp__ai_company__ask_human
+      - mcp__ai_company__ask_agent
+      - mcp__ai_company__complete_phase
+      - mcp__ai_company__get_task_state
+      - mcp__ai_company__memory_save
+      - mcp__ai_company__memory_recall
+      - mcp__ai_company__memory_list
+      - mcp__ai_company__memory_edit
+      - mcp__ai_company__memory_delete
 
   # ==== researcher: investigation without code ====
   # Appears in: research (investigate).
@@ -233,15 +233,15 @@ agents:
       - Grep
       - WebFetch                       # search external docs
       - WebSearch
-      - mcp__agent_framework__ask_human
-      - mcp__agent_framework__ask_agent
-      - mcp__agent_framework__complete_phase
-      - mcp__agent_framework__get_task_state
-      - mcp__agent_framework__memory_save
-      - mcp__agent_framework__memory_recall
-      - mcp__agent_framework__memory_list
-      - mcp__agent_framework__memory_edit
-      - mcp__agent_framework__memory_delete
+      - mcp__ai_company__ask_human
+      - mcp__ai_company__ask_agent
+      - mcp__ai_company__complete_phase
+      - mcp__ai_company__get_task_state
+      - mcp__ai_company__memory_save
+      - mcp__ai_company__memory_recall
+      - mcp__ai_company__memory_list
+      - mcp__ai_company__memory_edit
+      - mcp__ai_company__memory_delete
 
 # === SCHEMA REFERENCE ===
 #
@@ -253,7 +253,7 @@ agents:
 # idle_timeout_sec             seconds without messages before releasing the slot (default 900).
 # write_access                 [list] subset of {company, orchestrator, repos}.
 # read_access                  [list] subset of {company, orchestrator, repos}.
-# allowed_tools                [list] always include mcp__agent_framework__ask_human.
+# allowed_tools                [list] always include mcp__ai_company__ask_human.
 #                              Include complete_phase if the agent participates in workflows.
 #                              Include memory_save/recall/list/edit/delete to use
 #                              persistent memory (edit/delete let you fix or remove

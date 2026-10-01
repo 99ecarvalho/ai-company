@@ -88,13 +88,13 @@ entry:
   ("opus" pra raciocinio pesado; "haiku" pra tarefas simples/rapidas/baratas).
 - effort: OMITA por default. Use "high" pra papeis que exigem raciocinio profundo
   (planejador, revisor); "low" pra tarefas mecanicas/repetitivas (captura simples).
-- allowed_tools: inclua SEMPRE "mcp__agent_framework__ask_human" e as 3 de memoria:
-  "mcp__agent_framework__memory_save", "mcp__agent_framework__memory_recall", "mcp__agent_framework__memory_list".
-  Se participa de workflow multi-agente: inclua "mcp__agent_framework__complete_phase".
+- allowed_tools: inclua SEMPRE "mcp__ai_company__ask_human" e as 3 de memoria:
+  "mcp__ai_company__memory_save", "mcp__ai_company__memory_recall", "mcp__ai_company__memory_list".
+  Se participa de workflow multi-agente: inclua "mcp__ai_company__complete_phase".
   Se precisa ler/editar arquivos: "Read", "Write", "Edit", "Glob", "Grep".
   Se precisa rodar comandos: "Bash".
   Se precisa buscar na web: "WebFetch", "WebSearch".
-  Considere "mcp__agent_framework__ask_agent" se o papel provavelmente precisa consultar outro agente.
+  Considere "mcp__ai_company__ask_agent" se o papel provavelmente precisa consultar outro agente.
 
 claude_md:
 - Portugues brasileiro.

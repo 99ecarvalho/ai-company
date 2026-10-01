@@ -67,7 +67,9 @@ REPOS_DIR = _env_path("REPOS_DIR", "instance/repos")  # D-115: enumerar subdirs 
 AGENTS_YAML = AGENTS_DIR / "agents.yaml"
 
 VALID_MOUNTS = {"company", "orchestrator", "repos"}
-AGENT_IMAGE = "agent-framework/agent:0.1.0"
+MCP_PREFIX = "mcp__ai_company__"
+LEGACY_MCP_PREFIX = "mcp__agent_framework__"
+AGENT_IMAGE = "ai-company/agent:0.1.0"
 
 NAME_MAX_LEN = 31  # 1 inicial + ate 30 subsequentes. Cap generoso pra DNS/stream.
 NAME_RE = re.compile(rf"^[a-z][a-z0-9-]{{0,{NAME_MAX_LEN - 1}}}$")
@@ -98,7 +100,7 @@ MCP_CAPABILITIES: dict[str, dict] = {
     "playwright": {
         "server": {"type": "http", "url": "http://playwright-mcp:8931/mcp"},
         "service": {
-            "image": "agent-framework/playwright-mcp:0.1.0",
+            "image": "ai-company/playwright-mcp:0.1.0",
             "build": {
                 "context": ".",
                 "dockerfile": "framework/docker/playwright-mcp.Dockerfile",
@@ -634,7 +636,7 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
             "AGENT_NAME": name,
             "BROKER_URL": "http://web:8090",
             "BROKER_TOKEN": f"${{AGENT_{upper}_TOKEN}}",
-            "DATABASE_URL": "postgres://${POSTGRES_USER:-agent_framework}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_framework}",
+            "DATABASE_URL": "postgres://${POSTGRES_USER:-ai_company}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_company}",
             "LOG_LEVEL": "INFO",
             "TRANSCRIBER_URL": "http://transcriber:8000",
             "TRANSCRIBER_LANGUAGE": "${TRANSCRIBER_LANGUAGE:-}",
@@ -654,7 +656,7 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
             "GITLAB_TOKEN": "${GITLAB_TOKEN:-}",
             "GITLAB_HOST": "${GITLAB_HOST:-}",
             "GH_TOKEN": "${GH_TOKEN:-}",
-            "GIT_AUTHOR_NAME": "${GIT_AUTHOR_NAME:-agent-framework}",
+            "GIT_AUTHOR_NAME": "${GIT_AUTHOR_NAME:-ai-company}",
             "GIT_AUTHOR_EMAIL": "${GIT_AUTHOR_EMAIL:-agents@local}",
             # glab lê GITLAB_TOKEN por padrão, mas também aceita GLAB_TOKEN.
             # gh aceita GH_TOKEN diretamente. Nada mais a configurar no runtime.
@@ -812,7 +814,7 @@ def upper_env_prefix(name: str) -> str:
 def ensure_user_and_subs(client: BrokerAdmin, agent: dict, env: dict[str, str]) -> tuple[str, bool]:
     """Cria/atualiza user (kind=bot) + subscriptions. Retorna (api_token, rotated)."""
     name = agent["name"]
-    bot_email = f"{name}-bot@internal.agent-framework"
+    bot_email = f"{name}-bot@internal.ai-company"
     resp = client.upsert_user(
         email=bot_email,
         username=f"{name}-bot",
@@ -979,7 +981,16 @@ def main() -> int:
         log(f"  removed legacy {shown} (platform.md is now framework-fixed)", "ok")
 
     log("Parseando agents.yaml", "step")
-    data = yaml.safe_load(AGENTS_YAML.read_text(encoding="utf-8"))
+    agents_text = AGENTS_YAML.read_text(encoding="utf-8")
+    if LEGACY_MCP_PREFIX in agents_text:
+        # Pre-rename configs: the MCP server used to be called agent_framework.
+        agents_text = agents_text.replace(LEGACY_MCP_PREFIX, MCP_PREFIX)
+        log(
+            f"agents.yaml still uses {LEGACY_MCP_PREFIX}* — treating it as {MCP_PREFIX}*. "
+            f"Update the file: sed -i 's/{LEGACY_MCP_PREFIX}/{MCP_PREFIX}/g' {AGENTS_YAML}",
+            "warn",
+        )
+    data = yaml.safe_load(agents_text)
     agents, hooks_defaults, capability_instances = validate_schema(data)
     log(f"{len(agents)} agente(s) na config: {[a['name'] for a in agents]}", "ok")
     if hooks_defaults:

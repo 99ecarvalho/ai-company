@@ -202,7 +202,7 @@
   <div class="mx-auto flex max-w-3xl flex-col gap-6">
     <header class="flex items-center gap-3">
       <Sparkles class="h-6 w-6 text-accent" />
-      <h1 class="text-xl font-semibold">Welcome to agent-framework</h1>
+      <h1 class="text-xl font-semibold">Welcome to ai-company</h1>
     </header>
 
     <nav class="flex flex-wrap gap-2 text-xs">

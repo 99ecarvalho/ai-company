@@ -55,8 +55,8 @@ cat >> "$AGENTS_YAML" <<EOF
       - Edit
       - Glob
       - Grep
-      - mcp__agent_framework__ask_human
-      - mcp__agent_framework__complete_phase
+      - mcp__ai_company__ask_human
+      - mcp__ai_company__complete_phase
 EOF
 
 echo "✓ entry '$NAME' adicionada em $AGENTS_YAML"

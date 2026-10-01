@@ -6,14 +6,14 @@ Periodicamente (a cada POLL_INTERVAL_SEC), lista arquivos de heartbeat em
 Se stale E nao esta em cooldown, restarta o container correspondente via
 Docker SDK (/var/run/docker.sock).
 
-Container name convention: agent-framework-agent-<name>-1
+Container name convention: ai-company-agent-<name>-1
 
 Env vars:
   HEARTBEAT_DIR          default /heartbeats
   POLL_INTERVAL_SEC      default 60
   STALE_THRESHOLD_SEC    default 180
   RESTART_COOLDOWN_SEC   default 600   (nao restarta mesmo agent por X segundos depois de restart)
-  CONTAINER_PREFIX       default agent-framework-agent-
+  CONTAINER_PREFIX       default ai-company-agent-
   CONTAINER_SUFFIX       default -1
   DRY_RUN                default ""    (setar a "1" pra so logar, nao restartar)
 """
@@ -32,7 +32,7 @@ HEARTBEAT_DIR = Path(os.environ.get("HEARTBEAT_DIR", "/heartbeats"))
 POLL_INTERVAL_SEC = float(os.environ.get("POLL_INTERVAL_SEC", "60"))
 STALE_THRESHOLD_SEC = float(os.environ.get("STALE_THRESHOLD_SEC", "180"))
 RESTART_COOLDOWN_SEC = float(os.environ.get("RESTART_COOLDOWN_SEC", "600"))
-CONTAINER_PREFIX = os.environ.get("CONTAINER_PREFIX", "agent-framework-agent-")
+CONTAINER_PREFIX = os.environ.get("CONTAINER_PREFIX", "ai-company-agent-")
 CONTAINER_SUFFIX = os.environ.get("CONTAINER_SUFFIX", "-1")
 DRY_RUN = bool(os.environ.get("DRY_RUN"))
 HEALTH_PORT = int(os.environ.get("HEALTH_PORT", "8812"))

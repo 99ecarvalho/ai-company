@@ -1,4 +1,4 @@
-# agent-framework — Empresa virtual com agentes Claude Code
+# ai-company — Empresa virtual com agentes Claude Code
 
 Framework self-hosted onde você define "funcionários" (agentes Claude Code)
 em um único YAML, e o sistema cuida do resto: messaging interno (Postgres +
@@ -26,8 +26,8 @@ e roda `make reconcile`.
 ## Instalar
 
 ```bash
-git clone <repo-url> agent-framework
-cd agent-framework
+git clone <repo-url> ai-company
+cd ai-company
 make install
 ```
 
@@ -44,7 +44,7 @@ Edite `.env` antes de rodar `make install` (ou copie de
 `framework/examples/.env.example`) com:
 
 ```
-COMPOSE_PROJECT_NAME=company-agents-<empresa>
+COMPOSE_PROJECT_NAME=ai-company-<empresa>
 WEB_PORT=9091
 ```
 
@@ -144,8 +144,8 @@ Ver [framework/examples/.env.example](framework/examples/.env.example).
 
 | Variável | Default | Descrição |
 |---|---|---|
-| `POSTGRES_DB` | `agent_framework` | Nome do database. |
-| `POSTGRES_USER` | `agent_framework` | Usuário do Postgres. |
+| `POSTGRES_DB` | `ai_company` | Nome do database. |
+| `POSTGRES_USER` | `ai_company` | Usuário do Postgres. |
 | `POSTGRES_PASSWORD` | _(gerado pelo bootstrap)_ | Senha. |
 
 ### PWA / auth
@@ -183,7 +183,7 @@ GPU é **opt-in** via `docker-compose.gpu.yml` — adicione `COMPOSE_FILE=docker
 | Variável | Default | Descrição |
 |---|---|---|
 | `TZ` | `America/Sao_Paulo` | Timezone aplicado a todos os containers. |
-| `COMPOSE_PROJECT_NAME` | `company-agents` | Namespace de containers/volumes/redes. **Único por instância no mesmo host.** |
+| `COMPOSE_PROJECT_NAME` | `ai-company` | Namespace de containers/volumes/redes. **Único por instância no mesmo host.** |
 | `COMPOSE_PROFILES` | _(vazio)_ | Setar `tunnel` pra subir cloudflared automático em todo `compose up`. |
 | `DOCKER_CONFIG` | _(vazio = `~/.docker`)_ | Aponte pra `./docker/` se quiser credenciais isoladas (BYOI com registry privado). |
 
@@ -239,7 +239,7 @@ Injetadas em todos os agentes pelo reconcile; agentes consultivos simplesmente n
 | `GITLAB_TOKEN` | _(vazio)_ | PAT com scope `api` + `write_repository`. |
 | `GITLAB_HOST` | _(vazio = gitlab.com)_ | Self-hosted: `gitlab.empresa.com`. |
 | `GH_TOKEN` | _(vazio)_ | PAT GitHub com scope `repo`. |
-| `GIT_AUTHOR_NAME` | `agent-framework` | Identidade nos commits criados pelos agentes. |
+| `GIT_AUTHOR_NAME` | `ai-company` | Identidade nos commits criados pelos agentes. |
 | `GIT_AUTHOR_EMAIL` | `agents@local` | Idem. |
 
 ### PWA manifest
@@ -253,7 +253,7 @@ Lido em runtime; mudar requer `docker compose restart web` (sem rebuild).
 | `PWA_DESCRIPTION` | `Multi-agent orchestration` | Description. |
 | `PWA_THEME_COLOR` | `#0b1220` | Cor da status bar mobile. |
 | `PWA_BACKGROUND_COLOR` | `#0b1220` | Cor do splash screen. |
-| `PWA_ID` | `/agent-framework` | ID único pro browser distinguir instâncias. |
+| `PWA_ID` | `/ai-company` | ID único pro browser distinguir instâncias. |
 | `PWA_LANG` | `en` | `pt-BR`, `en`, etc. |
 | `PWA_START_URL` | `/` | Rota inicial ao abrir o PWA instalado. |
 | `PWA_ORIENTATION` | `any` | `any`/`portrait`/`landscape`/`portrait-primary`/etc. Só efeito em standalone. |
@@ -608,7 +608,7 @@ Mudanças via PWA aplicam no **próximo spawn** do agente (sem rebuild).
 ## Tools MCP do framework
 
 Todo agente roda um servidor MCP **in-process** que expõe as tools abaixo
-sob o prefixo `mcp__agent_framework__*`. Cada tool aparece pro agente como
+sob o prefixo `mcp__ai_company__*`. Cada tool aparece pro agente como
 uma function call do Claude — habilitar = listar em `allowed_tools` no
 `agents.yaml` (ou herdar do default da imagem). Tools de **capability**
 (playwright/sentry/mysql) são separadas e descritas em [Estendendo agentes](#estendendo-agentes-além-do-básico).
@@ -732,7 +732,7 @@ O entrypoint aplica. `make migrate-status` lista aplicadas/pendentes.
 ## Estrutura do projeto
 
 ```
-agent-framework/
+ai-company/
 ├── framework/          # CÓDIGO tracked
 │   ├── bots/           # runner dos agentes (Python asyncio + MCP)
 │   ├── web/            # FastAPI + SvelteKit

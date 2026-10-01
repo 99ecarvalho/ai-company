@@ -98,7 +98,7 @@ async def _bootstrap_system_bot():
     await db.execute(
         """
         INSERT INTO messaging.users (email, username, full_name, kind, agent_name, is_admin)
-        VALUES ('system-bot@internal.agent-framework', 'system-bot', 'System', 'bot', NULL, true)
+        VALUES ('system-bot@internal.ai-company', 'system-bot', 'System', 'bot', NULL, true)
         ON CONFLICT (email) DO UPDATE SET
             is_admin = true,
             agent_name = NULL
@@ -250,7 +250,7 @@ async def lifespan(app: FastAPI):
     log.info("web.shutdown")
 
 
-app = FastAPI(title="agent-framework web", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="ai-company web", version="0.2.0", lifespan=lifespan)
 app.include_router(broker_router)
 app.include_router(files_router)
 app.include_router(scheduler_routes_router)
@@ -2735,7 +2735,7 @@ async def manifest():
     instancia configure nome/cor/etc sem rebuild da imagem. Defaults
     genericos pra funcionar fora da caixa."""
     body = {
-        "id": os.environ.get("PWA_ID", "/agent-framework"),
+        "id": os.environ.get("PWA_ID", "/ai-company"),
         "name": os.environ.get("PWA_NAME", "Agents"),
         "short_name": os.environ.get("PWA_SHORT_NAME", "Agents"),
         "description": os.environ.get(
@@ -4832,11 +4832,11 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
             f"    memory: true\n"
             f"    allowed_tools:\n"
             f"      - Read\n      - Write\n      - Edit\n"
-            f"      - mcp__agent_framework__ask_human\n"
-            f"      - mcp__agent_framework__ask_agent\n"
-            f"      - mcp__agent_framework__memory_save\n"
-            f"      - mcp__agent_framework__memory_recall\n"
-            f"      - mcp__agent_framework__memory_list\n"
+            f"      - mcp__ai_company__ask_human\n"
+            f"      - mcp__ai_company__ask_agent\n"
+            f"      - mcp__ai_company__memory_save\n"
+            f"      - mcp__ai_company__memory_recall\n"
+            f"      - mcp__ai_company__memory_list\n"
         )
         try:
             await _hire.apply_hire({

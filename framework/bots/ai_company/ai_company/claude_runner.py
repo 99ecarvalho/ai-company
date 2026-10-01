@@ -33,7 +33,7 @@ log = get_logger(__name__)
 MENTION_RE = re.compile(r"@\*\*[^*]+\*\*\s*")
 
 # Nome do servidor MCP no --mcp-config (claude usa isso como namespace de tools)
-MCP_SERVER_NAME = "agent_framework"
+MCP_SERVER_NAME = "ai_company"
 
 # rc que indica kill externo (SIGKILL=137, SIGTERM=143). Retriable.
 RETRIABLE_RC = {137, 143}

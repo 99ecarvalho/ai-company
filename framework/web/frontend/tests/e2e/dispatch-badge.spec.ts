@@ -35,9 +35,9 @@ test.describe('LiveEventLine friendly names + sidebar hierarchy', () => {
       topic: parentTopic,
       agent: askerAgent,
       kind: 'tool_use',
-      summary: 'mcp__agent_framework__ask_agent',
+      summary: 'mcp__ai_company__ask_agent',
       data: {
-        tool: 'mcp__agent_framework__ask_agent',
+        tool: 'mcp__ai_company__ask_agent',
         input: JSON.stringify({
           target_agent: targetAgent,
           question: 'how does the pricing table index work',
@@ -79,9 +79,9 @@ test.describe('LiveEventLine friendly names + sidebar hierarchy', () => {
       topic: parentTopic,
       agent: askerAgent,
       kind: 'tool_use',
-      summary: 'mcp__agent_framework__ask_agent',
+      summary: 'mcp__ai_company__ask_agent',
       data: {
-        tool: 'mcp__agent_framework__ask_agent',
+        tool: 'mcp__ai_company__ask_agent',
         input: JSON.stringify({ target_agent: targetAgent, question: 'nest test' }),
       },
     });

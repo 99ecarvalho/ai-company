@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from agent_framework.worker_pool import WorkerPool
+from ai_company.worker_pool import WorkerPool
 
 
 async def test_acquire_release_counts():

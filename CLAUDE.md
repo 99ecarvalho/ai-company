@@ -1,4 +1,4 @@
-# agent-framework — contexto auto-carregado
+# ai-company — contexto auto-carregado
 
 > Messaging em **broker interno** (Postgres + HTTP no container `web`).
 
@@ -8,7 +8,7 @@ Framework self-hosted pra orquestrar agentes Claude Code: cada agente roda em co
 
 ## Estrutura do repo (3 zonas)
 
-- **`framework/`** (tracked) — código do agent-framework: `bots/`, `orchestrator/`, `web/`, `transcriber/`, `watchdog/`, `docker/`, `scripts/`, `agent-template/`, `examples/`.
+- **`framework/`** (tracked) — código do ai-company: `bots/`, `orchestrator/`, `web/`, `transcriber/`, `watchdog/`, `docker/`, `scripts/`, `agent-template/`, `examples/`.
 - **`instance/`** (gitignored) — estado/config da empresa usuária: `agents/agents.yaml`, `agents/<nome>/`, `company/`, `repos/`, `backups/`, `heartbeats/`, `sessions/<nome>/` (runtime cwds por topic, D-51). Paths customizáveis via `.env` (`AGENTS_DIR`, `COMPANY_DIR`, `BACKUPS_DIR`, `REPOS_DIR`, `SESSIONS_DIR`) — default mantém tudo em `./instance/`.
 - **`.dev/`** (gitignored, opcional) — meta-desenvolvimento local: se você mantém notas em `notes/PROJECT_PLAN.md`, `notes/DECISIONS.md`, `notes/EXECUTION_LOG.md`, `notes/QUESTIONS.md`, leia antes de mexer no framework.
 
@@ -18,14 +18,14 @@ Framework self-hosted pra orquestrar agentes Claude Code: cada agente roda em co
 - **Repo = framework distribuível.** Nada específico de uma empresa ou usuário deve ir pro repo tracked. Instância inteira em `instance/`, meta-dev em `.dev/`, ambos gitignored. Defaults tracked (`framework/examples/*`, `framework/agent-template/`) têm que ser genéricos.
 - **Escopo do projeto = framework + orquestrador + broker.** O conteúdo de `instance/repos/` é workspace dos agentes (código gerado pelo dev durante tasks) e **NÃO é alvo de melhoria nem revisão**.
 - **Plataforma, não papéis.** Ao propor features/próximos passos, **nunca** sugerir agentes/papéis específicos de um tipo de negócio. Sugerir só capabilities de plataforma (memória, ask_agent, auto-recovery, telemetria, TLS, scaffold, plugin system, etc). Teste: "esse item é código que escrevo uma vez e serve pra qualquer empresa?" — se não, é papel, não sugere.
-- **Vocabulário da instância NUNCA vai pro framework.** Nomes de fases (e.g. `intake`, `plan`, `build`, `review`, `wrap`) ou de papéis (e.g. `coordinator`, `analyst`, `executor`, `reviewer`) são convenção da instância usuária — **não são** invariantes do agent-framework. O framework só sabe de primitivas genéricas: **steps arbitrários** declarados pela instância + **terminais semânticos** que a lógica do orchestrator conhece (hoje `done`/`halt`/`human_review`, porque esses mudam status/dispatch no reactor). Sintoma do smell: ver enum/constante/mapeamento com nomes específicos de instância dentro de `framework/`. Se isso acontecer, mova a taxonomia pra config da instância (ex: `instance/company/workflows.yaml`) carregada em runtime. Teste: "se eu entregar o framework pra uma empresa que usa outros nomes de fase, o código quebra?" — se sim, é cagada.
+- **Vocabulário da instância NUNCA vai pro framework.** Nomes de fases (e.g. `intake`, `plan`, `build`, `review`, `wrap`) ou de papéis (e.g. `coordinator`, `analyst`, `executor`, `reviewer`) são convenção da instância usuária — **não são** invariantes do ai-company. O framework só sabe de primitivas genéricas: **steps arbitrários** declarados pela instância + **terminais semânticos** que a lógica do orchestrator conhece (hoje `done`/`halt`/`human_review`, porque esses mudam status/dispatch no reactor). Sintoma do smell: ver enum/constante/mapeamento com nomes específicos de instância dentro de `framework/`. Se isso acontecer, mova a taxonomia pra config da instância (ex: `instance/company/workflows.yaml`) carregada em runtime. Teste: "se eu entregar o framework pra uma empresa que usa outros nomes de fase, o código quebra?" — se sim, é cagada.
 - **Commits frequentes** conforme avança. Sem `git push` sem autorização explícita.
 - **Nunca mexa fora do diretório do projeto** exceto leituras estritamente necessárias.
-- **Edit Python → rebuild, não restart.** As imagens `agent` e `web` fazem `COPY` do código no build (não há bind-mount do source). `docker compose restart <svc>` reinicia o **mesmo binary** — a mudança no host **não carrega**. Fluxo correto após editar código: `docker compose build <svc> && docker compose up -d --force-recreate <svc>` (ou `make build` pra rebuildar todas). Idem após mexer em [framework/bots/agent_framework/](framework/bots/agent_framework/): rebuildar a imagem `agent` (afeta todos os containers de agente).
+- **Edit Python → rebuild, não restart.** As imagens `agent` e `web` fazem `COPY` do código no build (não há bind-mount do source). `docker compose restart <svc>` reinicia o **mesmo binary** — a mudança no host **não carrega**. Fluxo correto após editar código: `docker compose build <svc> && docker compose up -d --force-recreate <svc>` (ou `make build` pra rebuildar todas). Idem após mexer em [framework/bots/ai_company/](framework/bots/ai_company/): rebuildar a imagem `agent` (afeta todos os containers de agente).
 
 ## Como o system prompt dos agentes eh montado
 
-`claude_runner._build_system_prompt` ([framework/bots/agent_framework/agent_framework/claude_runner.py](framework/bots/agent_framework/agent_framework/claude_runner.py)) monta o `--append-system-prompt` concatenando, nesta ordem (cada secao tem toggle em `instance/company/system_prompts/config.yaml`):
+`claude_runner._build_system_prompt` ([framework/bots/ai_company/ai_company/claude_runner.py](framework/bots/ai_company/ai_company/claude_runner.py)) monta o `--append-system-prompt` concatenando, nesta ordem (cada secao tem toggle em `instance/company/system_prompts/config.yaml`):
 
 1. `framework/system_prompts/platform.md` (read-only, embutido nas imagens `agent` e `web` via `COPY`) — **invariantes do framework**: honestidade, hierarquia raiz->filha (broker 409), reply-as-gateway, MCP tools, baseline_sha discipline, memoria/skills/sobrecarga genericos. Nao editavel pela instancia (ate o PWA marca read-only); mudar exige editar no repo + rebuild.
 2. `## Modo de invocacao` (dinamico) — query no `messaging.conversations.parent_conv_id` em runtime: diz se a conv eh raiz (humano/cron) ou filha (`ask_agent` por outro agente) + nome do pai. Substitui a heuristica "Question from `<X>`" que cada agente fazia manualmente.
@@ -67,12 +67,12 @@ Esta regra é **invariante operacional** — mesmo peso que "rode os testes ante
 - **Logs estruturados JSON:** `make logs-<agente>` ou `docker compose logs -f <agente>`.
 - **Shell num agente:** `make shell-<agente>`.
 - **Status de tasks:** `find instance/company/tasks/ -name "metadata.yaml" -exec head -5 {} \;`.
-- **Eventos pendentes:** consulta no Postgres — `docker compose exec postgres psql -U agent_framework -d agent_framework -c "SELECT id, event_type, status FROM orchestrator.events WHERE status='pending';"`.
+- **Eventos pendentes:** consulta no Postgres — `docker compose exec postgres psql -U ai_company -d ai_company -c "SELECT id, event_type, status FROM orchestrator.events WHERE status='pending';"`.
 - **Novo agente:** edite `instance/agents/agents.yaml` (ou `make new-agent NAME=<slug> DISPLAY="Nome"`), depois `make reconcile` (idempotente — cuida de user+stream no broker, .env, override, compose up).
 - **Transcrever áudio:** automático no PWA (clique no botão de gravação). Ad-hoc: `curl -X POST http://transcriber:8000/transcribe -F file=@audio.mp3` de dentro da rede compose.
 - **Auto-recovery:** claude_runner retenta até 2x em SIGKILL/SIGTERM com `--resume`. Watchdog monitora heartbeats em `instance/heartbeats/` e restarta agent com stale > 180s (cooldown 10min). `DRY_RUN=1` no watchdog pra modo observador.
-- **ask_agent (MCP tool):** agente A consulta agente B via `ask_agent(target_agent, question)`. Topic `__ask-from-A-<uid>` no `#B`. Default timeout 30min, com extensão indefinida se B estiver bloqueado em `ask_human`. Tópicos `__*` ficam ocultos do PWA exceto quando têm `pending_ask`. Habilitar adicionando `mcp__agent_framework__ask_agent` em `allowed_tools`.
-- **Banco direto:** `docker compose exec postgres psql -U agent_framework -d agent_framework`. Schemas: `messaging`, `orchestrator`, `memory`, `telemetry`, `web`.
+- **ask_agent (MCP tool):** agente A consulta agente B via `ask_agent(target_agent, question)`. Topic `__ask-from-A-<uid>` no `#B`. Default timeout 30min, com extensão indefinida se B estiver bloqueado em `ask_human`. Tópicos `__*` ficam ocultos do PWA exceto quando têm `pending_ask`. Habilitar adicionando `mcp__ai_company__ask_agent` em `allowed_tools`.
+- **Banco direto:** `docker compose exec postgres psql -U ai_company -d ai_company`. Schemas: `messaging`, `orchestrator`, `memory`, `telemetry`, `web`.
 
 ## Mexendo na PWA / frontend
 

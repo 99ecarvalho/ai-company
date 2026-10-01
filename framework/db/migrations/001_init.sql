@@ -1,4 +1,4 @@
--- init.sql — schema unico do agent-framework (Postgres unifica messaging +
+-- init.sql — schema unico do ai-company (Postgres unifica messaging +
 -- orchestrator + memory + telemetry + web).
 --
 -- Aplicado automaticamente pelo container postgres no primeiro boot (via

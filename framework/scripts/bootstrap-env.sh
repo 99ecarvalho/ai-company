@@ -95,8 +95,8 @@ cat > "$ENV_FILE" <<EOF
 # NAO COMITAR este arquivo. .gitignore ja ignora.
 
 # --- Postgres ---
-POSTGRES_DB=agent_framework
-POSTGRES_USER=agent_framework
+POSTGRES_DB=ai_company
+POSTGRES_USER=ai_company
 POSTGRES_PASSWORD=$(gen)
 
 # --- Admin ---
@@ -129,7 +129,7 @@ TZ=America/Sao_Paulo
 # --- Deploy: multi-empresa na mesma maquina ---
 # Para rodar varias empresas lado a lado, copie o framework pra pastas separadas
 # e troque COMPOSE_PROJECT_NAME + WEB_PORT em cada .env.
-COMPOSE_PROJECT_NAME=company-agents
+COMPOSE_PROJECT_NAME=ai-company
 WEB_PORT=9090
 
 # --- BYOI / Docker config (registry privado) ---
@@ -175,7 +175,7 @@ DB_PROD_NAME=
 GITLAB_TOKEN=
 GITLAB_HOST=
 GH_TOKEN=
-GIT_AUTHOR_NAME=agent-framework
+GIT_AUTHOR_NAME=ai-company
 GIT_AUTHOR_EMAIL=agents@local
 
 # Proteção anti-push-main: hooks_defaults em agents.yaml (D-60) — PreToolUse

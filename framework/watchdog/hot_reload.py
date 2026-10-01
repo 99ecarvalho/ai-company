@@ -15,7 +15,7 @@ Env vars:
   AGENTS_DIR         default /workspace/agents
   POLL_SEC           default 5
   COOLDOWN_SEC       default 10  (debounce restart por agente)
-  CONTAINER_PREFIX   default agent-framework-agent-
+  CONTAINER_PREFIX   default ai-company-agent-
   CONTAINER_SUFFIX   default -1
   WATCH_FILES        default "agent.yaml" (csv)
 """
@@ -33,7 +33,7 @@ import structlog
 AGENTS_DIR = Path(os.environ.get("AGENTS_DIR", "/workspace/agents"))
 POLL_SEC = float(os.environ.get("POLL_SEC", "5"))
 COOLDOWN_SEC = float(os.environ.get("COOLDOWN_SEC", "10"))
-CONTAINER_PREFIX = os.environ.get("CONTAINER_PREFIX", "agent-framework-agent-")
+CONTAINER_PREFIX = os.environ.get("CONTAINER_PREFIX", "ai-company-agent-")
 CONTAINER_SUFFIX = os.environ.get("CONTAINER_SUFFIX", "-1")
 WATCH_FILES = tuple(
     f.strip() for f in os.environ.get("WATCH_FILES", "agent.yaml").split(",")

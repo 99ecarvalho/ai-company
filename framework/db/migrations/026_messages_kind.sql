@@ -12,7 +12,7 @@
 --
 -- Fix arquitetural: echo eh sinal pro humano, nao pro agente. Coluna `kind`
 -- nas messages distingue 'regular' (gera turn) de 'echo' (puramente
--- visual). Trigger inclui kind no payload do NOTIFY; agent_framework filtra
+-- visual). Trigger inclui kind no payload do NOTIFY; ai_company filtra
 -- e ignora dispatch quando kind != 'regular'. PWA SSE continua recebendo
 -- todas (mesmo `msg_all` channel) — humano enxerga normal.
 --

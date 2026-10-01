@@ -1,4 +1,4 @@
-"""Entry point do agente. Roda como `python3 -m agent_framework.main` dentro do container.
+"""Entry point do agente. Roda como `python3 -m ai_company.main` dentro do container.
 
 Le config via env, sobe BrokerClient + McpServer + Dispatcher + WorkerPool,
 processa eventos ate receber SIGTERM/KeyboardInterrupt.

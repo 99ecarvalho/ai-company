@@ -51,7 +51,7 @@
   }
 
   function stripNs(tool: string): string {
-    // MCP tools come as `mcp__agent_framework__ask_agent` or `__ask_agent`.
+    // MCP tools come as `mcp__ai_company__ask_agent` or `__ask_agent`.
     // Strip the namespace prefix(es) but keep the bare name.
     if (tool.includes('__')) {
       const parts = tool.split('__').filter(Boolean);

@@ -5,7 +5,7 @@
 #
 # === What is this? ===
 #
-# agent-framework is vocabulary-agnostic. Each company declares here its own
+# ai-company is vocabulary-agnostic. Each company declares here its own
 # steps (free-form names, in any language), default agents per step, the
 # artifacts produced, and the valid transitions. The framework loads this at
 # runtime and validates `complete_phase` calls against this declaration.

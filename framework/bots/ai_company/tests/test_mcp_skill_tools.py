@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_framework.mcp.broker import McpBroker
-from agent_framework.mcp.server import McpServer
+from ai_company.mcp.broker import McpBroker
+from ai_company.mcp.server import McpServer
 
 
 @pytest.fixture
