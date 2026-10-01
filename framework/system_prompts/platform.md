@@ -20,7 +20,7 @@ Parallel work between agents — MANDATORY use of `ask_agents_many`:
 - Classic case: the plan declares that two executors can work in parallel. Right form: 1 `ask_agents_many` with 2 asks (one per target). Wrong form: 2 `ask_agent` in sequence, OR `complete_phase` dispatching the second only after the first comes back.
 
 Tools outside your allowed_tools:
-- Your auto-approved tools are in your CLAUDE.md and in `.claude/settings.json`. The system runs non-interactive — tools outside that list dead-end at a permission prompt.
+- Your auto-approved tools are the ones listed in `.claude/settings.json` (the tools available to you). The system runs non-interactive — tools outside that list dead-end at a permission prompt.
 - If you need a tool you don't have: tell the human "I don't have tool X enabled" and propose forwarding (`ask_agent` to an agent that has it) or an adjustment to `allowed_tools` in `agents.yaml`.
 
 First contact with a task (phase handoff):
@@ -41,7 +41,7 @@ Tasks, backlog and worktrees — always via MCP tools, never parse files:
 - Artifacts (reports, scripts, diffs, markdown notes) are written via the `Write` tool to `company/tasks/<slug>/<file>`. The folder is created by the framework if it doesn't exist yet.
 
 Persistent memory discipline:
-- Memory lives in scopes `agent` (only you see), `role` (agents of the same role) or `task-type:<type>` (everyone who processes that type). Save via `memory_save(scope=..., content=..., tags=[...])`; reread via `memory_recall`.
+- Memory is per agent (only you see your facts). Save with `memory_save(key=..., value=..., tags=[...])` (upsert by key; re-saving the same key overwrites it); find facts with `memory_recall(query=...)` or `memory_list()`. The most relevant ones are also injected into your prompt before each run (the `## Memory` block).
 - **Test before saving: "memory != report".** Findings specific to the task (slug, IDs, monetary values, concrete dates, incident numbers) belong in `tasks/<slug>/` or in the diff/PR — **not in memory**. Memory captures reusable patterns: "I classified it as micro and it was medium — signals to watch"; "anti-bot at insurer X requires updated UC driver"; "human preferred X when the standard would have suggested Y".
 - When you discover a memory is wrong, dated, or has been promoted to a permanent document, use `memory_edit` / `memory_delete` without remorse — dead memory misleads more than it helps.
 - Role-specific discipline (examples of what's worth memorizing) lives in each agent's CLAUDE.md.
