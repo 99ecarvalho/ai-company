@@ -54,6 +54,8 @@ services:
       TERMINAL_NOTIFY_STREAM: ${TERMINAL_NOTIFY_STREAM:-}
       TRANSCRIBER_URL: http://transcriber:8000
       TTS_URL: http://tts:8000
+      TRANSCRIBER_API_KEY: ${TRANSCRIBER_API_KEY:-}
+      TRANSCRIBER_MAX_UPLOAD_MB: ${TRANSCRIBER_MAX_UPLOAD_MB:-50}
       SCHEDULER_URL: http://scheduler:8811
       LOG_LEVEL: INFO
       PROJECT_ROOT_HOST: ${PWD}
@@ -218,49 +220,57 @@ services:
       retries: 3
       start_period: 10s
 
-  # --- TTS: Piper (CPU, leve) ---
+  # --- TTS: Piper (CPU). Source: external/ai-tts submodule ---
+  # The image has its own HEALTHCHECK (unhealthy unless the default voice is
+  # installed), so none is declared here.
   tts:
     build:
-      context: ./framework/tts
+      context: ./external/ai-tts
       dockerfile: Dockerfile
-    image: agent-framework/tts:0.1.0
+    image: agent-framework/tts:latest
     restart: unless-stopped
     environment:
       DEFAULT_VOICE: ${TTS_DEFAULT_VOICE:-pt_BR-faber-medium}
+      PRELOAD_VOICE: ${TTS_PRELOAD_VOICE:-1}
       TZ: ${TZ:-America/Sao_Paulo}
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
 
-  # --- Transcriber: faster-whisper GPU ---
+  # --- Transcriber: faster-whisper. Source: external/ai-transcriber submodule ---
+  # GPU is opt-in: layer docker-compose.gpu.yml on top
+  # (`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml`) to add the
+  # NVIDIA reservation and switch WHISPER_DEVICE/COMPUTE_TYPE to cuda/float16.
+  # The defaults run on CPU/int8 so any host works (Mac, devcontainer, CI
+  # without a GPU); the small model also avoids loading 6GB on a CPU.
+  # The image has its own HEALTHCHECK on /health.
   transcriber:
     build:
-      context: ./framework/transcriber
+      context: ./external/ai-transcriber
       dockerfile: Dockerfile
-    image: agent-framework/transcriber:0.1.0
+    image: agent-framework/transcriber:latest
     restart: unless-stopped
-    # GPU opt-in: layer docker-compose.gpu.yml por cima
-    # (`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml`) pra ativar
-    # NVIDIA reservation + flipar WHISPER_DEVICE/COMPUTE_TYPE pra cuda/float16.
-    # Defaults ficam em CPU/int8 — funciona em qualquer host (Mac, devcontainer,
-    # CI sem GPU). Modelo small-v3 tambem evita carregar 6GB num CPU.
     environment:
       WHISPER_MODEL: ${WHISPER_MODEL:-small}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+      WHISPER_PRELOAD: ${WHISPER_PRELOAD:-0}
+      MAX_UPLOAD_MB: ${TRANSCRIBER_MAX_UPLOAD_MB:-50}
+      API_KEY: ${TRANSCRIBER_API_KEY:-}
       TZ: ${TZ:-America/Sao_Paulo}
     volumes:
       - whisper-cache:/cache
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+    depends_on:
+      whisper-cache-init:
+        condition: service_completed_successfully
+
+  # One-shot: the transcriber image runs as uid 1000, but whisper-cache
+  # volumes created by older images are owned by root. Hand them over so the
+  # model cache stays writable. No-op on fresh volumes.
+  whisper-cache-init:
+    image: alpine:3.20
+    restart: "no"
+    command: ["sh", "-c", "[ \"$$(stat -c %u /cache)\" = 1000 ] || chown -R 1000:1000 /cache"]
+    volumes:
+      - whisper-cache:/cache
 
   # --- Cloudflared named tunnel (opcional, profile `tunnel`) ---
   # Expoe o `web:8090` interno num hostname publico via Cloudflare edge,

@@ -8,7 +8,7 @@ ifneq (,$(wildcard .env))
   export
 endif
 
-.PHONY: help up down restart logs build test shell-% logs-% reset-agent-% reset-instance reset-instance-yes reconcile new-agent healthcheck
+.PHONY: help up down restart logs build test shell-% logs-% reset-agent-% reset-instance reset-instance-yes reconcile new-agent healthcheck submodules submodules-latest
 
 install: ## Setup interativo de uma nova instância (prompts → bootstrap → build → reconcile)
 	bash framework/scripts/install.sh
@@ -24,7 +24,13 @@ down: ## Derruba a stack
 
 restart: down up ## Reinicia a stack
 
-build: ## Build das imagens customizadas (agent + web + transcriber + watchdog)
+submodules: ## Fetch the external/ submodules (ai-tts, ai-transcriber) at the pinned commits
+	git submodule update --init --recursive
+
+submodules-latest: ## Move the external/ submodules to the latest commit on their main branch
+	git submodule update --init --remote --recursive
+
+build: submodules ## Build das imagens customizadas (agent + web + transcriber + watchdog)
 	docker compose build
 
 logs: ## Logs de toda a stack (tail)

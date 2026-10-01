@@ -409,14 +409,22 @@ export const transcribePreview = (file: Blob, filename: string, language?: strin
  * <audio src=...>. Caller deve revokeObjectURL quando descartar.
  */
 export async function synthesizeSpeech(text: string): Promise<string> {
+  // MP3 is ~5x smaller than WAV for the same speech; every target browser plays it.
   const r = await fetch('/api/tts/synthesize', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ text })
+    body: JSON.stringify({ text, format: 'mp3' })
   });
   if (!r.ok) {
-    const detail = await r.text().catch(() => '');
+    const body = await r.text().catch(() => '');
+    let detail = body;
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed?.detail === 'string') detail = parsed.detail;
+    } catch {
+      // not JSON: keep the raw body
+    }
     throw new ApiError(r.status, detail, '/api/tts/synthesize');
   }
   const blob = await r.blob();

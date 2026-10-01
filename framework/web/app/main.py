@@ -2805,61 +2805,122 @@ if (BUILD_DIR / "_app").is_dir():
 
 
 # ---------- TTS proxy ----------
+#
+# Talks to the ai-tts service (external/ai-tts). Contract notes:
+# - `voice` must be omitted or null to use the default; "" is a 422.
+# - Invalid input is a 422 whose `detail` is FastAPI's list of objects.
+# - A voice that isn't installed is a 404; synthesis failures are a 500 with
+#   a generic detail (the real error is in the tts container log).
+# The proxy validates what it can up front and always answers the PWA with a
+# string `detail`, whatever shape upstream used.
+
+TTS_MAX_TEXT_CHARS = int(os.environ.get("TTS_MAX_TEXT_CHARS", "5000"))
+_TTS_VOICE_RE = _re.compile(r"^[A-Za-z0-9_-]+$")
+_TTS_MEDIA_TYPES = {"wav": "audio/wav", "mp3": "audio/mpeg"}
+
+
+def _upstream_detail(body: str) -> str:
+    """Extract a human-readable message from an upstream FastAPI error body.
+
+    `detail` is a string for most errors and a list of
+    `{"loc", "msg", "type"}` objects for validation errors (422)."""
+    try:
+        detail = json.loads(body).get("detail")
+    except (ValueError, AttributeError):
+        return body[:200]
+    if isinstance(detail, str):
+        return detail
+    if isinstance(detail, list):
+        msgs = [d.get("msg", "") for d in detail if isinstance(d, dict)]
+        return "; ".join(m for m in msgs if m) or "invalid request"
+    return body[:200]
+
 
 @app.post("/api/tts/synthesize")
 async def tts_synthesize(payload: dict, _: Principal = Depends(get_principal)):
-    """Proxy pra container TTS interno (Piper). Retorna audio/wav."""
+    """Proxy to the internal TTS container (Piper). Returns audio/wav or audio/mpeg."""
     url = os.environ.get("TTS_URL")
     if not url:
         raise HTTPException(status_code=503, detail="TTS not configured")
-    text = (payload.get("text") or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-    if len(text) > 5000:
-        raise HTTPException(status_code=413, detail="text > 5000 chars")
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=422, detail="text is required")
+    text = text.strip()
+    if len(text) > TTS_MAX_TEXT_CHARS:
+        raise HTTPException(status_code=422, detail=f"text is longer than {TTS_MAX_TEXT_CHARS} characters")
+    body: dict = {"text": text}
+    voice = payload.get("voice")
+    if voice:  # "" / None -> omitted, so the service uses its default voice
+        if not isinstance(voice, str) or not _TTS_VOICE_RE.match(voice):
+            raise HTTPException(status_code=422, detail="voice may contain only letters, digits, '_' and '-'")
+        body["voice"] = voice
+    fmt = payload.get("format") or "wav"
+    if fmt not in _TTS_MEDIA_TYPES:
+        raise HTTPException(status_code=422, detail="format must be 'wav' or 'mp3'")
+    body["format"] = fmt
     timeout = aiohttp.ClientTimeout(total=60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(
-            url.rstrip("/") + "/synthesize",
-            json={"text": text, "voice": payload.get("voice")},
-        ) as resp:
+        async with session.post(url.rstrip("/") + "/synthesize", json=body) as resp:
             if resp.status != 200:
-                body = await resp.text()
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"TTS returned {resp.status}: {body[:200]}",
-                )
+                detail = _upstream_detail(await resp.text())
+                if resp.status == 404:
+                    raise HTTPException(status_code=404, detail=detail)
+                if resp.status == 422:
+                    raise HTTPException(status_code=422, detail=detail)
+                log.warning("tts.upstream_error", status=resp.status, detail=detail)
+                raise HTTPException(status_code=502, detail=f"TTS failed ({resp.status}); see the tts container log")
             data = await resp.read()
-    from fastapi.responses import Response as _Response
-    return _Response(content=data, media_type="audio/wav")
+    return Response(content=data, media_type=_TTS_MEDIA_TYPES[fmt])
 
 
 # ---------- Transcribe preview ----------
+#
+# Talks to the ai-transcriber native API (external/ai-transcriber):
+# POST /transcribe, multipart `file` + optional `language`. Errors are
+# `{"detail": ...}`; 503 means the model is loading or the queue is full.
+
+TRANSCRIBER_MAX_UPLOAD_MB = int(os.environ.get("TRANSCRIBER_MAX_UPLOAD_MB", "50"))
+
 
 @app.post("/api/transcribe-preview")
 async def transcribe_preview(
     file: UploadFile = File(...),
     language: str | None = Form(default=None),
+    _: Principal = Depends(get_principal),
 ):
     url = os.environ.get("TRANSCRIBER_URL")
     if not url:
         raise HTTPException(status_code=503, detail="Transcriber not configured")
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="Arquivo vazio")
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Arquivo > 50MB")
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(content) > TRANSCRIBER_MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail=f"File is larger than {TRANSCRIBER_MAX_UPLOAD_MB}MB")
     form = aiohttp.FormData()
     form.add_field("file", content, filename=file.filename or "audio.webm",
                    content_type=file.content_type or "application/octet-stream")
     if language:
         form.add_field("language", language)
+    headers = {}
+    api_key = os.environ.get("TRANSCRIBER_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url.rstrip("/") + "/transcribe", data=form) as resp:
+        async with session.post(url.rstrip("/") + "/transcribe", data=form, headers=headers) as resp:
             body = await resp.text()
             if resp.status != 200:
-                raise HTTPException(status_code=502, detail=f"Transcriber returned {resp.status}: {body[:200]}")
+                detail = _upstream_detail(body)
+                if resp.status in (400, 413, 422):
+                    raise HTTPException(status_code=resp.status, detail=detail)
+                if resp.status == 503:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"Transcriber busy or loading the model: {detail}",
+                        headers={"Retry-After": resp.headers.get("Retry-After", "5")},
+                    )
+                log.warning("transcriber.upstream_error", status=resp.status, detail=detail)
+                raise HTTPException(status_code=502, detail=f"Transcriber failed ({resp.status}): {detail}")
             return json.loads(body)
 
 

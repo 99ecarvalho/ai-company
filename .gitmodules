@@ -1,0 +1,8 @@
+[submodule "external/ai-tts"]
+	path = external/ai-tts
+	url = https://github.com/99ecarvalho/ai-tts.git
+	branch = main
+[submodule "external/ai-transcriber"]
+	path = external/ai-transcriber
+	url = https://github.com/99ecarvalho/ai-transcriber.git
+	branch = main

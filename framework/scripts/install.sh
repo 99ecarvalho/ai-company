@@ -31,6 +31,11 @@ if [ ! -f "$CLAUDE_CRED" ] || [ ! -f "$CLAUDE_JSON" ]; then
 fi
 ok "docker + claude auth ok"
 
+# ---------- submodules (external/ai-tts, external/ai-transcriber) ----------
+info "Fetching submodules..."
+git submodule update --init --recursive
+ok "submodules ok"
+
 # ---------- bootstrap .env + instance/ ----------
 info "Bootstrap .env + pastas de instancia..."
 bash framework/scripts/bootstrap-env.sh
