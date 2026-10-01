@@ -30,11 +30,6 @@ from aiohttp import web
 
 from ..log import get_logger
 
-# Backlog status values before migration 033 renamed them to English.
-LEGACY_BACKLOG_STATUS = {
-    "aberto": "open", "rascunho": "draft", "em_execucao": "in_progress",
-    "promovido": "promoted", "concluido": "done", "descartado": "discarded",
-}
 from ..memory_store import MemoryStore
 from .broker import McpBroker
 from .tools import ALL_TOOLS
@@ -945,9 +940,6 @@ class McpServer:
         SLUG_RE = _re.compile(r"^[a-z0-9][a-z0-9-]*$")
         pool = self.workflow._pool
         agent_name = self.agent_name
-        if isinstance(args.get("status"), str):
-            # Accept the pre-rename Portuguese values (migration 033).
-            args = {**args, "status": LEGACY_BACKLOG_STATUS.get(args["status"].strip(), args["status"])}
 
         if name == "backlog_add":
             slug = (args.get("slug") or "").strip()

@@ -110,15 +110,6 @@ if [[ -d "$SESSIONS_DIR" ]]; then
     echo "   -> cleared: $agent_sessions"
   done
 fi
-# Compat: remove legacy sessions/ in $AGENTS_DIR/<agent>/sessions/ if present
-# (instances bootstrapped before D-51; reconcile migrates the mount on the next up).
-for agent_dir in "$AGENTS_DIR"/*/; do
-  legacy="${agent_dir}sessions"
-  if [[ -d "$legacy" ]]; then
-    rm -rf "$legacy"
-    echo "   -> removed legacy: $legacy (D-51)"
-  fi
-done
 
 # Also clear pending_questions (pending questions are runtime state)
 for agent_dir in "$AGENTS_DIR"/*/; do

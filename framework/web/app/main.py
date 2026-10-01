@@ -1829,7 +1829,7 @@ async def backlog_list(
                 ORDER BY priority DESC, updated_at DESC""",
         )
     else:
-        status = _backlog_status(status) or "open"
+        status = status or "open"
         rows = await db.fetch_all(
             """SELECT slug, title, content, priority, impact, effort, status,
                       promoted_task_slug, created_by, created_at, updated_at
@@ -1855,15 +1855,6 @@ async def backlog_list(
 
 
 _BACKLOG_STATUSES = ("open", "draft", "in_progress", "promoted", "done", "discarded")
-# Values before migration 033 renamed them to English; still accepted as input.
-_LEGACY_BACKLOG_STATUS = {
-    "aberto": "open", "rascunho": "draft", "em_execucao": "in_progress",
-    "promovido": "promoted", "concluido": "done", "descartado": "discarded",
-}
-
-
-def _backlog_status(value):
-    return _LEGACY_BACKLOG_STATUS.get(value, value) if isinstance(value, str) else value
 
 
 @app.post("/api/backlog")
@@ -1875,7 +1866,7 @@ async def backlog_create(payload: dict, principal: Principal = Depends(get_princ
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
     priority = int(payload.get("priority") or 0)
-    status = _backlog_status((payload.get("status") or "open").strip())
+    status = (payload.get("status") or "open").strip()
     if status not in _BACKLOG_STATUSES:
         raise HTTPException(status_code=400, detail=f"invalid status: {status!r}")
     await db.execute(
@@ -1899,8 +1890,6 @@ async def backlog_create(payload: dict, principal: Principal = Depends(get_princ
 async def backlog_patch(slug: str, payload: dict, _: Principal = Depends(get_principal)):
     if not _SLUG_RE.match(slug):
         raise HTTPException(status_code=400, detail="invalid slug")
-    if "status" in payload:
-        payload = {**payload, "status": _backlog_status(payload["status"])}
     if payload.get("status") and payload["status"] not in _BACKLOG_STATUSES:
         raise HTTPException(status_code=400, detail=f"invalid status: {payload['status']!r}")
     fields = []
@@ -4462,7 +4451,7 @@ async def system_prompts_preview(
             phi = COMPANY_PHILOSOPHY_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             phi = ""
-        if phi.strip() and "_(optional" not in phi and "_(opcional" not in phi:
+        if phi.strip() and "_(optional" not in phi:
             parts.append("\n\n# Operational philosophy\n\n" + phi)
 
     if toggles["include_team_block"] and agent and mode != "child":

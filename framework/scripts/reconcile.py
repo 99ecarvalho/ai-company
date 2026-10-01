@@ -67,8 +67,6 @@ REPOS_DIR = _env_path("REPOS_DIR", "instance/repos")  # D-115: enumerate subdirs
 AGENTS_YAML = AGENTS_DIR / "agents.yaml"
 
 VALID_MOUNTS = {"company", "orchestrator", "repos"}
-MCP_PREFIX = "mcp__ai_company__"
-LEGACY_MCP_PREFIX = "mcp__agent_framework__"
 AGENT_IMAGE = "ai-company/agent:0.1.0"
 
 NAME_MAX_LEN = 31  # 1 leading + up to 30 more. Generous cap for DNS/stream.
@@ -968,29 +966,9 @@ def main() -> int:
             except ValueError:
                 shown = target  # COMPANY_DIR outside PROJECT_ROOT
             log(f"  seed: {shown} copied from example", "ok")
-    # Migration cleanup: old instances seeded platform.md here. The file now
-    # lives in the image; removing the orphan avoids confusion (the PWA showed
-    # the size of the instance file, which the runner was ignoring).
-    legacy_platform = sp_dir / "platform.md"
-    if legacy_platform.exists():
-        legacy_platform.unlink()
-        try:
-            shown = legacy_platform.relative_to(PROJECT_ROOT)
-        except ValueError:
-            shown = legacy_platform
-        log(f"  removed legacy {shown} (platform.md is now framework-fixed)", "ok")
 
     log("Parsing agents.yaml", "step")
-    agents_text = AGENTS_YAML.read_text(encoding="utf-8")
-    if LEGACY_MCP_PREFIX in agents_text:
-        # Pre-rename configs: the MCP server used to be called agent_framework.
-        agents_text = agents_text.replace(LEGACY_MCP_PREFIX, MCP_PREFIX)
-        log(
-            f"agents.yaml still uses {LEGACY_MCP_PREFIX}* — treating it as {MCP_PREFIX}*. "
-            f"Update the file: sed -i 's/{LEGACY_MCP_PREFIX}/{MCP_PREFIX}/g' {AGENTS_YAML}",
-            "warn",
-        )
-    data = yaml.safe_load(agents_text)
+    data = yaml.safe_load(AGENTS_YAML.read_text(encoding="utf-8"))
     agents, hooks_defaults, capability_instances = validate_schema(data)
     log(f"{len(agents)} agent(s) in config: {[a['name'] for a in agents]}", "ok")
     if hooks_defaults:

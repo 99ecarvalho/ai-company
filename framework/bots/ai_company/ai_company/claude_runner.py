@@ -54,7 +54,7 @@ GHOST_SESSION_RE = re.compile(r"No conversation found with session ID:\s*([a-f0-
 # reactor posts a handoff during a run that already absorbed the phase via --resume
 # continuity, the message sits in the dispatcher queue and would be processed in an
 # extra spawn, producing a "late, already done" answer (pure waste).
-# Observed symptom: 2026-05-05 fix-task-16 (2 cascade runs after `done`).
+# Observed symptom: 2026-05-05, 2 cascade runs after `done` on one task.
 HANDOFF_BODY_RE = re.compile(
     r"^➡️ \*\*Handoff from.*?\*\*Task:\*\* `([a-z0-9][a-z0-9-]*)` — you take over phase \*\*([a-z0-9_-]+)\*\*",
     re.S,
@@ -717,9 +717,9 @@ class ClaudeRunner:
 
         if toggles["include_company_philosophy"]:
             phi = _read_capped(_COMPANY_PHILOSOPHY_PATH, cap=4 * 1024)
-            # `_(optional` / `_(opcional` are seed markers in the example file
+            # `_(optional` is the seed marker in the example file
             # that mean "instance hasn't filled this in yet" — skip injection.
-            if phi.strip() and "_(optional" not in phi and "_(opcional" not in phi:
+            if phi.strip() and "_(optional" not in phi:
                 parts.append("\n\n# Operational philosophy\n\n" + phi)
 
         if toggles["include_team_block"]:
@@ -1389,7 +1389,7 @@ class ClaudeRunner:
         # dispatcher queue (LISTEN fires mid-run, the dispatcher enqueues). When the
         # main run ends, the dispatcher consumes that queue — each handoff
         # becomes a new spawn whose only output is "late, already done".
-        # Symptom: 2026-05-05 fix-task-16 (2 cascade runs after `done`).
+        # Symptom: 2026-05-05, 2 cascade runs after `done` on one task.
         # Drop when: (1) the task is in a terminal status, or (2) the most
         # recent phase of this step is already completed (`completed_at IS NOT NULL`).
         # We look at the most recent `phases` row by idx — preserves reopen_task,

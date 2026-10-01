@@ -66,8 +66,6 @@ test-e2e-ui: ## Playwright in interactive UI mode
 reset-agent-%: ## Clear an agent's sessions (e.g. make reset-agent-inbox)
 	@# D-51: sessions live in ${SESSIONS_DIR}/<agent>/ (outside AGENTS_DIR).
 	rm -rf $(or $(SESSIONS_DIR),./instance/sessions)/$*/*
-	@# Legacy: also clear $AGENTS_DIR/<agent>/sessions/ if present (pre-D-51).
-	@rm -rf $(or $(AGENTS_DIR),./instance/agents)/$*/sessions 2>/dev/null || true
 	@echo "Sessions of $* cleared."
 
 tasks-migrate: ## Idempotent backfill company/tasks/ -> Postgres (D-53)

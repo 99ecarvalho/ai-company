@@ -295,7 +295,7 @@ class WorkflowManager:
         if the agent forgets to call `ask_human`, the message goes
         unnoticed. Post directly in the conversation that is already open.
 
-        But in the ops case (mega-agent, agent==origin_stream always)
+        But for a mega-agent (agent==origin_stream always)
         rule (3) would fire on every handoff, fan-out included, and
         collapse the N parallel tasks into the original conv. `standalone`
         signals that context and disables the fold-back.

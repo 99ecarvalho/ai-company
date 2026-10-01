@@ -4,8 +4,6 @@
 -- concluido, descartado). Rename it in place, same meanings:
 --   aberto -> open, rascunho -> draft, em_execucao -> in_progress,
 --   promovido -> promoted, concluido -> done, descartado -> discarded.
--- The web API and the backlog_* MCP tools still accept the old values as
--- input and map them to the new ones.
 ALTER TABLE tasks.backlog DROP CONSTRAINT IF EXISTS tasks_backlog_status_chk;
 
 UPDATE tasks.backlog SET status = CASE status

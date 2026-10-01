@@ -353,7 +353,7 @@ def run_reconcile(extra_args: list[str] | None = None) -> str:
     combined. Raises RuntimeError on rc != 0 with stderr in the message.
 
     Path overrides: the instance .env has AGENTS_DIR/COMPANY_DIR/REPOS_DIR
-    pointing relative to manager/ on the host (e.g. ../agents = instance root).
+    pointing relative to manager/ on the host (e.g. ../agents = the instance root).
     Inside the web container those paths don't resolve — override them with the
     absolute paths of the existing mounts (/workspace/agents, etc).
     """
