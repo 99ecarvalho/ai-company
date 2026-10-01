@@ -69,13 +69,41 @@ hooks_defaults:
 #       MYSQL_PASS: "${DB_PROD_PASS:-}"
 #       MYSQL_DB:   "${DB_PROD_NAME:-}"
 
+# ==== TOOLS shared by every agent ================================
+# `allowed_tools_defaults` is prepended to each agent's own allowed_tools
+# (an agent opts out with `inherit_tool_defaults: false`). Items written as
+# `group:<name>` expand to a group of tools; built-in groups:
+#   files     Read, Write, Edit, Glob, Grep
+#   web       WebFetch, WebSearch
+#   human     ask_human, notify_human
+#   agents    ask_agent, ask_agents_many
+#   workflow  complete_phase, get_task_state
+#   tasks     task_list, reopen_task
+#   worktree  init_repo, create_worktree, cleanup_worktrees
+#   memory    memory_save, memory_recall, memory_list, memory_edit, memory_delete
+#   backlog   backlog_add, backlog_list, backlog_update, backlog_promote
+#   scheduler schedule_add, schedule_list, schedule_update, schedule_remove
+#   skills    save_skill, list_skills, delete_skill
+# (all MCP ones are mcp__ai_company__<tool>). Add your own, or override a
+# built-in, with `tool_groups:`:
+#
+# tool_groups:
+#   reporting: [group:files, group:web, mcp__sentry__list_issues]
+allowed_tools_defaults:
+  - group:files
+  - group:human
+  - group:agents
+  - group:workflow                    # every example agent takes part in workflows
+  - group:memory
+
 agents:
 
   # ============================================================
   # FULL EXAMPLE: 5 agents covering the workflows shipped in
   # workflows.yaml.example (`default` and `research`).
   # Each agent covers a distinct role. Remove/adjust to fit the
-  # roles your company actually needs.
+  # roles your company actually needs. Each one lists only the tools
+  # it needs beyond allowed_tools_defaults.
   # ============================================================
 
   # ==== triager: first contact, classifies + closes ====
@@ -88,22 +116,9 @@ agents:
     idle_timeout_sec: 900
     write_access: [company, orchestrator]
     read_access: [repos]              # reads code only to understand context
+    model: sonnet                     # triage and wrap-up don't need the biggest model
+    effort: low
     memory: true
-    allowed_tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-      - mcp__ai_company__ask_human
-      - mcp__ai_company__ask_agent
-      - mcp__ai_company__complete_phase    # participates in workflows
-      - mcp__ai_company__get_task_state
-      - mcp__ai_company__memory_save
-      - mcp__ai_company__memory_recall
-      - mcp__ai_company__memory_list
-      - mcp__ai_company__memory_edit
-      - mcp__ai_company__memory_delete
 
   # ==== planner: designs the approach before the build ====
   # Appears in: default (plan).
@@ -120,21 +135,6 @@ agents:
     memory:
       enabled: true
       auto_inject_limit: 8            # planner accumulates a lot of technical context
-    allowed_tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-      - mcp__ai_company__ask_human
-      - mcp__ai_company__ask_agent
-      - mcp__ai_company__complete_phase
-      - mcp__ai_company__get_task_state
-      - mcp__ai_company__memory_save
-      - mcp__ai_company__memory_recall
-      - mcp__ai_company__memory_list
-      - mcp__ai_company__memory_edit
-      - mcp__ai_company__memory_delete
 
   # ==== executor: implements in code (Bash + worktrees) ====
   # Appears in: default (build — agent omitted from the workflow,
@@ -145,7 +145,7 @@ agents:
     streams: [executor]
     pool_size: 1                      # serializes — avoids merge conflicts
     idle_timeout_sec: 3600
-    write_access: [repos, company, orchestrator]
+    write_access: [repos, company, orchestrator]   # repos => worktrees mounted read-write
     read_access: []
     model: opus
     effort: high
@@ -161,24 +161,8 @@ agents:
                                       # tools in allowed_tools (e.g.
                                       # mcp__playwright__*, mcp__<instance-name>__*).
     allowed_tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
       - Bash
-      - mcp__ai_company__ask_human
-      - mcp__ai_company__ask_agent
-      - mcp__ai_company__complete_phase
-      - mcp__ai_company__get_task_state
-      - mcp__ai_company__init_repo         # creates a brand-new repo (via web, D-115 safe)
-      - mcp__ai_company__create_worktree   # isolates the task in a worktree
-      - mcp__ai_company__cleanup_worktrees # cleans up at the end
-      - mcp__ai_company__memory_save
-      - mcp__ai_company__memory_recall
-      - mcp__ai_company__memory_list
-      - mcp__ai_company__memory_edit
-      - mcp__ai_company__memory_delete
+      - group:worktree                 # init_repo + create/cleanup worktrees
     # hooks:                              # (optional) per-agent hooks, concatenated with hooks_defaults
     #   PreToolUse:
     #     - matcher: "Bash"
@@ -196,23 +180,11 @@ agents:
     idle_timeout_sec: 1800
     write_access: [company, orchestrator]
     read_access: [repos]              # reads repos to review; does not write to them
+    worktree_access: rw               # runs the tests in the task's worktree, and
+                                      # test runs write caches/build output there
     memory: true
     allowed_tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
       - Bash                           # runs tests/lint to verify
-      - mcp__ai_company__ask_human
-      - mcp__ai_company__ask_agent
-      - mcp__ai_company__complete_phase
-      - mcp__ai_company__get_task_state
-      - mcp__ai_company__memory_save
-      - mcp__ai_company__memory_recall
-      - mcp__ai_company__memory_list
-      - mcp__ai_company__memory_edit
-      - mcp__ai_company__memory_delete
 
   # ==== researcher: investigation without code ====
   # Appears in: research (investigate).
@@ -226,22 +198,7 @@ agents:
     read_access: [repos]
     memory: true
     allowed_tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-      - WebFetch                       # search external docs
-      - WebSearch
-      - mcp__ai_company__ask_human
-      - mcp__ai_company__ask_agent
-      - mcp__ai_company__complete_phase
-      - mcp__ai_company__get_task_state
-      - mcp__ai_company__memory_save
-      - mcp__ai_company__memory_recall
-      - mcp__ai_company__memory_list
-      - mcp__ai_company__memory_edit
-      - mcp__ai_company__memory_delete
+      - group:web                      # search external docs
 
 # === SCHEMA REFERENCE ===
 #
@@ -253,12 +210,20 @@ agents:
 # idle_timeout_sec             seconds without messages before releasing the slot (default 900).
 # write_access                 [list] subset of {company, orchestrator, repos}.
 # read_access                  [list] subset of {company, orchestrator, repos}.
-# allowed_tools                [list] always include mcp__ai_company__ask_human.
-#                              Include complete_phase if the agent participates in workflows.
-#                              Include memory_save/recall/list/edit/delete to use
-#                              persistent memory (edit/delete let you fix or remove
-#                              memories that have gone stale).
-# memory                       Long-term memory (SQLite per agent). Options:
+# allowed_tools                [list] tools the agent may use without asking, on top
+#                              of allowed_tools_defaults. Tool names (Read, Bash,
+#                              mcp__ai_company__ask_human, mcp__playwright__*) or
+#                              group:<name> (see "TOOLS shared by every agent").
+#                              Keep ask_human (group:human) for agents that talk to
+#                              people, group:workflow for workflow participants and
+#                              group:memory for persistent memory.
+# inherit_tool_defaults        Optional, default true. false = ignore
+#                              allowed_tools_defaults for this agent.
+# worktree_access              Optional. "rw" or "ro" for /workspace/worktrees (task
+#                              worktrees). Default: rw when write_access has repos,
+#                              ro otherwise, so only code-writing agents can change
+#                              a task's code. Set rw for agents that run tests there.
+# memory                       Long-term memory (per agent, in Postgres). Options:
 #                                true                    (default — enabled, auto-inject 5)
 #                                false                   (no memory)
 #                                {enabled: bool, auto_inject_limit: int}
@@ -267,8 +232,11 @@ agents:
 #                              injects them into the prompt. Ensures Claude SEES
 #                              the memory without relying on it remembering to
 #                              call memory_recall.
-# model                        Optional. Alias ("sonnet"/"opus"/"haiku") or full
-#                              name ("claude-sonnet-4-6"). Without this — uses the CLI default.
+# model                        Optional. Prefer an alias ("sonnet"/"opus"/"haiku"): it
+#                              follows new releases. A full id ("claude-...") pins one
+#                              release, and reconcile warns about it. Without this —
+#                              uses the CLI default. Workflow steps can override it
+#                              per step (overrides.model in workflows.yaml).
 # effort                       Optional. "low"|"medium"|"high"|"xhigh"|"max". How much
 #                              thinking/effort Claude invests (higher = more tokens).
 # thinking                     Optional. true = shortcut for effort=high if effort

@@ -4834,12 +4834,10 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
             f"    read_access: []\n"
             f"    memory: true\n"
             f"    allowed_tools:\n"
-            f"      - Read\n      - Write\n      - Edit\n"
-            f"      - mcp__ai_company__ask_human\n"
-            f"      - mcp__ai_company__ask_agent\n"
-            f"      - mcp__ai_company__memory_save\n"
-            f"      - mcp__ai_company__memory_recall\n"
-            f"      - mcp__ai_company__memory_list\n"
+            f"      - group:files\n"
+            f"      - group:human\n"
+            f"      - group:agents\n"
+            f"      - group:memory\n"
         )
         try:
             await _hire.apply_hire({

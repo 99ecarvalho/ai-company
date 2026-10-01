@@ -49,14 +49,11 @@ cat >> "$AGENTS_YAML" <<EOF
     idle_timeout_sec: 900
     write_access: [company]
     read_access: []
-    allowed_tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-      - mcp__ai_company__ask_human
-      - mcp__ai_company__complete_phase
+    allowed_tools:                    # on top of allowed_tools_defaults, if any
+      - group:files
+      - group:human
+      - group:workflow
+      - group:memory
 EOF
 
 echo "✓ entry '$NAME' added to $AGENTS_YAML"

@@ -69,6 +69,27 @@ AGENTS_YAML = AGENTS_DIR / "agents.yaml"
 VALID_MOUNTS = {"company", "orchestrator", "repos"}
 AGENT_IMAGE = "ai-company/agent:0.1.0"
 
+MCP_PREFIX = "mcp__ai_company__"
+# Built-in tool groups. In allowed_tools / allowed_tools_defaults, an item
+# `group:<name>` expands to the group's tools, so agents don't each repeat
+# the same list (and pick up new framework tools by editing one place).
+# Instances can add or override groups with a top-level `tool_groups:`.
+BUILTIN_TOOL_GROUPS: dict[str, list[str]] = {
+    "files": ["Read", "Write", "Edit", "Glob", "Grep"],
+    "web": ["WebFetch", "WebSearch"],
+    "human": [MCP_PREFIX + t for t in ("ask_human", "notify_human")],
+    "agents": [MCP_PREFIX + t for t in ("ask_agent", "ask_agents_many")],
+    "workflow": [MCP_PREFIX + t for t in ("complete_phase", "get_task_state")],
+    "tasks": [MCP_PREFIX + t for t in ("task_list", "reopen_task")],
+    "worktree": [MCP_PREFIX + t for t in ("init_repo", "create_worktree", "cleanup_worktrees")],
+    "memory": [MCP_PREFIX + t for t in ("memory_save", "memory_recall", "memory_list", "memory_edit", "memory_delete")],
+    "backlog": [MCP_PREFIX + t for t in ("backlog_add", "backlog_list", "backlog_update", "backlog_promote")],
+    "scheduler": [MCP_PREFIX + t for t in ("schedule_add", "schedule_list", "schedule_update", "schedule_remove")],
+    "skills": [MCP_PREFIX + t for t in ("save_skill", "list_skills", "delete_skill")],
+}
+GROUP_PREFIX = "group:"
+GROUP_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+
 NAME_MAX_LEN = 31  # 1 leading + up to 30 more. Generous cap for DNS/stream.
 NAME_RE = re.compile(rf"^[a-z][a-z0-9-]{{0,{NAME_MAX_LEN - 1}}}$")
 
@@ -321,6 +342,52 @@ def _validate_capability_instances(value: Any) -> dict:
     return out
 
 
+def _validate_tool_list(value: Any, ctx: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(t, str) and t for t in value):
+        die(f"{ctx}: must be a list of tool names")
+    return value
+
+
+def _validate_tool_groups(value: Any) -> dict[str, list[str]]:
+    """Built-in groups + the instance's `tool_groups:` (which may override them)."""
+    groups = {k: list(v) for k, v in BUILTIN_TOOL_GROUPS.items()}
+    if value is None:
+        return groups
+    if not isinstance(value, dict):
+        die("`tool_groups` must be a mapping of group name -> list of tools")
+    for name, tools in value.items():
+        if not isinstance(name, str) or not GROUP_NAME_RE.match(name):
+            die(f"tool_groups: invalid group name {name!r} (use [a-z][a-z0-9-]*)")
+        groups[name] = _validate_tool_list(tools, f"tool_groups.{name}")
+    return groups
+
+
+def expand_tools(items: list[str], groups: dict[str, list[str]], ctx: str) -> list[str]:
+    """Expand `group:<name>` items (groups may reference other groups) and
+    drop duplicates, keeping the first occurrence's position."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def walk(item: str, stack: tuple[str, ...]) -> None:
+        if item.startswith(GROUP_PREFIX):
+            name = item[len(GROUP_PREFIX):]
+            if name not in groups:
+                die(f"{ctx}: unknown tool group {item!r}. Known: {sorted(groups)}")
+            if name in stack:
+                die(f"{ctx}: tool group cycle: {' -> '.join(stack + (name,))}")
+            for t in groups[name]:
+                walk(t, stack + (name,))
+        elif item not in seen:
+            seen.add(item)
+            out.append(item)
+
+    for item in items:
+        walk(item, ())
+    return out
+
+
 def validate_schema(data: dict) -> tuple[list[dict], dict, dict]:
     if not isinstance(data, dict):
         die("agents.yaml must be a mapping at the top level")
@@ -330,6 +397,8 @@ def validate_schema(data: dict) -> tuple[list[dict], dict, dict]:
     _validate_hooks_block(hooks_defaults, "hooks_defaults")
     capability_instances = _validate_capability_instances(data.get("capability_instances"))
     known_caps = known_capabilities(capability_instances)
+    tool_groups = _validate_tool_groups(data.get("tool_groups"))
+    tools_defaults = _validate_tool_list(data.get("allowed_tools_defaults"), "allowed_tools_defaults")
     agents = data.get("agents") or []
     if not isinstance(agents, list):
         die("`agents` must be a list")
@@ -381,6 +450,20 @@ def validate_schema(data: dict) -> tuple[list[dict], dict, dict]:
         model = a.get("model")
         if model is not None and not isinstance(model, str):
             die(f"{ctx}: `model` must be a string")
+        if isinstance(model, str) and model.startswith("claude-"):
+            # A full id pins one release forever; aliases follow new releases.
+            log(f"{ctx} ({name}): model {model!r} pins a specific release. Prefer an "
+                f"alias (opus, sonnet, haiku) unless you need exactly this version.", "warn")
+        wt_access = a.get("worktree_access")
+        if wt_access is not None and wt_access not in ("rw", "ro"):
+            die(f"{ctx}: `worktree_access` must be 'rw' or 'ro'")
+        inherit = a.get("inherit_tool_defaults", True)
+        if not isinstance(inherit, bool):
+            die(f"{ctx}: `inherit_tool_defaults` must be true or false")
+        own_tools = _validate_tool_list(a.get("allowed_tools"), f"{ctx}.allowed_tools")
+        a["allowed_tools"] = expand_tools(
+            (tools_defaults if inherit else []) + own_tools, tool_groups, f"{ctx}.allowed_tools",
+        )
         effort = a.get("effort")
         if effort is not None and effort not in ("low", "medium", "high", "xhigh", "max"):
             die(f"{ctx}: invalid `effort`: {effort!r}")
@@ -493,43 +576,28 @@ Fill in the agent's voice, operating principles, vocabulary, and tone.
 ## Expected response format
 Describe what this agent should produce (which directory, structure, etc).
 
-## Available tools (auto-approved)
-This agent can use without asking: {tools_list}.
-
-If you need a tool that is NOT in this list, **don't try to call it
-anyway** — it will dead-end at a permission prompt (we run non-interactive).
-Instead: tell the human the tool isn't enabled and forward the request to an
-agent with that capability, OR ask the human to adjust allowed_tools in
-agents.yaml.
-
-## Operational honesty (mandatory)
-- If a tool failed, was blocked, or doesn't exist: **say it explicitly** to
-  the human. Don't invent a successful result or describe outcomes you didn't
-  produce.
-- You do not "automatically detect" file changes made by other agents. If a
-  file has `status: done` but you weren't the one who updated it,
-  **don't claim authorship** — say "someone/another agent finished this" or,
-  better yet, read the file and report what's there without assuming who did it.
-- Clearly distinguish: what YOU just did vs. what you read from a file vs.
-  what you inferred. When in doubt, read and quote; don't invent.
-
-## Persistent memory (if enabled)
-Before each run, the most relevant facts are injected into your context
-(the "## Memory" block in the prompt). You can:
-- memory_save(key, value, tags): record a fact (upsert by key — re-save overwrites)
-- memory_recall(query): search facts
-- memory_list(): list recent ones
-- memory_edit(key, value?, tags?): update an existing fact (fails if key doesn't exist)
-- memory_delete(key): remove a fact permanently (hard delete, no undo)
-
-Save: user preferences, architectural decisions, conventions, recurring names.
-Don't save: in-progress work, ephemeral state. When you discover a saved fact
-is wrong or outdated, prefer memory_edit (fix) or memory_delete (remove) over
-letting cruft pile up.
+## What to remember
+Role-specific facts worth saving to memory (preferences, conventions,
+recurring names). The framework's platform rules already cover how memory,
+tools and honesty work; keep this file about the role.
 
 ## Limits (does not do)
 Describe what this agent does NOT do — forward to whom.
 """
+
+
+# Framework mechanics that belong in platform.md or workflows.yaml step
+# instructions, not in an agent's CLAUDE.md (role identity + stack only).
+DRIFT_PATTERNS = [
+    (re.compile(re.escape(MCP_PREFIX)), "lists framework tool names (allowed_tools already grants them)"),
+    (re.compile(r"\b(complete_phase|create_worktree|cleanup_worktrees|init_repo|get_task_state|"
+                r"reopen_task|next_agent|baseline_sha)\b"), "describes workflow/worktree mechanics"),
+]
+
+
+def claude_md_drift(text: str) -> list[str]:
+    """Reasons an agent's CLAUDE.md drifted into framework mechanics (empty = clean)."""
+    return [why for rx, why in DRIFT_PATTERNS if rx.search(text)]
 
 
 def _memory_cfg(agent: dict) -> tuple[bool, int]:
@@ -556,12 +624,10 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
 
     claude_md = d / "CLAUDE.md"
     if not claude_md.exists():
-        tools_list = ", ".join(agent.get("allowed_tools") or []) or "(none)"
         claude_md.write_text(
             DEFAULT_CLAUDE_MD.format(
                 display_name=agent["display_name"],
                 description=agent["description"],
-                tools_list=tools_list,
             ),
             encoding="utf-8",
         )
@@ -617,6 +683,14 @@ def ensure_agent_dir(agent: dict, hooks_defaults: dict | None = None) -> None:
 
 
 # ---------- Docker compose override ----------
+
+def _worktree_mode(agent: dict) -> str:
+    """Mount suffix for /workspace/worktrees: "" (read-write) or ":ro"."""
+    access = agent.get("worktree_access")
+    if access is None:
+        access = "rw" if "repos" in (agent.get("write_access") or []) else "ro"
+    return "" if access == "rw" else ":ro"
+
 
 def build_agent_service(agent: dict, capability_instances: dict | None = None) -> dict:
     name = agent["name"]
@@ -680,7 +754,11 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
             # Worktrees shared between agents (the create_worktree MCP tool
             # writes here). Outside REPOS_DIR so as not to pollute the status
             # of the canonical repos (which the dev's VSCode/IDE sees).
-            "${WORKTREES_DIR:-./instance/worktrees}:/workspace/worktrees",
+            # Read-write only for agents that write code (repos in
+            # write_access) or that opt in with worktree_access: rw (e.g. to
+            # run tests that write caches); read-only for everyone else, so
+            # they can read a task's code but not change it (same idea as D-115).
+            "${WORKTREES_DIR:-./instance/worktrees}:/workspace/worktrees" + _worktree_mode(agent),
             # D-60: (Claude Code) hooks shared by all agents.
             # Scripts referenced by hooks_defaults in agents.yaml live here
             # and are available at /app/hooks/ inside the container (ro).
@@ -999,6 +1077,11 @@ def main() -> int:
     rotated_agents: list[str] = []
     for a in agents:
         log(f"\n== Agent: {a['name']} ({a['display_name']}) ==", "step")
+        md = AGENTS_DIR / a["name"] / "CLAUDE.md"
+        drift = claude_md_drift(md.read_text(encoding="utf-8")) if md.exists() else []
+        if drift:
+            log(f"  {md}: {'; '.join(drift)}. Move that to platform.md or the "
+                f"workflow step instructions; keep CLAUDE.md about the role.", "warn")
         if args.dry_run:
             log("  (dry-run, skipping actions)", "info")
             continue

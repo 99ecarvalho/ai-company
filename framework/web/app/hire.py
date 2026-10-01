@@ -69,7 +69,7 @@ Your response MUST be a single valid JSON object, with no markdown fences, conta
     "write_access": ["<mount>", ...],
     "read_access": ["<mount>", ...],
     "memory": true,
-    "model": "<optional: sonnet|opus|haiku or full id>",
+    "model": "<optional: sonnet|opus|haiku>",
     "effort": "<optional: low|medium|high|xhigh|max>",
     "allowed_tools": ["<tool>", ...]
   }},
@@ -85,16 +85,18 @@ entry:
 - write_access / read_access: lists. Options: "company", "orchestrator", "repos". Do NOT repeat the same mount in both.
 - memory: true (default).
 - model: OMIT by default. Include it only if the role needs a specific capability
-  ("opus" for heavy reasoning; "haiku" for simple/fast/cheap tasks).
+  ("opus" for heavy reasoning; "haiku" for simple/fast/cheap tasks). Always an
+  alias, never a full "claude-..." id (that pins an old release).
 - effort: OMIT by default. Use "high" for roles that need deep reasoning
   (planner, reviewer); "low" for mechanical/repetitive tasks (simple capture).
-- allowed_tools: ALWAYS include "mcp__ai_company__ask_human" and the 3 memory tools:
-  "mcp__ai_company__memory_save", "mcp__ai_company__memory_recall", "mcp__ai_company__memory_list".
-  If it takes part in a multi-agent workflow: include "mcp__ai_company__complete_phase".
-  If it needs to read/edit files: "Read", "Write", "Edit", "Glob", "Grep".
+- allowed_tools: use tool groups, written as "group:<name>". ALWAYS include
+  "group:human" (ask_human) and "group:memory".
+  If it takes part in a multi-agent workflow: "group:workflow".
+  If it needs to read/edit files: "group:files".
   If it needs to run commands: "Bash".
-  If it needs to search the web: "WebFetch", "WebSearch".
-  Consider "mcp__ai_company__ask_agent" if the role will likely need to consult another agent.
+  If it needs to search the web: "group:web".
+  If it writes code in repos (worktrees): "group:worktree".
+  Consider "group:agents" if the role will likely need to consult another agent.
 
 claude_md:
 - English.
@@ -102,10 +104,12 @@ claude_md:
 - Include the sections:
   * ## Persona / policy (voice, role principles, vocabulary)
   * ## Expected response format (which directory it writes to, file structure)
-  * ## Available tools (auto-approved) — list the tools from the list above with 1 line on when to use each
   * ## Persistent memory — state what SPECIFICALLY this agent should remember (role-related format preferences, architectural decisions, recurring names)
   * ## Limits (does not do) — state explicitly what it does NOT do and who to route that to
 - Be SPECIFIC to the role's domain. Do not generate generic content.
+- Do NOT describe framework tools or mechanics (tool names, complete_phase,
+  worktrees, memory tool usage): the platform rules already cover them, and
+  this file is about the role only.
 
 Return ONLY the JSON. No text outside it, no fences.
 """

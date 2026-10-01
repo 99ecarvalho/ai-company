@@ -54,7 +54,8 @@ Run:
 
 Test:
   test [SUITE]         Run tests. SUITE is one of:
-                         unit      agent + web unit tests in ${VENV} (default)
+                         unit      agent, reconcile and web unit tests in
+                                   ${VENV} (default)
                          services  the ai-tts and ai-transcriber test suites
                          e2e       the Playwright suite against the stack
                          all       unit, then services
@@ -225,6 +226,8 @@ test_unit() {
     py="$(cd "${VENV}/bin" && pwd)/python"
     info "Agent unit tests"
     (cd framework/bots/ai_company && "${py}" -m pytest -q tests)
+    info "reconcile unit tests"
+    (cd framework/scripts && "${py}" -m pytest -q tests)
     info "Web unit tests"
     (cd framework/web && "${py}" -m unittest discover -s app/tests -t . -q)
 }

@@ -508,7 +508,11 @@ Recommended:
    worktrees never pollute the main repo's `git status`), with branch
    `task/<task_slug>` and baseline at `origin/<default-branch>` HEAD (override
    via args). State is persisted in `tasks.worktrees`; the call is idempotent
-   (same task + repo + branch returns the existing worktree). Cleanup at the
+   (same task + repo + branch returns the existing worktree). The worktrees
+   directory is read-write only for agents with `repos` in `write_access`
+   (or `worktree_access: rw`, e.g. a reviewer that runs tests); other agents
+   mount it read-only, so they can read a task's code but not change it.
+   Cleanup at the
    end of the task via `cleanup_worktrees(task_slug)` — removes via
    `git worktree remove` + `prune` + `DELETE FROM tasks.worktrees`.
 3. **Never push directly to `main`.** A Claude Code PreToolUse hook
@@ -685,6 +689,25 @@ under the `mcp__ai_company__*` prefix. Each tool appears to the agent as
 a Claude function call — enabling one = listing it in `allowed_tools` in
 `agents.yaml` (or inheriting the image default). **Capability** tools
 (playwright/sentry/mysql) are separate and described in [Extending agents](#extending-agents-beyond-the-basics).
+
+Instead of listing each tool on every agent, `agents.yaml` accepts tool
+groups written as `group:<name>`, and a top-level `allowed_tools_defaults`
+that every agent inherits (opt out per agent with `inherit_tool_defaults: false`):
+
+```yaml
+allowed_tools_defaults: [group:files, group:human, group:agents, group:workflow, group:memory]
+agents:
+  - name: executor
+    allowed_tools: [Bash, group:worktree]   # only what it needs on top of the defaults
+```
+
+Built-in groups: `files` (Read/Write/Edit/Glob/Grep), `web` (WebFetch/WebSearch),
+`human`, `agents`, `workflow` (complete_phase, get_task_state), `tasks`,
+`worktree`, `memory`, `backlog`, `scheduler`, `skills` — the tables below are
+grouped the same way. Define your own (or override one) under `tool_groups:`.
+reconcile expands everything into the agent's `.claude/settings.json`. Keep
+tool names and framework mechanics out of agents' `CLAUDE.md`: reconcile
+warns when it finds them there (the platform rules already explain the tools).
 
 ### Human ↔ agent communication
 
