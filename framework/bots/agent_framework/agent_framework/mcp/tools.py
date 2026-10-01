@@ -299,11 +299,11 @@ CREATE_WORKTREE_TOOL: dict[str, Any] = {
 INIT_REPO_TOOL: dict[str, Any] = {
     "name": "init_repo",
     "description": (
-        "Initialize a new bare git repo in `/workspace/repos/<name>/` with an "
-        "empty initial commit on the default branch (`main`). Use this BEFORE "
+        "Create a new git repo at `/workspace/repos/<name>/` with an empty "
+        "initial commit on the default branch (`main`). Use this BEFORE "
         "`create_worktree` when starting a brand-new project that has no "
         "existing repository.\n\n"
-        "If the repo already exists (`.git/` present), this is a no-op and "
+        "If the repo already exists, this is a no-op and "
         "returns success with the existing info.\n\n"
         "After `init_repo`, call `create_worktree` to get an isolated working "
         "directory for your task."

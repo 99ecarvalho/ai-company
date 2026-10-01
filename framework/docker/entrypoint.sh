@@ -58,10 +58,11 @@ fi
 
 # Fix de ownership (volume novo pode vir com uid/gid 0)
 chown -R node:node "$CLAUDE_HOME" 2>/dev/null || true
-# Workspace dirs que o agente precisa escrever (worktrees, repos).
-# Bind mounts do host podem chegar com uid 0 (bootstrap como root).
+# Writable workspace dirs (worktrees, git dirs of init_repo repos). Host bind
+# mounts can arrive owned by uid 0 (bootstrap run as root). /workspace/repos
+# itself is read-only (D-115), so only its .gitdirs mount is touched.
 chown -R node:node /workspace/worktrees 2>/dev/null || true
-chown -R node:node /workspace/repos 2>/dev/null || true
+chown -R node:node /workspace/repos/.gitdirs 2>/dev/null || true
 if [ -f "$CLAUDE_JSON" ]; then
   chown node:node "$CLAUDE_JSON" 2>/dev/null || true
 fi

@@ -704,13 +704,36 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
     }
     for mount in ["company", "repos"]:
         src = _MOUNT_SRC[mount]
-        if mount in write:
-            # RW: agente precisa criar/editar/git-init neste mount.
-            # Para repos, edicao de codigo acontece em worktrees
-            # (/workspace/worktrees/<repo>/<task>/, mount separado),
-            # mas o agente precisa de RW em /workspace/repos/ para
-            # git init, git fetch, git worktree add (que escreve em
-            # .git/), etc.
+        if mount == "repos" and "repos" in write:
+            # D-115: repos canonicos montados RO + .git/ de cada repo
+            # sobreposto RW. `git worktree add`/`fetch`/`prune`/`config`
+            # (subprocess dentro do container do agente — workflow.py)
+            # so escrevem em .git/refs, .git/FETCH_HEAD, .git/worktrees/,
+            # .git/modules/. Working tree (codigo, configs do projeto)
+            # fica RO no kernel: agente nao consegue editar codigo direto
+            # em /workspace/repos/<repo>/<src>, mesmo via Bash. Edicao
+            # legitima acontece em /workspace/worktrees/<repo>/<task>/
+            # (mount RW separado, criado pelo create_worktree MCP).
+            svc["volumes"].append(f"{src}:/workspace/{mount}:ro")
+            # Repos created by the init_repo tool (web/app/repos.py) keep
+            # their git dir in <repos>/.gitdirs/<name>.git. One RW mount
+            # covers all of them, including repos created after this
+            # container started, which per-repo mounts below can't.
+            (REPOS_DIR / ".gitdirs").mkdir(parents=True, exist_ok=True)
+            svc["volumes"].append(f"{src}/.gitdirs:/workspace/{mount}/.gitdirs")
+            if REPOS_DIR.is_dir():
+                for entry in sorted(REPOS_DIR.iterdir()):
+                    if entry.name.startswith("."):
+                        continue
+                    if not (entry / ".git").is_dir():
+                        # Pula entries sem .git/ dir: lixo, repos do
+                        # init_repo (.git eh arquivo -> .gitdirs acima) ou
+                        # submodulos.
+                        continue
+                    svc["volumes"].append(
+                        f"{src}/{entry.name}/.git:/workspace/{mount}/{entry.name}/.git"
+                    )
+        elif mount in write:
             svc["volumes"].append(f"{src}:/workspace/{mount}")
         elif mount in read:
             svc["volumes"].append(f"{src}:/workspace/{mount}:ro")

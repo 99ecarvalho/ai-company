@@ -560,10 +560,10 @@ class McpServer:
 
         if name == "init_repo":
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager nao configurado neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager not configured on this agent")
             repo_name = arguments.get("name")
             if not repo_name:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "name obrigatorio")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "name is required")
             try:
                 result = await self.workflow.init_repo(
                     name=repo_name,
@@ -574,7 +574,7 @@ class McpServer:
             except Exception as e:
                 log.exception("mcp.init_repo.failed", repo=repo_name)
                 return _err(req_id, JSONRPC_INTERNAL_ERROR, f"internal error: {e}")
-            status = "ja existente" if not result["created"] else "criado"
+            status = "created" if result["created"] else "already exists"
             msg = f"Repo '{repo_name}' {status}. HEAD={result['head_sha'][:8]}.\n\n{result['guidance']}"
             return _ok(req_id, {"content": [{"type": "text", "text": msg}], "isError": False})
 

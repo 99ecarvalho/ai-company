@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import asyncpg
 import yaml
 
@@ -665,80 +666,43 @@ class WorkflowManager:
         name: str,
         agent_name: str,
     ) -> dict[str, Any]:
-        """Initialize a new git repo in /workspace/repos/<name>/.
+        """Create a new git repo at /workspace/repos/<name>/ (one empty commit on `main`).
 
-        Creates the directory, runs `git init`, configures user identity,
-        and makes an empty initial commit on `main`. Idempotent — if the
-        repo already exists, returns success without modifying it.
+        The agent's repos mount is read-only (D-115), so the web container
+        creates the repo (POST /api/repos/init); see web/app/repos.py for the
+        layout that keeps the new repo's git dir writable from here.
+        Idempotent: an existing repo is returned untouched.
         """
         if not SLUG_RE.match(name):
-            raise WorkflowError(f"repo name invalido (use kebab-case): {name!r}")
-
-        repos_root = Path(os.environ.get("WORKSPACE_REPOS", "/workspace/repos"))
-        repo_dir = repos_root / name
-
-        if (repo_dir / ".git").is_dir():
-            # Already exists — return info without touching it.
-            proc = await asyncio.create_subprocess_exec(
-                "git", "-C", str(repo_dir), "rev-parse", "HEAD",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            raise WorkflowError(f"invalid repo name (use kebab-case): {name!r}")
+        broker_url = os.environ.get("BROKER_URL", "http://web:8090").rstrip("/")
+        token = os.environ.get("BROKER_TOKEN", "")
+        timeout = aiohttp.ClientTimeout(total=60)
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.post(
+                f"{broker_url}/api/repos/init",
+                json={"name": name},
+                headers={"Authorization": f"Bearer {token}"},
+            ) as r:
+                if r.status == 422:
+                    raise WorkflowError((await r.json()).get("detail", "invalid repo name"))
+                if r.status >= 400:
+                    raise RuntimeError(f"repo init failed: HTTP {r.status} {(await r.text())[:300]}")
+                result = await r.json()
+        repo_dir = result["path"]
+        sha = result["head_sha"]
+        log.info("workflow.init_repo", repo=name, created=result["created"], head_sha=sha, agent=agent_name)
+        if result["created"]:
+            guidance = (
+                f"Repo '{name}' created at {repo_dir} (branch main, SHA {sha[:8]}). "
+                "Now call create_worktree to get an isolated worktree for your task."
             )
-            stdout, _ = await proc.communicate()
-            head_sha = stdout.decode().strip() if proc.returncode == 0 else "unknown"
-            log.info("workflow.init_repo.exists", repo=name, agent=agent_name)
-            return {
-                "repo": name,
-                "path": str(repo_dir),
-                "head_sha": head_sha,
-                "created": False,
-                "guidance": (
-                    f"Repo '{name}' ja existe em {repo_dir}. "
-                    "Use create_worktree para criar uma worktree de trabalho."
-                ),
-            }
-
-        # Create the repo
-        repo_dir.mkdir(parents=True, exist_ok=True)
-        commands = [
-            ["git", "init", "--initial-branch=main", str(repo_dir)],
-            ["git", "-C", str(repo_dir), "config", "user.email", "agent@framework.local"],
-            ["git", "-C", str(repo_dir), "config", "user.name", "Agent Framework"],
-            ["git", "-C", str(repo_dir), "commit", "--allow-empty", "-m", "Initial commit"],
-        ]
-        for cmd in commands:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        else:
+            guidance = (
+                f"Repo '{name}' already exists at {repo_dir}. "
+                "Call create_worktree to get a worktree to work in."
             )
-            stdout, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                raise WorkflowError(
-                    f"Falha ao inicializar repo '{name}': {' '.join(cmd)}\n"
-                    f"stderr: {stderr.decode().strip()}"
-                )
-
-        # Get the initial commit SHA
-        proc = await asyncio.create_subprocess_exec(
-            "git", "-C", str(repo_dir), "rev-parse", "HEAD",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        head_sha = stdout.decode().strip()
-
-        log.info("workflow.init_repo.created", repo=name, head_sha=head_sha, agent=agent_name)
-        return {
-            "repo": name,
-            "path": str(repo_dir),
-            "head_sha": head_sha,
-            "created": True,
-            "guidance": (
-                f"Repo '{name}' criado em {repo_dir} (branch main, SHA {head_sha[:8]}). "
-                "Agora use create_worktree para criar uma worktree isolada para sua task."
-            ),
-        }
+        return {**result, "guidance": guidance}
 
     async def create_worktree(
         self,
@@ -862,7 +826,28 @@ class WorkflowManager:
         Se origin/HEAD nao estiver setada localmente (clone antigo), tenta
         `git remote set-head origin --auto` antes. Se tudo falhar, sobe erro
         explicativo — NAO chutamos `main` ou `master`.
+
+        A repo with no `origin` remote (e.g. one made by init_repo) has no
+        remote default branch: its local HEAD is the baseline.
         """
+        remotes = await asyncio.create_subprocess_exec(
+            "git", "-C", str(repo_dir), "remote",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        remotes_out, _ = await remotes.communicate()
+        if remotes.returncode == 0 and "origin" not in remotes_out.decode().split():
+            head = await asyncio.create_subprocess_exec(
+                "git", "-C", str(repo_dir), "rev-parse", "HEAD",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            head_out, head_err = await head.communicate()
+            if head.returncode != 0:
+                raise WorkflowError(
+                    f"rev-parse HEAD failed at {repo_dir}: "
+                    + head_err.decode("utf-8", "replace").strip()
+                )
+            return head_out.decode().strip()
+
         fetch = await asyncio.create_subprocess_exec(
             "git", "-C", str(repo_dir), "fetch", "--quiet", "origin",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,

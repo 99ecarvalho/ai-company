@@ -93,7 +93,7 @@ services:
     volumes:
       - ${AGENTS_DIR:-./instance/agents}:/workspace/agents      # rw pra "contratar" novo agent (reconcile)
       - ${COMPANY_DIR:-./instance/company}:/workspace/company   # rw pra viewer de arquivos + upload
-      - ${REPOS_DIR:-./instance/repos}:/workspace/repos:ro      # ro pra viewer (dev workspace)
+      - ${REPOS_DIR:-./instance/repos}:/workspace/repos         # rw: file viewer + /api/repos/init (agents mount it ro, D-115)
       - ${SESSIONS_DIR:-./instance/sessions}:/workspace/sessions  # rw: reconcile mkdir's <name>/ por agente novo
       - ${INSTANCE_WEB_DIR:-./instance/web}:/workspace/web:ro   # ro: PWA assets override (icons/)
       # Reconcile in-process: .env e override.yml rw pra escrita de tokens

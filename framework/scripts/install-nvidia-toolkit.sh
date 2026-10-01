@@ -1,4 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Installs the NVIDIA Container Toolkit on Debian/Ubuntu so Docker can use the GPU
+# (needed by docker-compose.gpu.yml for the transcriber). Requires sudo.
 set -euo pipefail
 
 echo "=== Adding NVIDIA Container Toolkit repo ==="

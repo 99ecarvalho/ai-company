@@ -171,6 +171,7 @@ agents:
       - mcp__agent_framework__ask_agent
       - mcp__agent_framework__complete_phase
       - mcp__agent_framework__get_task_state
+      - mcp__agent_framework__init_repo         # creates a brand-new repo (via web, D-115 safe)
       - mcp__agent_framework__create_worktree   # isolates the task in a worktree
       - mcp__agent_framework__cleanup_worktrees # cleans up at the end
       - mcp__agent_framework__memory_save

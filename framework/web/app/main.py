@@ -2804,6 +2804,28 @@ if (BUILD_DIR / "_app").is_dir():
     app.mount("/_app", StaticFiles(directory=str(BUILD_DIR / "_app")), name="svelte_app")
 
 
+# ---------- Repos (init on behalf of agents) ----------
+
+@app.post("/api/repos/init")
+async def repos_init(payload: dict, principal: Principal = Depends(get_principal)):
+    """Create a new git repo in the shared repos workspace. Idempotent.
+
+    Agents can't do this themselves: they mount the workspace read-only
+    (D-115). See app/repos.py for the layout."""
+    if principal.kind != "bot" and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="only agents and admins can create repos")
+    from . import repos as _repos
+    try:
+        result = await asyncio.to_thread(_repos.init_repo, payload.get("name") or "")
+    except _repos.RepoError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        log.exception("repos.init_failed", name=payload.get("name"))
+        raise HTTPException(status_code=500, detail=f"could not create repo: {e}")
+    log.info("repos.init", by=principal.username, **result)
+    return result
+
+
 # ---------- TTS proxy ----------
 #
 # Talks to the ai-tts service (external/ai-tts). Contract notes:
