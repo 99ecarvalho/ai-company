@@ -43,7 +43,7 @@ Run:
   stop [SERVICE...]    Stop and remove the stack (volumes are kept), or
                        stop only the given services
   restart [SERVICE...] stop, then start
-  build [SERVICE...]   Build images (fetches submodules first)
+  build [SERVICE...]   Build images (fetches missing submodules first)
   rebuild SERVICE...   Build and recreate services. Use this after editing
                        code: the images copy the source, so a plain restart
                        keeps running the old code
@@ -112,6 +112,17 @@ cmd_submodules() {
     fi
 }
 
+# For build/test: fetch submodules that were never checked out, but leave
+# initialized ones alone, so a pointer moved with "submodules --latest" (and
+# not committed yet) isn't reset to the pinned commit.
+ensure_submodules() {
+    need git
+    if git submodule status | grep -q '^-'; then
+        info "Fetching missing submodules"
+        git submodule update --init --recursive
+    fi
+}
+
 cmd_setup() {
     cmd_submodules
     info "Creating .env and instance/"
@@ -148,7 +159,7 @@ cmd_restart() {
 
 cmd_build() {
     need_docker
-    cmd_submodules
+    ensure_submodules
     docker compose build "$@"
 }
 
@@ -219,7 +230,7 @@ test_unit() {
 }
 
 test_services() {
-    cmd_submodules
+    ensure_submodules
     info "ai-tts tests"
     ./external/ai-tts/run.sh test
     info "ai-transcriber tests"
