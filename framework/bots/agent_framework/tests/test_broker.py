@@ -23,7 +23,7 @@ async def test_register_and_lookup(broker: McpBroker):
     assert broker.topic_for_slug("nao-existe") is None
 
 
-async def test_ask_human_blocking_resolves(broker: McpBroker):
+async def test_ask_human_resolves(broker: McpBroker):
     key = TopicKey(stream="debug", topic="t1")
     broker.register_topic(key)
 
@@ -44,20 +44,10 @@ async def test_ask_human_blocking_resolves(broker: McpBroker):
         pytest.fail("broker nunca teve pending")
 
     resolver_task = asyncio.create_task(resolver())
-    result = await broker.ask_human(key, "qual cor?", context="teste", blocking=True)
+    result = await broker.ask_human(key, "qual cor?", context="teste")
     await resolver_task
     assert result == "minha resposta"
     assert received == [("qual cor?", "teste", True)]
-
-
-async def test_ask_human_non_blocking_returns_fallback(broker: McpBroker):
-    key = TopicKey(stream="debug", topic="t1")
-    broker.register_topic(key)
-    broker.set_on_ask(_noop)
-    result = await broker.ask_human(
-        key, "pergunta", blocking=False, fallback="segue com hipotese X"
-    )
-    assert result == "segue com hipotese X"
 
 
 async def test_ask_human_persists_then_cleans(broker: McpBroker):
@@ -78,7 +68,7 @@ async def test_ask_human_persists_then_cleans(broker: McpBroker):
         pytest.fail("arquivo nunca apareceu")
 
     t = asyncio.create_task(observe_and_resolve())
-    await broker.ask_human(key, "Q", blocking=True)
+    await broker.ask_human(key, "Q")
     await t
     # Depois limpa
     assert not broker.pending_question_path(key).exists()
@@ -87,18 +77,6 @@ async def test_ask_human_persists_then_cleans(broker: McpBroker):
 async def test_resolve_no_pending_returns_false(broker: McpBroker):
     key = TopicKey(stream="x", topic="y")
     assert broker.resolve(key, "ignored") is False
-
-
-async def test_ask_human_timeout_returns_fallback(broker: McpBroker):
-    key = TopicKey(stream="debug", topic="slow")
-    broker.register_topic(key)
-    broker.set_on_ask(_noop)
-    result = await broker.ask_human(
-        key, "Q", blocking=True,
-        timeout_minutes=0.005,  # 0.3s
-        fallback="fallback-default",
-    )
-    assert result == "fallback-default"
 
 
 async def _noop(*args, **kwargs):

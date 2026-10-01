@@ -186,7 +186,7 @@ async def test_cancel_sem_task_retorna_info(session_mgr: SessionManager):
         "display_recipient": "s", "subject": "nada",
     })
     msgs = [c for (_, _, c) in broker_client.sent]
-    assert any("Nada pra cancelar" in m for m in msgs), msgs
+    assert any("Nothing to cancel" in m for m in msgs), msgs
 
 
 async def test_cancel_silent_nao_posta_nada(session_mgr: SessionManager):
@@ -203,8 +203,8 @@ async def test_cancel_silent_nao_posta_nada(session_mgr: SessionManager):
         "display_recipient": "s", "subject": "nada", "silent": True,
     })
     msgs = [c for (_, _, c) in broker_client.sent]
-    assert not any("Nada pra cancelar" in m for m in msgs), msgs
-    assert not any("Cancelado pelo usuario" in m for m in msgs), msgs
+    assert not any("Nothing to cancel" in m for m in msgs), msgs
+    assert not any("Cancelled by user" in m for m in msgs), msgs
 
 
 async def test_cancel_antes_de_rodar_dreina_e_avisa(session_mgr: SessionManager):
@@ -231,7 +231,7 @@ async def test_cancel_antes_de_rodar_dreina_e_avisa(session_mgr: SessionManager)
         "display_recipient": "s", "subject": "second",
     })
     ok = await _wait_for(
-        lambda: any("Cancelado pelo usuario" in c for (_, _, c) in broker_client.sent),
+        lambda: any("Cancelled by user" in c for (_, _, c) in broker_client.sent),
         timeout=1.0,
     )
     assert ok, f"esperava confirmacao de cancel; msgs: {broker_client.sent}"
@@ -263,7 +263,7 @@ async def test_cancel_durante_run_sem_proc_registrado_retorna_too_late(session_m
         "display_recipient": "s", "subject": "t",
     })
     ok = await _wait_for(
-        lambda: any("Tarde demais" in c for (_, _, c) in broker_client.sent),
+        lambda: any("Too late" in c for (_, _, c) in broker_client.sent),
         timeout=1.0,
     )
     assert ok, f"esperava too_late; msgs: {broker_client.sent}"

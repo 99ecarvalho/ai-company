@@ -86,7 +86,7 @@ async def test_memory_edit_fails_on_missing_key(server):
     srv, _ = server
     resp = await _call(srv, "memory_edit", {"key": "missing", "value": "x"})
     assert "error" in resp
-    assert "nao existe" in resp["error"]["message"]
+    assert "does not exist" in resp["error"]["message"]
 
 
 async def test_memory_edit_requires_key(server):
@@ -116,7 +116,7 @@ async def test_memory_delete_fails_on_missing_key(server):
     srv, _ = server
     resp = await _call(srv, "memory_delete", {"key": "ghost"})
     assert "error" in resp
-    assert "nao existe" in resp["error"]["message"]
+    assert "does not exist" in resp["error"]["message"]
 
 
 async def test_memory_delete_requires_key(server):
