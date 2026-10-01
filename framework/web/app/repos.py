@@ -41,8 +41,10 @@ class RepoError(ValueError):
 
 
 def _git(*args: str, cwd: Path | None = None) -> str:
+    # Repos belong to the agents' uid, not to us (we may run as root):
+    # without safe.directory git refuses them as "dubious ownership".
     proc = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30,
+        ["git", "-c", "safe.directory=*", *args], cwd=cwd, capture_output=True, text=True, timeout=30,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")

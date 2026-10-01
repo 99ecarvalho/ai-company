@@ -16,7 +16,9 @@ from app.repos import RepoError, init_repo
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
+    # Like the agents, which own the repos; when tests run as root (web
+    # image), init_repo hands them to uid 1000.
+    return subprocess.run(["git", "-c", "safe.directory=*", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 class InitRepo(unittest.TestCase):
