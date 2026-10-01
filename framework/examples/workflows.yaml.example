@@ -1,53 +1,51 @@
-# workflows.yaml.example — TEMPLATE MINIMO comentado pra sua empresa.
+# workflows.yaml.example — MINIMAL annotated TEMPLATE for your company.
 #
-# Copia pra instance/company/workflows.yaml, edita e pronto — o framework
-# recarrega a cada complete_phase (nao precisa restart).
+# Copy this to instance/company/workflows.yaml, edit, and you're set — the
+# framework reloads on every complete_phase (no restart needed).
 #
-# === O que e isto? ===
+# === What is this? ===
 #
-# O agent-framework eh agnostico a vocabulario. Cada empresa declara aqui
-# os seus steps (nomes livres, em qualquer idioma), os agentes default
-# por step, os artefatos produzidos, e as transicoes validas. O framework
-# carrega em runtime e valida chamadas de `complete_phase` contra esta
-# declaracao.
+# agent-framework is vocabulary-agnostic. Each company declares here its own
+# steps (free-form names, in any language), default agents per step, the
+# artifacts produced, and the valid transitions. The framework loads this at
+# runtime and validates `complete_phase` calls against this declaration.
 #
-# O framework conhece APENAS tres terminais com semantica fixa:
-#   done          => status=done         (sucesso)
-#   halt          => status=blocked      (humano precisa destravar)
-#   human_review  => status=human_review (humano precisa decidir direcao)
-# Qualquer outro nome eh step livre, definido aqui.
+# The framework knows ONLY three terminals with fixed semantics:
+#   done          => status=done         (success)
+#   halt          => status=blocked      (human needs to unblock)
+#   human_review  => status=human_review (human needs to decide direction)
+# Any other name is a free-form step, defined here.
 #
-# === Como uma task se liga a um workflow? ===
+# === How does a task bind to a workflow? ===
 #
-# Na primeira chamada de `complete_phase` pra uma task nova, o agente
-# passa `workflow: <name>` (ex: `workflow: default`) junto com `title`.
-# O framework persiste isso em `tasks.tasks.workflow` e, dai em diante,
-# cada complete_phase consulta este arquivo pra validar transicao e
-# resolver o agente do proximo step. Se `workflow` nao foi informado —
-# ou nao bate com nenhum aqui — o framework opera em **modo permissivo**:
-# aceita qualquer step, mas exige `next_agent` explicito em todo
-# complete_phase.
+# On the first `complete_phase` call for a new task, the agent passes
+# `workflow: <name>` (e.g. `workflow: default`) together with `title`. The
+# framework persists this in `tasks.tasks.workflow` and, from there on, every
+# complete_phase consults this file to validate the transition and resolve
+# the next step's agent. If `workflow` was not provided — or doesn't match
+# anything here — the framework runs in **permissive mode**: accepts any
+# step, but requires an explicit `next_agent` on every complete_phase.
 #
-# === Schema de cada step ===
+# === Per-step schema ===
 #
-#   agent:    (opcional) agente default que executa este step. Se omitido,
-#             complete_phase que aponta pra ele exige `next_agent` explicito
-#             (util quando varios agentes podem executar o mesmo step — ex:
-#             um step "build" com varios executors por stack/linguagem).
-#   artifact: (opcional) nome do arquivo que o agente produz neste step.
-#             Injetado no prompt do handoff ("procure por X na task").
-#   next:     lista de steps/terminais validos como proximo. complete_phase
-#             rejeita transicao pra qualquer destino fora desta lista.
+#   agent:    (optional) default agent that runs this step. If omitted,
+#             complete_phase pointing here requires an explicit `next_agent`
+#             (useful when multiple agents can run the same step — e.g.
+#             a "build" step with multiple executors per stack/language).
+#   artifact: (optional) name of the file the agent produces in this step.
+#             Injected in the handoff prompt ("look for X in the task").
+#   next:     list of valid next steps/terminals. complete_phase rejects
+#             transitions to any destination not in this list.
 
 workflows:
 
-  # === EXEMPLO 1: workflow default simples (cinco steps + terminais) ===
-  # Fluxo linear tipico: intake -> plan -> build -> review -> wrap.
+  # === EXAMPLE 1: simple default workflow (five steps + terminals) ===
+  # Typical linear flow: intake -> plan -> build -> review -> wrap.
   default:
     initial_step: intake
     steps:
       intake:
-        agent: triager               # agente que faz a triagem inicial
+        agent: triager               # agent that does the initial triage
         artifact: 00-intake.md
         next: [plan, halt, human_review]
       plan:
@@ -55,8 +53,8 @@ workflows:
         artifact: 01-plan.md
         next: [build, halt, human_review]
       build:
-        # `agent` omitido: planner escolhe qual executor (varia por stack,
-        # idioma, dominio). Passa next_agent=<nome> no complete_phase.
+        # `agent` omitted: planner chooses which executor (varies by stack,
+        # language, domain). Passes next_agent=<name> in complete_phase.
         artifact: 02-build/README.md
         next: [review, plan, halt, human_review]
       review:
@@ -68,8 +66,8 @@ workflows:
         artifact: wrap.md
         next: [done]
 
-  # === EXEMPLO 2: workflow curto pra investigacao (sem build) ===
-  # Util pra perguntas que terminam com um documento, sem codigo.
+  # === EXAMPLE 2: short workflow for investigation (no build) ===
+  # Useful for questions that end in a document, without code.
   research:
     initial_step: intake
     steps:

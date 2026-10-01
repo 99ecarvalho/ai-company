@@ -1,17 +1,31 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { ArrowRight, Sparkles, Loader2, Check } from 'lucide-svelte';
+  import { ArrowRight, Sparkles, Loader2, Check, Bell, Lock } from 'lucide-svelte';
   import {
     listPhilosophyTemplates,
     onboardProposeAgents,
     onboardApply,
+    getWebSettings,
+    generateVapid,
+    setAdminPassword,
     type PhilosophyTemplate,
     type ProposedAgent,
+    type WebSettingsGeneral,
     ApiError
   } from '$lib/api';
   import { logEvent } from '$lib/stores/ui';
 
-  let step = $state<1 | 2 | 3 | 4>(1);
+  type Step = 0 | 1 | 2 | 3 | 4;
+  let step = $state<Step>(0);
+
+  // Step 0 — setup
+  let webSettings = $state<WebSettingsGeneral | null>(null);
+  let vapidGenerating = $state(false);
+  let passwordDraft = $state('');
+  let passwordConfirm = $state('');
+  let passwordSaving = $state(false);
+  let passwordSet = $state(false);
+  let passwordError = $state<string | null>(null);
 
   // Step 1 — company
   let companyName = $state('');
@@ -36,12 +50,54 @@
   let applyResult = $state<{ created: string[]; errors: { slug: string; error: string }[] } | null>(null);
 
   $effect(() => {
+    if (step === 0 && webSettings === null) {
+      getWebSettings()
+        .then((s) => (webSettings = s))
+        .catch((e) => logEvent(`web-settings: ${e}`, 'err'));
+    }
     if (step === 2 && templates.length === 0) {
       listPhilosophyTemplates()
         .then((r) => (templates = r.items))
         .catch((e) => logEvent(`philosophies: ${e}`, 'err'));
     }
   });
+
+  async function genVapid() {
+    vapidGenerating = true;
+    try {
+      await generateVapid();
+      webSettings = await getWebSettings();
+      logEvent('Push notifications enabled', 'ok');
+    } catch (e) {
+      logEvent(`generate vapid: ${e}`, 'err');
+    } finally {
+      vapidGenerating = false;
+    }
+  }
+
+  async function savePassword() {
+    passwordError = null;
+    if (passwordDraft.length < 8) {
+      passwordError = 'Password must be at least 8 chars.';
+      return;
+    }
+    if (passwordDraft !== passwordConfirm) {
+      passwordError = 'Passwords do not match.';
+      return;
+    }
+    passwordSaving = true;
+    try {
+      await setAdminPassword(passwordDraft);
+      passwordSet = true;
+      passwordDraft = '';
+      passwordConfirm = '';
+      logEvent('Admin password set — login required from now on', 'ok');
+    } catch (e) {
+      passwordError = String(e);
+    } finally {
+      passwordSaving = false;
+    }
+  }
 
   function buildCompanyMd(): string {
     return [
@@ -150,7 +206,7 @@
     </header>
 
     <nav class="flex flex-wrap gap-2 text-xs">
-      {#each [1, 2, 3, 4] as n}
+      {#each [0, 1, 2, 3, 4] as n}
         <span
           class="rounded-md border px-3 py-1.5 font-mono"
           class:border-accent={step === n}
@@ -160,13 +216,105 @@
           class:text-muted={step !== n && step < n}
           class:bg-panel2={step > n}
         >
-          {n}. {['Company', 'Philosophy', 'Agents', 'Apply'][n - 1]}
+          {n + 1}. {['Setup', 'Company', 'Philosophy', 'Agents', 'Apply'][n]}
         </span>
       {/each}
     </nav>
 
     <section class="rounded-md border border-border bg-panel p-4">
-      {#if step === 1}
+      {#if step === 0}
+        <h2 class="mb-1 text-base font-semibold">Quick setup</h2>
+        <p class="mb-4 text-xs text-muted">
+          Optional. Skip to use defaults — both can also be configured later in
+          Settings → System.
+        </p>
+        <div class="grid gap-3">
+          <!-- Push notifications -->
+          <div class="rounded-md border border-border bg-panel2 p-3">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <h3 class="inline-flex items-center gap-1.5 text-sm font-semibold">
+                <Bell class="h-4 w-4" /> Push notifications
+              </h3>
+              {#if webSettings?.vapid.configured}
+                <span class="inline-flex items-center gap-1 text-[10px] text-ok">
+                  <Check class="h-3 w-3" /> Enabled
+                </span>
+              {:else}
+                <span class="text-[10px] text-muted">Disabled</span>
+              {/if}
+            </div>
+            <p class="mb-2 text-xs text-muted">
+              Get notified when an agent calls <code>ask_human</code> and you're
+              not in the PWA.
+            </p>
+            {#if !webSettings?.vapid.configured}
+              <button
+                type="button"
+                onclick={genVapid}
+                disabled={vapidGenerating}
+                class="inline-flex min-h-tap items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
+              >
+                {#if vapidGenerating}
+                  <Loader2 class="h-3.5 w-3.5 animate-spin" /> Generating…
+                {:else}
+                  <Bell class="h-3.5 w-3.5" /> Generate keypair
+                {/if}
+              </button>
+            {/if}
+          </div>
+
+          <!-- Admin password -->
+          <div class="rounded-md border border-border bg-panel2 p-3">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <h3 class="inline-flex items-center gap-1.5 text-sm font-semibold">
+                <Lock class="h-4 w-4" /> Admin password
+              </h3>
+              {#if passwordSet}
+                <span class="inline-flex items-center gap-1 text-[10px] text-ok">
+                  <Check class="h-3 w-3" /> Set
+                </span>
+              {:else}
+                <span class="text-[10px] text-muted">No login required</span>
+              {/if}
+            </div>
+            <p class="mb-2 text-xs text-muted">
+              Set a password to require login. Leave blank to keep single-user
+              dev mode (anyone with access to <code>localhost:9090</code> is admin).
+            </p>
+            {#if !passwordSet}
+              <div class="grid gap-2">
+                <input
+                  type="password"
+                  bind:value={passwordDraft}
+                  placeholder="New password (min 8 chars)"
+                  class="min-h-tap rounded-md border border-border bg-panel px-2 py-2 text-sm"
+                />
+                <input
+                  type="password"
+                  bind:value={passwordConfirm}
+                  placeholder="Confirm password"
+                  class="min-h-tap rounded-md border border-border bg-panel px-2 py-2 text-sm"
+                />
+                {#if passwordError}
+                  <p class="text-xs text-accent2">{passwordError}</p>
+                {/if}
+                <button
+                  type="button"
+                  onclick={savePassword}
+                  disabled={passwordSaving || !passwordDraft}
+                  class="inline-flex min-h-tap items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
+                >
+                  {#if passwordSaving}
+                    <Loader2 class="h-3.5 w-3.5 animate-spin" /> Saving…
+                  {:else}
+                    <Lock class="h-3.5 w-3.5" /> Set password
+                  {/if}
+                </button>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {:else if step === 1}
         <h2 class="mb-3 text-base font-semibold">About the company</h2>
         <div class="grid gap-3">
           <label class="grid gap-1 text-xs">
@@ -310,13 +458,13 @@
       <div class="flex justify-between">
         <button
           type="button"
-          onclick={() => (step = (Math.max(1, step - 1) as 1 | 2 | 3 | 4))}
-          disabled={step === 1}
+          onclick={() => (step = (Math.max(0, step - 1) as Step))}
+          disabled={step === 0}
           class="min-h-tap rounded-md border border-border bg-panel2 px-4 py-2 text-sm hover:bg-bg disabled:opacity-30"
         >Back</button>
         <button
           type="button"
-          onclick={() => (step = (Math.min(4, step + 1) as 1 | 2 | 3 | 4))}
+          onclick={() => (step = (Math.min(4, step + 1) as Step))}
           disabled={(step === 1 && !canNext1) || (step === 3 && !canNext3) || step === 4}
           class="inline-flex min-h-tap items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
         >Next <ArrowRight class="h-4 w-4" /></button>

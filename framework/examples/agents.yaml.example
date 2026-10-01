@@ -1,42 +1,43 @@
-# agents.yaml.example — TEMPLATE MINIMO comentado pra sua empresa.
+# agents.yaml.example — MINIMAL annotated TEMPLATE for your company.
 #
-# Copia isso pra agents.yaml, edita, e roda:
+# Copy this to agents.yaml, edit, and run:
 #   ./scripts/reconcile.sh
 #
-# O agents.yaml atual (sem .example) tem 7 agentes de exemplo — podem servir
-# de referencia mas nao sao obrigatorios. Comece do zero aqui se quiser.
+# The current agents.yaml (without .example) ships 5 example agents — feel
+# free to use them as reference, but they're not mandatory. Start from
+# scratch here if you want.
 
 schema_version: 1
 
-# ==== HOOKS do Claude Code (opcional, passthrough pra settings.json) ========
-# Hooks sao shell commands que rodam em pontos da lifecycle do Claude Code
-# (PreToolUse, PostToolUse, Stop, SessionStart, etc). Ver:
+# ==== Claude Code HOOKS (optional, passthrough to settings.json) ============
+# Hooks are shell commands that run at lifecycle points of Claude Code
+# (PreToolUse, PostToolUse, Stop, SessionStart, etc). See:
 #   https://code.claude.com/docs/en/hooks-guide
 #
-# Dois niveis: `hooks_defaults` (aqui, aplica a todos os agentes) + `hooks`
-# por agente (concatenado aos defaults por evento). Cada grupo de hooks e
-# preservado intacto — Claude Code trata matchers independentemente.
+# Two levels: `hooks_defaults` (here, applied to every agent) + per-agent
+# `hooks` (concatenated to defaults per event). Each hooks group is preserved
+# intact — Claude Code handles matchers independently.
 #
 # Gotchas:
-# - Scripts referenciados precisam estar acessiveis DENTRO do container.
-#   Duas convencoes:
-#     (a) Shared: copie pra instance/hooks/*.sh — ficam em /app/hooks/ (ro)
-#         via bind mount em todos os agentes. Use pra hooks de politica
-#         (bloqueios, auditoria, formatters globais).
-#     (b) Per-agent: instance/agents/<nome>/hooks/*.sh — ficam em
-#         /app/agents/<nome>/hooks/ via bind-mount do agent home.
-# - `jq` e `yq` ja estao na imagem agent.
-# - Edit em settings.json so precisa de `make reconcile` + restart do agente
-#   (nao precisa rebuild de imagem — nao mexe em Python).
+# - Referenced scripts must be reachable INSIDE the container.
+#   Two conventions:
+#     (a) Shared: copy to instance/hooks/*.sh — they end up at /app/hooks/ (ro)
+#         via bind mount on every agent. Use this for policy hooks
+#         (blocks, auditing, global formatters).
+#     (b) Per-agent: instance/agents/<name>/hooks/*.sh — they end up at
+#         /app/agents/<name>/hooks/ via the agent home bind mount.
+# - `jq` and `yq` are already in the agent image.
+# - Editing settings.json only requires `make reconcile` + agent restart
+#   (no image rebuild — no Python touched).
 #
-# Exemplo ativo abaixo: block-push-main bloqueia agentes de fazer `git push`
-# contra main/master (forca branch + MR/PR). Copie o script generico do
-# framework pra sua instance com:
+# Active example below: block-push-main blocks agents from running `git push`
+# against main/master (forces a branch + MR/PR). Copy the generic script from
+# the framework into your instance with:
 #   cp framework/examples/hooks/block-push-main.sh instance/hooks/
 #
-# Esse hook nao afeta `git push` direto do host — so vale pra Bash chamado
-# pelos agentes. Se quiser desativar em alguma task de emergencia, edite
-# aqui + make reconcile + docker compose restart <agente>.
+# This hook does NOT affect `git push` from the host — only Bash invoked by
+# agents. To disable it for an emergency task, edit here + make reconcile +
+# docker compose restart <agent>.
 hooks_defaults:
   PreToolUse:
     - matcher: "Bash"
@@ -44,22 +45,22 @@ hooks_defaults:
         - type: command
           command: "/app/hooks/block-push-main.sh"
 
-# ==== CAPABILITY INSTANCES (opcional) ============================
-# Instancias parametrizadas de capabilities MCP. Cada instance:
-#   - tem nome unico — vira o namespace MCP (`mcp__<name>__*`) e o
-#     server em mcp.extra.json. Agentes consomem em `capabilities`.
-#   - aponta pra um template do framework (CAPABILITY_TEMPLATES em
+# ==== CAPABILITY INSTANCES (optional) ============================
+# Parameterized instances of MCP capabilities. Each instance:
+#   - has a unique name — becomes the MCP namespace (`mcp__<name>__*`) and
+#     the server in mcp.extra.json. Agents consume it in `capabilities`.
+#   - points at a framework template (CAPABILITY_TEMPLATES in
 #     framework/scripts/reconcile.py).
-#   - declara `env`: mapping de env vars que o MCP server le. Values
-#     sao template-strings Compose (`${VAR:-default}`), expandidas
-#     ao subir o container do agente.
+#   - declares `env`: a mapping of env vars the MCP server reads. Values
+#     are Compose template strings (`${VAR:-default}`), expanded when the
+#     agent container starts.
 #
-# Permite multiplas instancias do mesmo template (mysql-producao +
-# mysql-staging) com creds distintas. Sem instances declaradas, esse
-# bloco fica vazio/omitido — instalacao usa so singletons.
+# Allows multiple instances of the same template (mysql-prod + mysql-staging)
+# with different creds. With no instances declared, this block is empty/omitted —
+# the install uses singletons only.
 #
 # capability_instances:
-#   mysql-producao:
+#   mysql-prod:
 #     template: mysql                  # @benborla29/mcp-server-mysql, stdio
 #     env:
 #       MYSQL_HOST: "${DB_PROD_HOST:-}"
@@ -71,22 +72,22 @@ hooks_defaults:
 agents:
 
   # ============================================================
-  # EXEMPLO COMPLETO: 5 agentes que cobrem os workflows shipados
-  # em workflows.yaml.example (`default` e `research`).
-  # Cada agente cobre um papel distinto. Remova/ajuste conforme
-  # os papeis que sua empresa precisa.
+  # FULL EXAMPLE: 5 agents covering the workflows shipped in
+  # workflows.yaml.example (`default` and `research`).
+  # Each agent covers a distinct role. Remove/adjust to fit the
+  # roles your company actually needs.
   # ============================================================
 
-  # ==== triager: primeiro contato, classifica + encerra ====
-  # Aparece em: default (intake, wrap), research (intake, wrap).
+  # ==== triager: first contact, classifies + closes ====
+  # Appears in: default (intake, wrap), research (intake, wrap).
   - name: triager
     display_name: "Triager"
-    description: "Triagem inicial das tasks e encerramento (wrap-up)."
+    description: "Initial task triage and wrap-up."
     streams: [triager]
     pool_size: 3
     idle_timeout_sec: 900
     write_access: [company, orchestrator]
-    read_access: [repos]              # le codigo so pra entender contexto
+    read_access: [repos]              # reads code only to understand context
     memory: true
     allowed_tools:
       - Read
@@ -96,7 +97,7 @@ agents:
       - Grep
       - mcp__agent_framework__ask_human
       - mcp__agent_framework__ask_agent
-      - mcp__agent_framework__complete_phase    # participa do workflow
+      - mcp__agent_framework__complete_phase    # participates in workflows
       - mcp__agent_framework__get_task_state
       - mcp__agent_framework__memory_save
       - mcp__agent_framework__memory_recall
@@ -104,21 +105,21 @@ agents:
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
 
-  # ==== planner: desenha o approach antes do build ====
-  # Aparece em: default (plan).
+  # ==== planner: designs the approach before the build ====
+  # Appears in: default (plan).
   - name: planner
     display_name: "Planner"
-    description: "Desenha planos tecnicos e arquitetura antes da implementacao."
+    description: "Designs technical plans and architecture before implementation."
     streams: [planner]
     pool_size: 2
     idle_timeout_sec: 1800
     write_access: [company, orchestrator]
     read_access: [repos]
-    model: opus                       # planejamento se beneficia de mais capacidade
+    model: opus                       # planning benefits from more capacity
     effort: high
     memory:
       enabled: true
-      auto_inject_limit: 8            # planner acumula muito contexto tecnico
+      auto_inject_limit: 8            # planner accumulates a lot of technical context
     allowed_tools:
       - Read
       - Write
@@ -135,14 +136,14 @@ agents:
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
 
-  # ==== executor: implementa em codigo (Bash + worktrees) ====
-  # Aparece em: default (build — agente omitido no workflow,
-  # planner passa next_agent=executor explicitamente).
+  # ==== executor: implements in code (Bash + worktrees) ====
+  # Appears in: default (build — agent omitted from the workflow,
+  # planner passes next_agent=executor explicitly).
   - name: executor
     display_name: "Executor"
-    description: "Implementa tarefas tecnicas em repos/ via worktrees."
+    description: "Implements technical tasks in repos/ via worktrees."
     streams: [executor]
-    pool_size: 1                      # serializa — evita conflito de merge
+    pool_size: 1                      # serializes — avoids merge conflicts
     idle_timeout_sec: 3600
     write_access: [repos, company, orchestrator]
     read_access: []
@@ -151,13 +152,13 @@ agents:
     memory:
       enabled: true
       auto_inject_limit: 8
-    # main_repo: core                 # (opcional) Ver secao "main_repo" na REFERENCIA abaixo.
-    # capabilities: [playwright]      # (opcional) sobe MCP servers laterais.
-                                      # Singletons no framework: playwright, sentry.
-                                      # Outros: declare como capability_instance no
-                                      # topo do arquivo (template + env). Ao habilitar
-                                      # qualquer capability, inclua as tools MCP
-                                      # correspondentes em allowed_tools (ex:
+    # main_repo: core                 # (optional) See the "main_repo" section in the REFERENCE below.
+    # capabilities: [playwright]      # (optional) brings up side MCP servers.
+                                      # Singletons in the framework: playwright, sentry.
+                                      # Others: declare them as capability_instance at
+                                      # the top of this file (template + env). When
+                                      # enabling a capability, include the matching MCP
+                                      # tools in allowed_tools (e.g.
                                       # mcp__playwright__*, mcp__<instance-name>__*).
     allowed_tools:
       - Read
@@ -170,30 +171,30 @@ agents:
       - mcp__agent_framework__ask_agent
       - mcp__agent_framework__complete_phase
       - mcp__agent_framework__get_task_state
-      - mcp__agent_framework__create_worktree   # isola task em worktree
-      - mcp__agent_framework__cleanup_worktrees # limpa no fim
+      - mcp__agent_framework__create_worktree   # isolates the task in a worktree
+      - mcp__agent_framework__cleanup_worktrees # cleans up at the end
       - mcp__agent_framework__memory_save
       - mcp__agent_framework__memory_recall
       - mcp__agent_framework__memory_list
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
-    # hooks:                              # (opcional) hooks per-agent, concatena com hooks_defaults
+    # hooks:                              # (optional) per-agent hooks, concatenated with hooks_defaults
     #   PreToolUse:
     #     - matcher: "Bash"
     #       hooks:
     #         - type: command
     #           command: "/app/agents/executor/hooks/block-dangerous-bash.sh"
 
-  # ==== reviewer: revisa o que o executor produziu ====
-  # Aparece em: default (review).
+  # ==== reviewer: reviews what the executor produced ====
+  # Appears in: default (review).
   - name: reviewer
     display_name: "Reviewer"
-    description: "Revisa codigo + testes produzidos pelo executor."
+    description: "Reviews the code + tests produced by the executor."
     streams: [reviewer]
     pool_size: 2
     idle_timeout_sec: 1800
     write_access: [company, orchestrator]
-    read_access: [repos]              # le repos pra revisar; nao escreve la
+    read_access: [repos]              # reads repos to review; does not write to them
     memory: true
     allowed_tools:
       - Read
@@ -201,7 +202,7 @@ agents:
       - Edit
       - Glob
       - Grep
-      - Bash                           # roda testes/lint pra verificar
+      - Bash                           # runs tests/lint to verify
       - mcp__agent_framework__ask_human
       - mcp__agent_framework__ask_agent
       - mcp__agent_framework__complete_phase
@@ -212,11 +213,11 @@ agents:
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
 
-  # ==== researcher: investigacao sem codigo ====
-  # Aparece em: research (investigate).
+  # ==== researcher: investigation without code ====
+  # Appears in: research (investigate).
   - name: researcher
     display_name: "Researcher"
-    description: "Investiga questoes que terminam em documento, sem codigo."
+    description: "Investigates questions that end in a document, without code."
     streams: [researcher]
     pool_size: 2
     idle_timeout_sec: 1800
@@ -229,7 +230,7 @@ agents:
       - Edit
       - Glob
       - Grep
-      - WebFetch                       # pesquisa em docs externas
+      - WebFetch                       # search external docs
       - WebSearch
       - mcp__agent_framework__ask_human
       - mcp__agent_framework__ask_agent
@@ -241,106 +242,106 @@ agents:
       - mcp__agent_framework__memory_edit
       - mcp__agent_framework__memory_delete
 
-# === REFERENCIA do schema ===
+# === SCHEMA REFERENCE ===
 #
-# name (obrigatorio)            slug lowercase, sem espacos. Vira o bot e a pasta.
-# display_name (obrigatorio)    nome exibido na UI.
-# description (obrigatorio)     uma linha sobre o papel (aparece no CLAUDE.md padrao).
-# streams                       [lista] streams escutados pelo bot. Default: [name].
-# pool_size                     concorrencia (default 2).
-# idle_timeout_sec              segundos sem msg antes de liberar o slot (default 900).
-# write_access                  [lista] subset de {company, orchestrator, repos}.
-# read_access                   [lista] subset de {company, orchestrator, repos}.
-# allowed_tools                 [lista] sempre inclua mcp__agent_framework__ask_human.
-#                               Inclua complete_phase se participa de workflows.
-#                               Inclua memory_save/recall/list/edit/delete pra usar
-#                               memoria persistente (edit/delete permitem corrigir
-#                               ou remover memorias ficadas desatualizadas).
-# memory                        Memoria LP (SQLite por agente). Opcoes:
-#                                 true                    (default — enabled, auto-inject 5)
-#                                 false                   (sem memoria)
-#                                 {enabled: bool, auto_inject_limit: int}
-#                               auto_inject_limit=N: antes de cada run, o framework
-#                               busca os N fatos mais relevantes da memoria e injeta
-#                               no prompt. Garante que o Claude VEJA a memoria sem
-#                               depender dele lembrar de chamar memory_recall.
-# model                         Opcional. Alias ("sonnet"/"opus"/"haiku") ou nome
-#                               completo ("claude-sonnet-4-6"). Sem — usa default do CLI.
-# effort                        Opcional. "low"|"medium"|"high"|"xhigh"|"max". Quanto
-#                               thinking/esforco o Claude investe (mais alto = mais token).
-# thinking                      Opcional. true = atalho pra effort=high se effort
-#                               nao estiver setado.
-# capabilities                  [lista] tools laterais providas via MCP. Cada item
-#                               sobe um container lateral compartilhado e injeta o
-#                               server no mcp.extra.json do agente. Conhecidas:
-#                                 playwright      — navegador automatizado
-#                                                   (Chromium headless). Adicione
-#                                                   mcp__playwright__* em allowed_tools.
+# name (required)              lowercase slug, no spaces. Becomes the bot name + folder.
+# display_name (required)      name shown in the UI.
+# description (required)       one-liner about the role (appears in the default CLAUDE.md).
+# streams                      [list] streams the bot listens to. Default: [name].
+# pool_size                    concurrency (default 2).
+# idle_timeout_sec             seconds without messages before releasing the slot (default 900).
+# write_access                 [list] subset of {company, orchestrator, repos}.
+# read_access                  [list] subset of {company, orchestrator, repos}.
+# allowed_tools                [list] always include mcp__agent_framework__ask_human.
+#                              Include complete_phase if the agent participates in workflows.
+#                              Include memory_save/recall/list/edit/delete to use
+#                              persistent memory (edit/delete let you fix or remove
+#                              memories that have gone stale).
+# memory                       Long-term memory (SQLite per agent). Options:
+#                                true                    (default — enabled, auto-inject 5)
+#                                false                   (no memory)
+#                                {enabled: bool, auto_inject_limit: int}
+#                              auto_inject_limit=N: before each run, the framework
+#                              fetches the N most relevant facts from memory and
+#                              injects them into the prompt. Ensures Claude SEES
+#                              the memory without relying on it remembering to
+#                              call memory_recall.
+# model                        Optional. Alias ("sonnet"/"opus"/"haiku") or full
+#                              name ("claude-sonnet-4-6"). Without this — uses the CLI default.
+# effort                       Optional. "low"|"medium"|"high"|"xhigh"|"max". How much
+#                              thinking/effort Claude invests (higher = more tokens).
+# thinking                     Optional. true = shortcut for effort=high if effort
+#                              isn't already set.
+# capabilities                 [list] side tools provided via MCP. Each item brings
+#                              up a shared side container and injects the server
+#                              into the agent's mcp.extra.json. Known ones:
+#                                playwright      — automated browser
+#                                                  (headless Chromium). Add
+#                                                  mcp__playwright__* to allowed_tools.
 #
-# main_repo                     (Opcional) Nome de uma subpasta de /workspace/repos/
-#                               cujo `.claude/` deve ser exposto na sessao do agente.
-#                               Ex: main_repo: core  -> espelha
-#                               /workspace/repos/core/.claude/{skills,agents,commands}/*
-#                               dentro do session_dir via per-item symlink. Util pra
-#                               agentes "ancorados" num repositorio (analistas,
-#                               consultivos, DBA que roda query no schema de um repo).
+# main_repo                    (Optional) Name of a subfolder under /workspace/repos/
+#                              whose `.claude/` should be exposed in the agent's
+#                              session. E.g. main_repo: core -> mirrors
+#                              /workspace/repos/core/.claude/{skills,agents,commands}/*
+#                              into the session_dir via per-item symlink. Useful for
+#                              agents "anchored" to a specific repo (analysts,
+#                              consultative, DBA running queries against a repo's schema).
 #
-#                               Precedencia em caso de nome igual: o `.claude/` do
-#                               proprio agente (instance/agents/<name>/.claude/) vence
-#                               sobre main_repo — permite override local.
+#                              Precedence on name collision: the agent's own
+#                              `.claude/` (instance/agents/<name>/.claude/) wins over
+#                              main_repo — allows local overrides.
 #
-#                               CAVEAT IMPORTANTE — executores com worktree:
-#                               quando um executor tem EXATAMENTE UMA worktree
-#                               registrada pra uma task `in_progress` sua, o
-#                               ClaudeRunner spawna o claude com CWD = path da
-#                               worktree (nao session_dir) pra ergonomia de git/
-#                               paths relativos e pra carregar `CLAUDE.md` do repo.
-#                               Nesse caminho os symlinks do main_repo (e do
-#                               `.claude/` do proprio agente) NAO sao visiveis — o
-#                               claude CLI so ve `.claude/` comitado no repo da
-#                               worktree. Skills proprias do agente e main_repo
-#                               so valem quando CWD = session_dir (agente sem
-#                               worktree, agente com multiplas worktrees, ou
-#                               agente nao-executor).
+#                              IMPORTANT CAVEAT — executors with a worktree:
+#                              when an executor has EXACTLY ONE worktree
+#                              registered for an `in_progress` task of theirs,
+#                              ClaudeRunner spawns claude with CWD = the worktree
+#                              path (not session_dir) for git/relative-path
+#                              ergonomics and to load the repo's `CLAUDE.md`. On
+#                              that path, main_repo's symlinks (and the agent's
+#                              own `.claude/`) are NOT visible — the claude CLI
+#                              only sees the `.claude/` committed in the worktree
+#                              repo. The agent's own skills and main_repo only
+#                              apply when CWD = session_dir (agent without
+#                              worktree, agent with multiple worktrees, or
+#                              non-executor agent).
 #
-#                               Configurar main_repo num executor que passa a
-#                               maior parte do tempo dentro de worktree nao erra,
-#                               mas nao entrega valor pratico — prefira ancorar
-#                               nos analistas/consultivos.
-#                               Ex: capabilities: [playwright, sentry, mysql-producao]
-#                               Capabilities resolvidas em duas categorias:
-#                                 - SINGLETONS no framework (MCP_CAPABILITIES em
-#                                   reconcile.py): playwright, sentry. Config fixa,
-#                                   um por instalacao.
-#                                 - INSTANCES no agents.yaml (capability_instances):
-#                                   parametrizadas via templates do framework
-#                                   (CAPABILITY_TEMPLATES). Ex: declarar
-#                                   `mysql-producao` apontando pro template `mysql`
-#                                   com env-mapping pras DB_PROD_* do .env.
-#                                   Permite multiplas instancias do mesmo template
-#                                   (mysql-producao + mysql-staging com creds distintas).
-#                               Pra capability nova nao parametrizavel (singleton):
-#                               edite MCP_CAPABILITIES em framework/scripts/reconcile.py.
-#                               Pra template novo (parametrizavel): adicione em
-#                               CAPABILITY_TEMPLATES no mesmo arquivo, depois declare
-#                               instances em capability_instances aqui.
-# image                         (BYOI) override da imagem Docker. Se informado, o
-#                               framework NAO buila — usuario entrega imagem pronta.
-#                               Aceita qualquer repo/tag. Pra registries privados:
-#                               faca 'docker login' no host (ou veja DOCKER_CONFIG no
-#                               .env). A imagem externa DEVE estender
-#                               framework/docker/agent.Dockerfile (precisa do runner
-#                               Python + Claude CLI + entrypoint padrao).
-#                               Ex: image: registry.gitlab.com/acme/my-php-agent:v1
+#                              Configuring main_repo on an executor that spends
+#                              most of its time inside a worktree isn't an error,
+#                              but it doesn't deliver practical value — prefer
+#                              anchoring it on analysts/consultative agents.
+#                              E.g. capabilities: [playwright, sentry, mysql-prod]
+#                              Capabilities resolve in two categories:
+#                                - SINGLETONS in the framework (MCP_CAPABILITIES in
+#                                  reconcile.py): playwright, sentry. Fixed config,
+#                                  one per install.
+#                                - INSTANCES in agents.yaml (capability_instances):
+#                                  parameterized via framework templates
+#                                  (CAPABILITY_TEMPLATES). E.g. declaring
+#                                  `mysql-prod` pointing at the `mysql` template
+#                                  with env-mapping for the .env's DB_PROD_*.
+#                                  Allows multiple instances of the same template
+#                                  (mysql-prod + mysql-staging with different creds).
+#                              For a new non-parameterizable capability (singleton):
+#                              edit MCP_CAPABILITIES in framework/scripts/reconcile.py.
+#                              For a new template (parameterizable): add it to
+#                              CAPABILITY_TEMPLATES in the same file, then declare
+#                              instances under capability_instances here.
+# image                        (BYOI) Docker image override. When set, the framework
+#                              does NOT build it — the user provides a ready image.
+#                              Accepts any repo/tag. For private registries:
+#                              run `docker login` on the host (or see DOCKER_CONFIG
+#                              in .env). The external image MUST extend
+#                              framework/docker/agent.Dockerfile (it needs the
+#                              Python runner + Claude CLI + standard entrypoint).
+#                              E.g. image: registry.gitlab.com/acme/my-php-agent:v1
 #
-# hooks                         [dict] Hooks do Claude Code (passthrough pra
-#                               .claude/settings.json). Ver bloco comentado no
-#                               topo desse arquivo. Merge com `hooks_defaults`
-#                               top-level: listas por evento sao concatenadas
-#                               (defaults primeiro, per-agent depois). Validado
-#                               estruturalmente (forma event->list de groups);
-#                               nomes de evento e tipos de hook sao validados
-#                               pelo CLI ao carregar.
+# hooks                        [dict] Claude Code hooks (passthrough to
+#                              .claude/settings.json). See the commented block at
+#                              the top of this file. Merges with top-level
+#                              `hooks_defaults`: per-event lists are concatenated
+#                              (defaults first, per-agent after). Structurally
+#                              validated (event -> list of groups); event names
+#                              and hook types are validated by the CLI on load.
 #
-# Campos opcionais de integracao (futuramente):
-#   env                         [dict] env vars custom passadas pro container
+# Optional integration fields (future):
+#   env                        [dict] custom env vars passed to the container

@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ScrollText, Eye, Save, RefreshCw, Users, ArrowLeft, Clock, Workflow } from 'lucide-svelte';
+  import { ScrollText, Eye, Save, RefreshCw, Users, ArrowLeft, Clock, Workflow, Settings as SettingsIcon } from 'lucide-svelte';
   import { page } from '$app/stores';
   import PageHeader from '$lib/components/ui/PageHeader.svelte';
   import RoutinesPanel from '$lib/components/settings/RoutinesPanel.svelte';
   import WorkflowsPanel from '$lib/components/settings/WorkflowsPanel.svelte';
+  import SystemPanel from '$lib/components/settings/SystemPanel.svelte';
   import {
     getSystemPromptsIndex,
     getSystemPromptSection,
@@ -20,11 +21,13 @@
   } from '$lib/api';
   import { logEvent } from '$lib/stores/ui';
 
-  type Tab = 'sections' | 'preview' | 'agents' | 'routines' | 'workflows';
+  type Tab = 'sections' | 'preview' | 'agents' | 'routines' | 'workflows' | 'system';
   // Tab inicial via ?tab= (deep-link de outras paginas, ex: /scheduler).
   const initialTab = (() => {
     const t = $page.url.searchParams.get('tab');
-    return t === 'preview' || t === 'agents' || t === 'routines' || t === 'workflows' ? t : 'sections';
+    return t === 'preview' || t === 'agents' || t === 'routines' || t === 'workflows' || t === 'system'
+      ? t
+      : 'sections';
   })();
   let tab = $state<Tab>(initialTab);
 
@@ -34,6 +37,12 @@
   let activeContent = $state('');
   let activeLoading = $state(false);
   let activeSaving = $state(false);
+
+  let activeReadOnly = $derived.by(() => {
+    if (!index || !activeKey) return false;
+    const s = index.sections.find((x) => x.key === activeKey);
+    return s?.read_only === true;
+  });
 
   let previewAgent = $state<string>('');
   let previewMode = $state<'' | 'root' | 'child'>('');
@@ -273,6 +282,17 @@
     >
       <Workflow class="h-4 w-4" /> Workflows
     </button>
+    <button
+      type="button"
+      class="inline-flex min-h-tap shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-semibold transition-colors"
+      class:border-accent={tab === 'system'}
+      class:text-fg={tab === 'system'}
+      class:border-transparent={tab !== 'system'}
+      class:text-muted={tab !== 'system'}
+      onclick={() => (tab = 'system')}
+    >
+      <SettingsIcon class="h-4 w-4" /> System
+    </button>
   </div>
 
   {#if tab === 'sections'}
@@ -282,7 +302,8 @@
       <p class="mb-3 text-xs text-muted">
         Everything that goes into <code>--append-system-prompt</code> of <code>claude -p</code>.
         Edits take effect on the next invocation — no restart. Toggles disable a section without
-        deleting the file. <code>platform.md</code> is required when its toggle is ON.
+        deleting the file. <code>platform.md</code> is a framework invariant (read-only) and ships
+        with the agent/web images.
       </p>
 
       <div class="grid grid-cols-12 gap-3">
@@ -378,21 +399,29 @@
                 <ArrowLeft class="h-5 w-5" />
               </button>
               <span class="flex-1 truncate font-mono text-xs text-muted">{activeKey}</span>
-              <button
-                type="button"
-                onclick={saveSection}
-                disabled={activeSaving || activeLoading}
-                class="inline-flex min-h-tap items-center gap-1 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
-              >
-                <Save class="h-4 w-4" /> {activeSaving ? 'Saving…' : 'Save'}
-              </button>
+              {#if activeReadOnly}
+                <span class="rounded-md border border-border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                  Framework-fixed · read only
+                </span>
+              {:else}
+                <button
+                  type="button"
+                  onclick={saveSection}
+                  disabled={activeSaving || activeLoading}
+                  class="inline-flex min-h-tap items-center gap-1 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-on-accent hover:bg-accent/90 disabled:opacity-50"
+                >
+                  <Save class="h-4 w-4" /> {activeSaving ? 'Saving…' : 'Save'}
+                </button>
+              {/if}
             </div>
             {#if activeLoading}
               <p class="text-xs text-muted">Loading…</p>
             {:else}
               <textarea
                 bind:value={activeContent}
+                readonly={activeReadOnly}
                 class="w-full flex-1 resize-none rounded-md border border-border bg-bg p-3 font-mono text-xs leading-relaxed focus:border-accent focus:outline-none"
+                class:opacity-80={activeReadOnly}
                 spellcheck="false"
               ></textarea>
             {/if}
@@ -531,6 +560,8 @@
     <RoutinesPanel />
   {:else if tab === 'workflows'}
     <WorkflowsPanel />
+  {:else if tab === 'system'}
+    <SystemPanel />
   {/if}
   </div>
 </div>

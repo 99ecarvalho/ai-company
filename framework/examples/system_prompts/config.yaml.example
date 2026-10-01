@@ -1,17 +1,17 @@
-# system_prompts/config.yaml — toggles globais do system prompt.
+# system_prompts/config.yaml — global toggles for the system prompt.
 #
-# Cada flag controla se uma secao eh injetada via --append-system-prompt no
-# `claude -p` de TODOS os agentes. claude_runner re-le este arquivo a cada
-# invocacao — edicoes valem na proxima task, sem restart.
+# Each flag controls whether a section is injected via --append-system-prompt
+# on `claude -p` for ALL agents. claude_runner re-reads this file on every
+# invocation — edits take effect on the next task, no restart.
 #
-# Editavel pelo PWA (Empresa > System Prompts) ou diretamente neste arquivo.
+# Editable from the PWA (Settings > System Prompts) or directly in this file.
 
-include_platform_prompt: true       # system_prompts/platform.md (regras invariantes)
+include_platform_prompt: true       # framework-fixed platform.md (read-only, ships in agent/web images)
 include_company_context: true       # company/CONTEXT.md
 include_company_philosophy: true    # company/philosophy.md
-include_agent_claude_md: true       # agents/<nome>/CLAUDE.md (identidade)
-include_team_block: true            # bloco "## Equipe" gerado dinamicamente do DB
-# Blocos dinamicos contextuais (D-110+):
-include_invocation_context: true    # "## Modo de invocacao" — raiz vs filha + nome do pai
-include_task_state: true            # "## Estado da task" — snapshot quando topic eh task-*
-include_step_instructions: true     # "## Instrucoes da fase atual" — workflows.yaml step.instructions
+include_agent_claude_md: true       # agents/<name>/CLAUDE.md (identity)
+include_team_block: true            # "## Team" block generated dynamically from the DB
+# Dynamic contextual blocks (D-110+):
+include_invocation_context: true    # "## Invocation mode" — root vs child + parent name
+include_task_state: true            # "## Task state" — snapshot when topic is task-*
+include_step_instructions: true     # "## Current phase instructions" — workflows.yaml step.instructions

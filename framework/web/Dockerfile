@@ -38,6 +38,8 @@ RUN pip install -r requirements.txt
 COPY framework/web/app ./app
 COPY framework/web/static ./static
 COPY framework/templates ./templates
+# Framework-fixed system prompt sections (read-only; not editable per-instance).
+COPY framework/system_prompts /app/system_prompts
 COPY --from=frontend-build /output ./build
 # Reusa MemoryStore do framework (leitura das memorias dos agentes via /memory/*.db)
 COPY framework/bots/agent_framework/agent_framework/memory_store.py ./app/memory_store_framework.py

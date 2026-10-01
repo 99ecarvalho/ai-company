@@ -127,6 +127,21 @@ async def _bootstrap_terminal_stream():
     log.info("web.terminal_stream_bootstrapped", stream=terminal)
 
 
+async def _reload_push_dispatcher() -> bool:
+    """(Re)cria app.state.push_dispatcher a partir da config corrente
+    (web.app_settings + fallback env). Retorna True se ficou habilitado."""
+    from . import app_settings as _s
+    cfg = await _s.get_vapid()
+    if not cfg:
+        app.state.push_dispatcher = None
+        return False
+    app.state.push_dispatcher = PushDispatcher(
+        vapid_private_key=cfg["private_key"],
+        vapid_claims_sub=cfg.get("contact_email") or "admin@example.com",
+    )
+    return True
+
+
 async def _push_notifier_loop():
     """LISTEN em msg_all e dispara push VAPID APENAS quando ha pending_ask
     nao resolvido na conversa (ou seja, um agente esta bloqueado aguardando
@@ -135,12 +150,11 @@ async def _push_notifier_loop():
 
     Racional: push e interrupcao — reservado pra demanda real de atencao
     (ask_human), nao pra cada bot reply/emoji de sinal.
-    """
-    dispatcher = app.state.push_dispatcher
-    if dispatcher is None:
-        log.info("web.push_notifier_disabled", reason="no_vapid")
-        return
 
+    Hot-reload: dispatcher eh lido fresh a cada msg em vez de cacheado,
+    pra que clicar Generate keypair no PWA passe a disparar pushes sem
+    restart. Se ainda nao tem dispatcher, msg eh ignorada (sem panic loop).
+    """
     dsn = os.environ["DATABASE_URL"]
     while True:
         try:
@@ -187,6 +201,11 @@ async def _push_notifier_loop():
                     )
                     if not has_pending:
                         continue
+                    # Hot-reload: pega dispatcher corrente. Se Generate keypair
+                    # rodou no PWA, novo dispatcher ja esta ativo aqui.
+                    dispatcher = app.state.push_dispatcher
+                    if dispatcher is None:
+                        continue
                     content = (meta["content"] or "").strip()
                     first_line = content.splitlines()[0] if content else ""
                     title = f"{meta['username']} needs you"
@@ -214,20 +233,14 @@ async def lifespan(app: FastAPI):
     await _bootstrap_terminal_stream()
 
     app.state.push_dispatcher = None
-    vap_pub = os.environ.get("VAPID_PUBLIC_KEY")
-    vap_priv = os.environ.get("VAPID_PRIVATE_KEY")
-    if vap_pub and vap_priv:
-        app.state.push_dispatcher = PushDispatcher(
-            vapid_private_key=vap_priv,
-            vapid_claims_sub=os.environ.get("VAPID_CONTACT_EMAIL", "mailto:admin@example.com"),
-        )
+    await _reload_push_dispatcher()
 
     app.state.push_notifier_task = asyncio.create_task(_push_notifier_loop())
 
     log.info(
         "web.started",
         admin=os.environ.get("ADMIN_EMAIL"),
-        vapid_enabled=bool(vap_pub),
+        vapid_enabled=app.state.push_dispatcher is not None,
         transcriber=os.environ.get("TRANSCRIBER_URL", "(disabled)"),
     )
     yield
@@ -1183,6 +1196,29 @@ async def auth_me(principal: Principal = Depends(get_principal)):
         "kind": principal.kind,
         "is_admin": principal.is_admin,
     }
+
+
+@app.post("/api/auth/set-password")
+async def auth_set_password(
+    payload: dict,
+    principal: Principal = Depends(auth_mod.require_admin),
+):
+    """Define ou atualiza a senha do admin atual. Quando senha eh setada,
+    desabilita dev_bypass automaticamente — sem isso a senha nao tem
+    efeito (bypass concede admin sem login)."""
+    pwd = (payload.get("password") or "").strip()
+    if len(pwd) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 chars")
+    import bcrypt as _bc
+    hashed = _bc.hashpw(pwd.encode("utf-8"), _bc.gensalt(rounds=12)).decode("ascii")
+    await db.execute(
+        "UPDATE messaging.users SET password_hash = $1 WHERE id = $2",
+        hashed, principal.user_id,
+    )
+    from . import app_settings as _s
+    await _s.set("auth_dev_bypass", {"enabled": False}, user_id=principal.user_id)
+    log.info("auth.password_set", user_id=principal.user_id)
+    return {"ok": True}
 
 
 # ---------- Tasks (unified view across conversations) ----------
@@ -2647,7 +2683,7 @@ async def health():
     return {
         "status": "ok" if ok else "degraded",
         "db": ok,
-        "vapid_enabled": bool(os.environ.get("VAPID_PUBLIC_KEY")),
+        "vapid_enabled": app.state.push_dispatcher is not None,
         "transcriber_enabled": bool(os.environ.get("TRANSCRIBER_URL")),
     }
 
@@ -2827,13 +2863,138 @@ async def transcribe_preview(
             return json.loads(body)
 
 
+# ---------- App Settings (web.app_settings) ----------
+#
+# Settings de instancia editaveis via PWA Settings -> System tab. Substitui
+# (com fallback transparente) WEB_DEFAULT_STREAM + VAPID_* env vars.
+# Migration 031: web.app_settings.
+
+@app.get("/api/web-settings/general")
+async def web_settings_general(_: Principal = Depends(get_principal)):
+    """Retorna config visivel pro PWA. Private key VAPID NUNCA sai daqui —
+    so o flag 'configured' + public_key + email."""
+    from . import app_settings as _s
+    default_stream = await _s.get_default_stream()
+    vapid = await _s.get_vapid()
+    return {
+        "default_stream": default_stream,
+        "vapid": {
+            "configured": vapid is not None,
+            "public_key": (vapid or {}).get("public_key", ""),
+            "contact_email": (vapid or {}).get("contact_email", ""),
+        },
+    }
+
+
+@app.put("/api/web-settings/general")
+async def web_settings_update(payload: dict, principal: Principal = Depends(auth_mod.require_admin)):
+    """Atualiza default_stream e/ou vapid.contact_email. Nao mexe em
+    keypair — pra isso ha endpoint dedicado /vapid/generate."""
+    from . import app_settings as _s
+    if "default_stream" in payload:
+        await _s.set_default_stream(
+            (payload.get("default_stream") or "").strip(),
+            user_id=principal.user_id,
+        )
+    if "vapid_contact_email" in payload:
+        email = (payload.get("vapid_contact_email") or "").strip()
+        if email:
+            await _s.set_vapid_contact_email(email, user_id=principal.user_id)
+    return await web_settings_general(principal)  # type: ignore[arg-type]
+
+
+@app.post("/api/web-settings/vapid/generate")
+async def web_settings_vapid_generate(
+    payload: dict | None = None,
+    principal: Principal = Depends(auth_mod.require_admin),
+):
+    """Gera novo keypair VAPID e salva em web.app_settings.
+
+    Recusa por default se ja existem push subscriptions (rotacao de chaves
+    invalida TODAS as subscriptions existentes — clients precisam re-subscribe).
+    Caller passa {"force": true} pra confirmar a rotacao destrutiva.
+    """
+    from . import app_settings as _s
+    payload = payload or {}
+    force = bool(payload.get("force"))
+
+    sub_count_row = await db.fetch_one(
+        "SELECT COUNT(*)::int AS c FROM web.push_subscriptions"
+    )
+    sub_count = int((sub_count_row or {"c": 0})["c"])
+
+    current = await _s.get_vapid()
+    if current is not None and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"VAPID already configured. Pass force=true to rotate "
+                f"(will invalidate {sub_count} existing push subscription(s))."
+            ),
+        )
+
+    new_kp = _s.generate_vapid_keypair()
+    contact = (payload.get("contact_email") or (current or {}).get("contact_email") or "").strip()
+    await _s.set_vapid(
+        public_key=new_kp["public_key"],
+        private_key=new_kp["private_key"],
+        contact_email=contact or None,
+        user_id=principal.user_id,
+    )
+
+    # Rotacao destrutiva: limpa subscriptions antigas — proximo subscribe
+    # do client criara um novo registro com a nova chave.
+    invalidated = 0
+    if force and sub_count:
+        await db.execute("DELETE FROM web.push_subscriptions")
+        invalidated = sub_count
+
+    # Hot-reload do dispatcher pro novo keypair entrar em vigor sem restart.
+    await _reload_push_dispatcher()
+
+    log.info(
+        "web_settings.vapid_generated",
+        rotated=current is not None,
+        invalidated=invalidated,
+        by=principal.user_id,
+    )
+    return {
+        "ok": True,
+        "public_key": new_kp["public_key"],
+        "subscriptions_invalidated": invalidated,
+    }
+
+
+@app.delete("/api/web-settings/vapid")
+async def web_settings_vapid_clear(principal: Principal = Depends(auth_mod.require_admin)):
+    """Remove keypair VAPID + invalida subscriptions. Push fica desabilitado
+    ate que generate seja chamado de novo."""
+    from . import app_settings as _s
+    await _s.clear_vapid()
+    invalidated_row = await db.fetch_one(
+        "SELECT COUNT(*)::int AS c FROM web.push_subscriptions"
+    )
+    invalidated = int((invalidated_row or {"c": 0})["c"])
+    if invalidated:
+        await db.execute("DELETE FROM web.push_subscriptions")
+    await _reload_push_dispatcher()
+    log.info(
+        "web_settings.vapid_cleared",
+        invalidated=invalidated,
+        by=principal.user_id,
+    )
+    return {"ok": True, "subscriptions_invalidated": invalidated}
+
+
 # ---------- Push ----------
 
 @app.get("/api/push-config")
 async def push_config():
+    from . import app_settings as _s
+    cfg = await _s.get_vapid()
     return {
-        "enabled": bool(os.environ.get("VAPID_PUBLIC_KEY")),
-        "public_key": os.environ.get("VAPID_PUBLIC_KEY", ""),
+        "enabled": cfg is not None,
+        "public_key": (cfg or {}).get("public_key", ""),
     }
 
 
@@ -3699,7 +3860,9 @@ async def delete_agent_policy(agent: str, _: Principal = Depends(get_principal))
 import yaml  # noqa: E402
 
 SYSTEM_PROMPTS_DIR = Path("/workspace/company/system_prompts")
-PLATFORM_PROMPT_PATH = SYSTEM_PROMPTS_DIR / "platform.md"
+# platform.md is framework-fixed (read-only); it lives in the image, not the
+# instance volume. Mirrors claude_runner._PLATFORM_PROMPT_PATH.
+PLATFORM_PROMPT_PATH = Path("/app/system_prompts/platform.md")
 SYSTEM_PROMPTS_CONFIG_PATH = SYSTEM_PROMPTS_DIR / "config.yaml"
 # No container web, AGENTS_DIR e bind-montado em /workspace/agents (vs /app/agents
 # nos containers de agente — paths diferentes por container, propositais).
@@ -3784,6 +3947,13 @@ def _read_section(key: str) -> tuple[Path, str]:
 
 
 def _write_section(key: str, content: str) -> int:
+    if key == "platform":
+        # Framework invariant — shipped in the agent/web images, not editable
+        # per-instance. The PWA hides the editor; this guard is defense-in-depth.
+        raise HTTPException(
+            status_code=403,
+            detail="platform section is framework-fixed and not editable",
+        )
     if not isinstance(content, str):
         raise HTTPException(status_code=400, detail="content must be a string")
     if len(content.encode("utf-8")) > SYSTEM_PROMPT_SECTION_FILE:
@@ -3806,15 +3976,16 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
     (true se o conteudo eh montado dinamicamente, sem arquivo)."""
     toggles = _read_system_prompt_config()
     sections: list[dict] = []
+    # (key, title, path, toggle_key, generated, read_only)
     fixed = [
-        ("platform", "Plataforma (regras invariantes)", PLATFORM_PROMPT_PATH,
-         "include_platform_prompt", False),
-        ("context", "Contexto da empresa", COMPANY_CONTEXT_PATH,
-         "include_company_context", False),
-        ("philosophy", "Filosofia operacional", COMPANY_PHILOSOPHY_PATH,
-         "include_company_philosophy", False),
+        ("platform", "Platform (framework invariants)", PLATFORM_PROMPT_PATH,
+         "include_platform_prompt", False, True),
+        ("context", "Company context", COMPANY_CONTEXT_PATH,
+         "include_company_context", False, False),
+        ("philosophy", "Operational philosophy", COMPANY_PHILOSOPHY_PATH,
+         "include_company_philosophy", False, False),
     ]
-    for key, title, path, toggle_key, generated in fixed:
+    for key, title, path, toggle_key, generated, read_only in fixed:
         st = path.stat() if path.exists() else None
         sections.append({
             "key": key,
@@ -3825,17 +3996,18 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
             "toggle_key": toggle_key,
             "enabled": toggles.get(toggle_key, True),
             "generated": generated,
+            "read_only": read_only,
         })
-    # Blocos dinamicos contextuais (D-110+) — gerados a cada spawn.
+    # Dynamic contextual blocks (D-110+) — generated on each spawn.
     dynamic_blocks = [
         ("invocation_context",
-         "Modo de invocacao (raiz vs filha)",
+         "Invocation mode (root vs child)",
          "include_invocation_context"),
         ("task_state",
-         "Estado da task (snapshot quando topic = task-*)",
+         "Task state (snapshot when topic = task-*)",
          "include_task_state"),
         ("step_instructions",
-         "Instrucoes da fase atual (workflows.yaml.steps.<step>.instructions)",
+         "Current phase instructions (workflows.yaml.steps.<step>.instructions)",
          "include_step_instructions"),
     ]
     for key, title, toggle_key in dynamic_blocks:
@@ -3848,17 +4020,19 @@ async def system_prompts_index(_: Principal = Depends(get_principal)):
             "toggle_key": toggle_key,
             "enabled": toggles.get(toggle_key, True),
             "generated": True,
+            "read_only": True,
         })
-    # Bloco Equipe — gerado, sem arquivo.
+    # Team block — generated, no file.
     sections.append({
         "key": "team",
-        "title": "Equipe (gerado dinamicamente do banco)",
+        "title": "Team (generated dynamically from DB)",
         "source_path": None,
         "present": True,
         "size": 0,
         "toggle_key": "include_team_block",
         "enabled": toggles.get("include_team_block", True),
         "generated": True,
+        "read_only": True,
     })
     # Por-agente: 1 entry por agente bot ativo (is_active=true).
     rows = await db.fetch_all(
@@ -3932,36 +4106,38 @@ async def system_prompts_section_set(
 
 
 def _preview_invocation_block(mode: str | None, parent: str | None) -> str:
-    """Reproduz claude_runner._invocation_context_block. Em runtime o bloco
-    soh aparece em filha (raiz nao precisa de bloco — '## Equipe' ja sinaliza
-    peers chamaveis). No preview com `mode` ausente, mostramos uma dica."""
+    """Mirrors claude_runner._invocation_context_block. At runtime the block
+    only appears in child convs (root doesn't need it — '## Team' below
+    already signals callable peers). In preview with `mode` absent, we show
+    a hint."""
     if mode is None:
         return (
-            "\n\n## Modo de invocacao\n\n"
-            "_(Preview: passe `?mode=child&parent=<agente>` pra simular o bloco "
-            "que o framework injeta em conv filha. Em raiz, o bloco eh omitido; "
-            "o '## Equipe' abaixo lista os peers chamaveis.)_\n"
+            "\n\n## Invocation mode\n\n"
+            "_(Preview: pass `?mode=child&parent=<agent>` to simulate the block "
+            "the framework injects in a child conv. In root, the block is "
+            "omitted; the '## Team' below lists callable peers.)_\n"
         )
     if mode == "root":
-        # Raiz: framework nao injeta bloco. Preview mostra hint.
+        # Root: framework injects no block. Preview shows hint.
         return (
-            "\n\n_(Preview: em raiz o framework nao injeta '## Modo de "
-            "invocacao'. O bloco '## Equipe' abaixo lista os peers chamaveis.)_\n"
+            "\n\n_(Preview: in root mode the framework does not inject "
+            "'## Invocation mode'. The '## Team' block below lists callable peers.)_\n"
         )
     if mode == "child":
-        parent_label = parent or "agente desconhecido"
+        parent_label = parent or "unknown agent"
         return (
-            "\n\n## Modo de invocacao\n\n"
-            f"Esta conv eh **filha** de **`{parent_label}`** (`ask_agent` ou "
-            "handoff de fase). `ask_human`/`ask_agent`/`ask_agents_many` "
-            "estao bloqueados aqui (MCP gate 409, hierarquia raiz->filha 1 nivel).\n\n"
-            f"Pra solicitar input externo (decisao humana, especialista, "
-            f"parecer fora do escopo): **descreva o pedido no fim da resposta "
-            f"em formato pronto pra `{parent_label}` encaminhar literal** e "
-            "encerre o turno. O pai recebe o reply automatico e roteia.\n\n"
-            "Toda instrucao do tipo \"chame `ask_human` X\" / \"chame "
-            "`ask_agent <Y>` X\" deve ser lida como \"descreva no reply: "
-            "precisa de X\".\n"
+            "\n\n## Invocation mode\n\n"
+            f"This conv is a **child** of **`{parent_label}`** (`ask_agent` or "
+            "phase handoff). `ask_human`/`ask_agent`/`ask_agents_many` "
+            "are blocked here (MCP gate 409, root->child 1-level hierarchy).\n\n"
+            f"To request external input (human decision, specialist, "
+            f"opinion outside scope): **describe the request at the end of "
+            f"the response in a format ready for `{parent_label}` to forward "
+            f"verbatim** and end the turn. The parent receives the auto-reply "
+            "and routes it.\n\n"
+            "Any instruction like \"call `ask_human` X\" / \"call "
+            "`ask_agent <Y>` X\" must be read as \"describe in the reply: "
+            "needs X\".\n"
         )
     return ""
 
@@ -3969,9 +4145,9 @@ def _preview_invocation_block(mode: str | None, parent: str | None) -> str:
 async def _preview_task_state_block(slug: str | None) -> str:
     if slug is None:
         return (
-            "\n\n## Estado da task\n\n"
-            "_(Preview: passe `?task_slug=<slug>` na URL pra simular este bloco. "
-            "Em runtime, framework injeta quando `topic = task-<slug>`.)_\n"
+            "\n\n## Task state\n\n"
+            "_(Preview: pass `?task_slug=<slug>` in the URL to simulate this block. "
+            "At runtime, the framework injects it when `topic = task-<slug>`.)_\n"
         )
     task = await db.fetch_one(
         """SELECT id, slug, title, workflow, status, current_step,
@@ -3983,8 +4159,8 @@ async def _preview_task_state_block(slug: str | None) -> str:
     )
     if task is None:
         return (
-            "\n\n## Estado da task\n\n"
-            f"_(Preview: task `{slug}` nao encontrada no banco.)_\n"
+            "\n\n## Task state\n\n"
+            f"_(Preview: task `{slug}` not found in the database.)_\n"
         )
     phases = await db.fetch_all(
         """SELECT step, agent, artifact, completed_at FROM tasks.phases
@@ -4005,53 +4181,53 @@ async def _preview_task_state_block(slug: str | None) -> str:
     elif not isinstance(meta, dict):
         meta = {}
     baseline = (meta or {}).get("baseline") or {}
-    lines: list[str] = ["\n\n## Estado da task\n"]
+    lines: list[str] = ["\n\n## Task state\n"]
     lines.append(f"- **Slug:** `{task['slug']}`")
-    lines.append(f"- **Titulo:** {task['title']}")
+    lines.append(f"- **Title:** {task['title']}")
     if task["workflow"]:
         lines.append(f"- **Workflow:** `{task['workflow']}`")
     lines.append(f"- **Status:** `{task['status']}`")
     if task["current_step"]:
-        agent_str = f" (agente: `{task['current_agent']}`)" if task["current_agent"] else ""
-        lines.append(f"- **Step atual:** `{task['current_step']}`{agent_str}")
+        agent_str = f" (agent: `{task['current_agent']}`)" if task["current_agent"] else ""
+        lines.append(f"- **Current step:** `{task['current_step']}`{agent_str}")
     if task["complexity"]:
-        lines.append(f"- **Complexidade:** `{task['complexity']}`")
-    for k, label in (("impact", "Impacto"), ("difficulty", "Dificuldade")):
+        lines.append(f"- **Complexity:** `{task['complexity']}`")
+    for k, label in (("impact", "Impact"), ("difficulty", "Difficulty")):
         if task[k]:
             lines.append(f"- **{label}:** `{task[k]}`")
     if task["blocked_reason"]:
-        lines.append(f"- **Bloqueio:** {task['blocked_reason']}")
+        lines.append(f"- **Blocked:** {task['blocked_reason']}")
     if phases:
         done_str = " -> ".join(
             f"`{p['step']}`" + (f" ({p['artifact']})" if p["artifact"] else "")
             for p in phases
         )
-        lines.append(f"- **Fases concluidas:** {done_str}")
+        lines.append(f"- **Phases done:** {done_str}")
     else:
-        lines.append("- **Fases concluidas:** _(nenhuma — task acabou de comecar)_")
+        lines.append("- **Phases done:** _(none — task just started)_")
     if baseline:
         base_str = ", ".join(f"`{repo}@{sha[:8]}`" for repo, sha in sorted(baseline.items()))
-        lines.append(f"- **Baselines registradas:** {base_str}")
+        lines.append(f"- **Registered baselines:** {base_str}")
     else:
-        lines.append("- **Baselines registradas:** _(nenhuma)_")
+        lines.append("- **Registered baselines:** _(none)_")
     if worktrees:
         wt_lines = [
-            f"  - `{w['repo']}` em `{w['path']}` (branch `{w['branch']}`)"
+            f"  - `{w['repo']}` at `{w['path']}` (branch `{w['branch']}`)"
             for w in worktrees
         ]
-        lines.append("- **Worktrees ativas:**")
+        lines.append("- **Active worktrees:**")
         lines.extend(wt_lines)
     else:
-        lines.append("- **Worktrees ativas:** _(nenhuma)_")
+        lines.append("- **Active worktrees:** _(none)_")
     if task["origin_stream"] and task["origin_topic"]:
         lines.append(
-            f"- **Origem:** stream `{task['origin_stream']}`, topico "
-            f"`{task['origin_topic']}` (notificacao terminal volta pra ca)"
+            f"- **Origin:** stream `{task['origin_stream']}`, topic "
+            f"`{task['origin_topic']}` (terminal notification comes back here)"
         )
     lines.append("")
     lines.append(
-        "_Estado lido do banco no momento do spawn (snapshot). Pra dado "
-        "fresco apos transicao no meio do turn, chame `get_task_state` via MCP._"
+        "_State read from the DB at spawn time (snapshot). For fresh data "
+        "after a mid-turn transition, call `get_task_state` via MCP._"
     )
     return "\n".join(lines)
 
@@ -4077,7 +4253,7 @@ def _format_step_overrides_footer(overrides: dict | None) -> str:
             bits.append("memory={" + ", ".join(mem_bits) + "}")
     if not bits:
         return ""
-    return "\n_Overrides ativos: " + ", ".join(bits) + "._\n"
+    return "\n_Active overrides: " + ", ".join(bits) + "._\n"
 
 
 async def _preview_step_instructions_block(slug: str | None) -> str:
@@ -4102,23 +4278,23 @@ async def _preview_step_instructions_block(slug: str | None) -> str:
     instructions = step.get("instructions")
     if not isinstance(instructions, str) or not instructions.strip():
         return (
-            "\n\n## Instrucoes da fase atual\n\n"
-            f"_(Workflow `{wf_name}` -> step `{step_name}` nao tem campo "
-            "`instructions` declarado em `workflows.yaml`.)_\n"
+            "\n\n## Current phase instructions\n\n"
+            f"_(Workflow `{wf_name}` -> step `{step_name}` has no "
+            "`instructions` field declared in `workflows.yaml`.)_\n"
             + overrides_footer
         )
     artifact = step.get("artifact")
     next_steps = step.get("next") or []
     header_lines = [
-        "\n\n## Instrucoes da fase atual",
+        "\n\n## Current phase instructions",
         "",
         f"_Workflow `{wf_name}` -> step `{step_name}`._",
     ]
     if artifact:
-        header_lines.append(f"_Artifact esperado: `{artifact}`._")
+        header_lines.append(f"_Expected artifact: `{artifact}`._")
     if next_steps:
         nxt = " | ".join(f"`{n}`" for n in next_steps)
-        header_lines.append(f"_Transicoes validas: {nxt}._")
+        header_lines.append(f"_Valid transitions: {nxt}._")
     header_lines.append("")
     return "\n".join(header_lines) + instructions.rstrip() + "\n" + overrides_footer
 
@@ -4151,8 +4327,8 @@ async def system_prompts_preview(
             parts.append(PLATFORM_PROMPT_PATH.read_text(encoding="utf-8"))
         except FileNotFoundError:
             parts.append(
-                "_(platform.md ausente — claude_runner lancaria RuntimeError "
-                "pedindo `make reconcile`. Desligue o toggle ou crie o arquivo.)_"
+                "_(platform.md missing from image — rebuild web (and agent) so "
+                "`COPY framework/system_prompts` ships the file.)_"
             )
 
     if toggles.get("include_invocation_context", True):
@@ -4174,7 +4350,7 @@ async def system_prompts_preview(
         except FileNotFoundError:
             txt = ""
         if txt.strip():
-            parts.append("\n\n# Instrucoes do agente\n\n" + txt)
+            parts.append("\n\n# Agent instructions\n\n" + txt)
 
     if toggles["include_company_context"]:
         try:
@@ -4182,15 +4358,15 @@ async def system_prompts_preview(
         except FileNotFoundError:
             ctx = ""
         if ctx.strip():
-            parts.append("\n\n# Contexto da empresa\n\n" + ctx)
+            parts.append("\n\n# Company context\n\n" + ctx)
 
     if toggles["include_company_philosophy"]:
         try:
             phi = COMPANY_PHILOSOPHY_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             phi = ""
-        if phi.strip() and "_(opcional" not in phi:
-            parts.append("\n\n# Filosofia operacional\n\n" + phi)
+        if phi.strip() and "_(optional" not in phi and "_(opcional" not in phi:
+            parts.append("\n\n# Operational philosophy\n\n" + phi)
 
     if toggles["include_team_block"] and agent and mode != "child":
         # Reproduz _team_block do runner — mesma SQL, mesma whitelist por
@@ -4220,14 +4396,14 @@ async def system_prompts_preview(
             peers.append(f"- **{name}** ({r['display_name']})")
         if peers:
             parts.append(
-                "\n\n## Equipe (agentes que voce pode chamar via `ask_agent` ou `ask_agents_many`)\n\n"
+                "\n\n## Team (agents you can call via `ask_agent` or `ask_agents_many`)\n\n"
                 + "\n".join(peers)
             )
         else:
             parts.append(
-                "\n\n## Equipe\n\n"
-                "_Nenhum outro agente disponivel pra `ask_agent` agora. "
-                "Use `ask_human` se precisar delegar._"
+                "\n\n## Team\n\n"
+                "_No other agents available for `ask_agent` right now. "
+                "Use `ask_human` if you need to delegate._"
             )
 
     return {"agent": agent, "toggles": toggles, "content": "".join(parts)}
@@ -4415,13 +4591,14 @@ async def onboard_status(_: Principal = Depends(get_principal)):
     agents_count = int(rows[0]["c"]) if rows else 0
 
     # Pre-warm: dispara em background sem bloquear response. So pra
-    # fresh setups (sem onboarded flag) — caso ja onboardado, executor
-    # provavelmente ja esta up via compose/scheduler.
+    # fresh setups (sem onboarded flag) — caso ja onboardado, hire-host
+    # provavelmente ja esta up via compose/scheduler. Slug vem de
+    # hire.HIRE_AGENT pra cobrir COMPOSE_PROJECT_NAME customizado.
     if not ONBOARDED_FLAG.exists():
-        from . import agent_bootstrap as _ab
+        from . import agent_bootstrap as _ab, hire as _hire
         async def _prewarm():
             try:
-                await _ab.ensure_agent_running("executor", timeout=60.0)
+                await _ab.ensure_agent_running(_hire.HIRE_AGENT, timeout=60.0)
             except Exception as e:
                 log.warning("onboard.prewarm_failed", err=str(e)[:200])
         asyncio.create_task(_prewarm())
@@ -4443,9 +4620,9 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     if not company_md:
         raise HTTPException(status_code=400, detail="company_md is required")
 
-    container_name = os.environ.get(
-        "HIRE_AGENT_CONTAINER", "agent-framework-agent-executor-1"
-    )
+    from . import hire as _hire
+    agent_slug = _hire.HIRE_AGENT
+    container_name = _hire._hire_container_name()
     prompt = (
         "Voce eh um arquiteto de empresa virtual baseada em agentes Claude Code.\n\n"
         "EMPRESA (CONTEXT.md):\n"
@@ -4488,7 +4665,6 @@ async def onboard_propose_agents(payload: dict, _: Principal = Depends(get_princ
     # tentar exec'ar claude nele. Cobre fresh setup (container nunca
     # criado) + restart cycles (parado mas existente).
     from . import agent_bootstrap as _ab
-    agent_slug = container_name.removeprefix("agent-framework-agent-").removesuffix("-1")
     try:
         await _ab.ensure_agent_running(agent_slug, timeout=45.0)
     except Exception as e:
@@ -4550,6 +4726,10 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
 
     # Cria cada agente via hire.apply com draft pronto. apply gera o yaml_entry
     # do agent.yaml.example padrao + o CLAUDE.md fornecido.
+    # Reconcile eh DEFERRED por agente (skip_reconcile=True) e rodado UMA
+    # vez no final — rodar reconcile N vezes em sequencia rapida cria
+    # race-conditions transientes no broker (criacao concorrente de
+    # users/streams), causando "0 created" mesmo com agents.yaml correto.
     created: list[str] = []
     errors: list[dict] = []
     for a in agents:
@@ -4580,11 +4760,21 @@ async def onboard_apply(payload: dict, _: Principal = Depends(get_principal)):
                 "name": slug,
                 "yaml_entry": yaml_entry,
                 "claude_md": claude_md,
-            })
+            }, skip_reconcile=True)
             created.append(slug)
         except Exception as e:
             log.exception("onboard.agent_apply_failed", slug=slug)
             errors.append({"slug": slug, "error": str(e)[:300]})
+
+    # Reconcile uma unica vez ao final, depois que todos os arquivos foram
+    # escritos — broker ve um batch coerente e cria N users/streams numa
+    # passada so. Falha aqui fica em errors mas nao desfaz arquivos.
+    if created:
+        try:
+            await asyncio.to_thread(_hire.run_reconcile)
+        except Exception as e:
+            log.exception("onboard.reconcile_failed", created=created)
+            errors.append({"slug": "*reconcile*", "error": str(e)[:500]})
 
     # Marca onboarded mesmo com erros parciais (idempotent)
     try:

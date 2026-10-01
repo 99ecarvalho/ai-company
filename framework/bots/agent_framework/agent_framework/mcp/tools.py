@@ -128,7 +128,7 @@ COMPLETE_PHASE_TOOL: dict[str, Any] = {
         "  3. Returns a `guidance` string describing what just happened and what, if anything, "
         "     is still up to you.\n\n"
         "DO NOT post an extra message in the conversation after calling this tool just to "
-        "announce 'despachado' — the handoff is already automatic. If you want to surface a "
+        "announce 'dispatched' — the handoff is already automatic. If you want to surface a "
         "status to the human, use `notify_human` instead."
     ),
     "inputSchema": {
@@ -756,13 +756,25 @@ TASK_LIST_TOOL: dict[str, Any] = {
         "updated_at desc. Returns: slug, title, status, current_step, "
         "current_agent, workflow, updated_at, phases_count, archived. Use "
         "for cross-task coordination — eg. when an agent needs to check "
-        "ongoing work before starting something new."
+        "ongoing work before starting something new.\n\n"
+        "Use `slug_prefix` to scope the listing to a slug family (e.g. "
+        "'fix-sentry-abc123-' to find all rounds tied to a Sentry issue) "
+        "instead of pulling the full active list and filtering client-side."
     ),
     "inputSchema": {
         "type": "object",
         "properties": {
             "include_archived": {"type": "boolean", "default": False},
             "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 500},
+            "slug_prefix": {
+                "type": "string",
+                "description": (
+                    "If set, only return tasks whose slug starts with this "
+                    "prefix. Case-sensitive. Useful for slug-family lookups "
+                    "(e.g. 'fix-sentry-<id>-' to detect prior rounds for the "
+                    "same upstream issue)."
+                ),
+            },
         },
     },
 }
@@ -803,6 +815,15 @@ REOPEN_TASK_TOOL: dict[str, Any] = {
                 "description": (
                     "Why the human wants to reopen. Free-form but required; kept "
                     "in the event payload for traceability."
+                ),
+            },
+            "standalone": {
+                "type": "boolean",
+                "description": (
+                    "If true, the redispatched conversation becomes a sidebar root "
+                    "(not a child chip under the origin conv) — same semantics as "
+                    "complete_phase's standalone flag. Use for fan-out reopen where "
+                    "the human wants to interact with the task directly. Default false."
                 ),
             },
         },

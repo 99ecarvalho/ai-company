@@ -147,10 +147,10 @@ async def _run() -> None:
                 from_a,
             )
             if row and row["can_ask"] is not None and target_a not in row["can_ask"]:
-                allowed = ", ".join(row["can_ask"]) or "(ninguem)"
+                allowed = ", ".join(row["can_ask"]) or "(none)"
                 raise ValueError(
-                    f"policy: {from_a} nao pode pedir a {target_a}. "
-                    f"Permitidos: {allowed}. Considere ask_human."
+                    f"policy: {from_a} cannot ask {target_a}. "
+                    f"Allowed: {allowed}. Consider ask_human."
                 )
             row2 = await conn.fetchrow(
                 "SELECT can_be_asked_by FROM messaging.agent_policies WHERE agent = $1",
@@ -162,8 +162,8 @@ async def _run() -> None:
                 and from_a not in row2["can_be_asked_by"]
             ):
                 raise ValueError(
-                    f"policy: {target_a} nao aceita perguntas de {from_a}. "
-                    f"Considere ask_human."
+                    f"policy: {target_a} does not accept questions from {from_a}. "
+                    f"Consider ask_human."
                 )
 
     async def _on_ask_agent(
@@ -184,8 +184,8 @@ async def _run() -> None:
         )
         if parent_conv_id is None:
             raise ValueError(
-                "ask_agent requer conv pai conhecida. Topic atual nao tem "
-                "conv_id registrada — abrir issue."
+                "ask_agent requires a known parent conv. The current topic has "
+                "no registered conv_id — please open an issue."
             )
 
         # Lookup: child conv ativa nao-arquivada pra par (parent_conv_id, target).

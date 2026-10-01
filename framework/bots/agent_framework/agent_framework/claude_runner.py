@@ -75,26 +75,26 @@ STREAM_STDOUT_LIMIT_BYTES = 16 * 1024 * 1024
 # Prompt usado na retentativa apos uma linha oversized. Vai como novo turn via
 # `--resume`, pedindo pro Claude refazer o passo em fatias.
 OVERSIZED_RECOVERY_PROMPT = (
-    "O turn anterior foi interrompido pelo framework: uma unica linha do "
-    "stream-json do Claude (tipicamente o resultado de uma tool_use como "
-    "Read/Bash/Grep) excedeu o limite interno de 16 MiB. A resposta foi "
-    "descartada.\n\n"
-    "Por favor refaca o passo anterior usando **leituras parciais**, para nao "
-    "reestourar o buffer:\n"
-    "- `Read`: passe `offset` + `limit` (paginacao em blocos de ~200-500 linhas).\n"
-    "- `Bash`: prefira `head -n`, `tail -n`, `sed -n 'A,Bp'`, `grep -n ... | "
-    "head`, `wc -l`. Evite `cat` de arquivos grandes.\n"
-    "- `Grep`: use `-n` com `-C` pequeno em vez de dumps completos.\n\n"
-    "Continue de onde parou e entregue a mesma resposta final."
+    "The previous turn was interrupted by the framework: a single line of "
+    "Claude's stream-json (typically the result of a tool_use like "
+    "Read/Bash/Grep) exceeded the internal 16 MiB limit. The response was "
+    "discarded.\n\n"
+    "Please redo the previous step using **partial reads**, so you don't "
+    "blow the buffer again:\n"
+    "- `Read`: pass `offset` + `limit` (paginate in chunks of ~200-500 lines).\n"
+    "- `Bash`: prefer `head -n`, `tail -n`, `sed -n 'A,Bp'`, `grep -n ... | "
+    "head`, `wc -l`. Avoid `cat` on large files.\n"
+    "- `Grep`: use `-n` with a small `-C` instead of full dumps.\n\n"
+    "Continue from where you stopped and deliver the same final answer."
 )
 
-# D-63: System prompt 100% editavel pela instancia. Nada hardcoded aqui — todas
-# as secoes (platform rules, CONTEXT, philosophy, agent CLAUDE.md, bloco Equipe)
-# podem ser editadas via PWA ou no FS, e ligadas/desligadas via config.yaml.
-# claude_runner re-le tudo a cada invocacao — edicoes valem na proxima task,
-# sem restart.
+# D-63: secoes de instancia (CONTEXT, philosophy, agent CLAUDE.md, bloco Equipe)
+# editaveis via PWA. platform.md e invariante do framework — vive em
+# /app/system_prompts/platform.md (COPY no Dockerfile do agent), nao e
+# editavel pela instancia. claude_runner re-le tudo a cada invocacao —
+# edicoes valem na proxima task, sem restart.
 _SYSTEM_PROMPTS_DIR = Path("/workspace/company/system_prompts")
-_PLATFORM_PROMPT_PATH = _SYSTEM_PROMPTS_DIR / "platform.md"
+_PLATFORM_PROMPT_PATH = Path("/app/system_prompts/platform.md")
 _SYSTEM_PROMPTS_CONFIG_PATH = _SYSTEM_PROMPTS_DIR / "config.yaml"
 _WORKFLOWS_YAML_PATH = Path("/workspace/company/workflows.yaml")
 
@@ -320,12 +320,12 @@ class ClaudeRunner:
             peers.append(f"- **{name}** ({r['display_name']})")
         if not peers:
             return (
-                "\n\n## Equipe\n\n"
-                "_Nenhum outro agente disponivel pra `ask_agent` agora. "
-                "Use `ask_human` se precisar delegar._"
+                "\n\n## Team\n\n"
+                "_No other agents available for `ask_agent` right now. "
+                "Use `ask_human` if you need to delegate._"
             )
         return (
-            "\n\n## Equipe (agentes que voce pode chamar via `ask_agent` ou `ask_agents_many`)\n\n"
+            "\n\n## Team (agents you can call via `ask_agent` or `ask_agents_many`)\n\n"
             + "\n".join(peers)
         )
 
@@ -379,19 +379,20 @@ class ClaudeRunner:
         """
         if not ctx.get("is_child"):
             return ""
-        parent_label = ctx.get("parent_label") or "agente desconhecido"
+        parent_label = ctx.get("parent_label") or "unknown agent"
         return (
-            "\n\n## Modo de invocacao\n\n"
-            f"Esta conv eh **filha** de **`{parent_label}`** (`ask_agent` ou "
-            "handoff de fase). `ask_human`/`ask_agent`/`ask_agents_many` "
-            "estao bloqueados aqui (MCP gate 409, hierarquia raiz->filha 1 nivel).\n\n"
-            f"Pra solicitar input externo (decisao humana, especialista, "
-            f"parecer fora do escopo): **descreva o pedido no fim da resposta "
-            f"em formato pronto pra `{parent_label}` encaminhar literal** e "
-            "encerre o turno. O pai recebe o reply automatico e roteia.\n\n"
-            "Toda instrucao do tipo \"chame `ask_human` X\" / \"chame "
-            "`ask_agent <Y>` X\" deve ser lida como \"descreva no reply: "
-            "precisa de X\".\n"
+            "\n\n## Invocation mode\n\n"
+            f"This conv is a **child** of **`{parent_label}`** (`ask_agent` or "
+            "phase handoff). `ask_human`/`ask_agent`/`ask_agents_many` "
+            "are blocked here (MCP gate 409, root->child 1-level hierarchy).\n\n"
+            f"To request external input (human decision, specialist, "
+            f"opinion outside scope): **describe the request at the end of "
+            f"the response in a format ready for `{parent_label}` to forward "
+            f"verbatim** and end the turn. The parent receives the auto-reply "
+            "and routes it.\n\n"
+            "Any instruction like \"call `ask_human` X\" / \"call "
+            "`ask_agent <Y>` X\" must be read as \"describe in the reply: "
+            "needs X\".\n"
         )
 
     async def _task_state_block(self, topic_key: TopicKey) -> str:
@@ -449,53 +450,53 @@ class ClaudeRunner:
         elif not isinstance(meta, dict):
             meta = {}
         baseline = (meta or {}).get("baseline") or {}
-        lines: list[str] = ["\n\n## Estado da task\n"]
+        lines: list[str] = ["\n\n## Task state\n"]
         lines.append(f"- **Slug:** `{task['slug']}`")
-        lines.append(f"- **Titulo:** {task['title']}")
+        lines.append(f"- **Title:** {task['title']}")
         if task["workflow"]:
             lines.append(f"- **Workflow:** `{task['workflow']}`")
         lines.append(f"- **Status:** `{task['status']}`")
         if task["current_step"]:
-            agent_str = f" (agente: `{task['current_agent']}`)" if task["current_agent"] else ""
-            lines.append(f"- **Step atual:** `{task['current_step']}`{agent_str}")
+            agent_str = f" (agent: `{task['current_agent']}`)" if task["current_agent"] else ""
+            lines.append(f"- **Current step:** `{task['current_step']}`{agent_str}")
         if task["complexity"]:
-            lines.append(f"- **Complexidade:** `{task['complexity']}`")
-        for k, label in (("impact", "Impacto"), ("difficulty", "Dificuldade")):
+            lines.append(f"- **Complexity:** `{task['complexity']}`")
+        for k, label in (("impact", "Impact"), ("difficulty", "Difficulty")):
             if task[k]:
                 lines.append(f"- **{label}:** `{task[k]}`")
         if task["blocked_reason"]:
-            lines.append(f"- **Bloqueio:** {task['blocked_reason']}")
+            lines.append(f"- **Blocked:** {task['blocked_reason']}")
         if phases:
             done_str = " -> ".join(
                 f"`{p['step']}`" + (f" ({p['artifact']})" if p["artifact"] else "")
                 for p in phases
             )
-            lines.append(f"- **Fases concluidas:** {done_str}")
+            lines.append(f"- **Phases done:** {done_str}")
         else:
-            lines.append("- **Fases concluidas:** _(nenhuma — task acabou de comecar)_")
+            lines.append("- **Phases done:** _(none — task just started)_")
         if baseline:
             base_str = ", ".join(f"`{repo}@{sha[:8]}`" for repo, sha in sorted(baseline.items()))
-            lines.append(f"- **Baselines registradas:** {base_str}")
+            lines.append(f"- **Registered baselines:** {base_str}")
         else:
-            lines.append("- **Baselines registradas:** _(nenhuma)_")
+            lines.append("- **Registered baselines:** _(none)_")
         if worktrees:
             wt_lines = [
-                f"  - `{w['repo']}` em `{w['path']}` (branch `{w['branch']}`)"
+                f"  - `{w['repo']}` at `{w['path']}` (branch `{w['branch']}`)"
                 for w in worktrees
             ]
-            lines.append("- **Worktrees ativas:**")
+            lines.append("- **Active worktrees:**")
             lines.extend(wt_lines)
         else:
-            lines.append("- **Worktrees ativas:** _(nenhuma)_")
+            lines.append("- **Active worktrees:** _(none)_")
         if task["origin_stream"] and task["origin_topic"]:
             lines.append(
-                f"- **Origem:** stream `{task['origin_stream']}`, topico "
-                f"`{task['origin_topic']}` (notificacao terminal volta pra ca)"
+                f"- **Origin:** stream `{task['origin_stream']}`, topic "
+                f"`{task['origin_topic']}` (terminal notification comes back here)"
             )
         lines.append("")
         lines.append(
-            "_Estado lido do banco no momento do spawn (snapshot). Pra dado "
-            "fresco apos transicao no meio do turn, chame `get_task_state` via MCP._"
+            "_State read from the DB at spawn time (snapshot). For fresh data "
+            "after a mid-turn transition, call `get_task_state` via MCP._"
         )
         return "\n".join(lines)
 
@@ -569,15 +570,15 @@ class ClaudeRunner:
         artifact = step.get("artifact")
         next_steps = step.get("next") or []
         header_lines = [
-            "\n\n## Instrucoes da fase atual",
+            "\n\n## Current phase instructions",
             "",
             f"_Workflow `{wf_name}` -> step `{step_name}`._",
         ]
         if artifact:
-            header_lines.append(f"_Artifact esperado: `{artifact}`._")
+            header_lines.append(f"_Expected artifact: `{artifact}`._")
         if next_steps:
             nxt = " | ".join(f"`{n}`" for n in next_steps)
-            header_lines.append(f"_Transicoes validas: {nxt}._")
+            header_lines.append(f"_Valid transitions: {nxt}._")
         header_lines.append("")
         return "\n".join(header_lines) + instructions.rstrip() + "\n"
 
@@ -656,11 +657,11 @@ class ClaudeRunner:
           - company/philosophy.md (opcional)
 
         Secoes dinamicas (toggleable, geradas a cada spawn a partir do DB / FS):
-          - "## Modo de invocacao" — raiz vs filha + nome do pai (se filha)
-          - "## Estado da task" — quando topic = task-*, snapshot do estado
-          - "## Instrucoes da fase atual" — quando step da task tem `instructions`
+          - "## Invocation mode" — raiz vs filha + nome do pai (se filha)
+          - "## Task state" — quando topic = task-*, snapshot do estado
+          - "## Current phase instructions" — quando step da task tem `instructions`
             declaradas em workflows.yaml
-          - "## Equipe" — peers que o agente pode chamar via ask_agent
+          - "## Team" — peers que o agente pode chamar via ask_agent
 
         D-63: nada hardcoded — tudo le do FS / DB a cada invocacao. Edicao
         pelo PWA (ou direto nos arquivos) vale na proxima task, sem restart.
@@ -680,9 +681,11 @@ class ClaudeRunner:
                 platform_text = _PLATFORM_PROMPT_PATH.read_text(encoding="utf-8")
             except FileNotFoundError:
                 raise RuntimeError(
-                    f"system_prompt: {_PLATFORM_PROMPT_PATH} ausente. "
-                    "Rode `make reconcile` para criar o seed, ou desligue "
-                    "`include_platform_prompt` em system_prompts/config.yaml."
+                    f"system_prompt: {_PLATFORM_PROMPT_PATH} ausente na "
+                    "imagem do agent. Sintoma de build incompleto — rebuilde "
+                    "a imagem `agent` (a COPY de framework/system_prompts "
+                    "deveria ter trazido o arquivo). Toggle off em "
+                    "system_prompts/config.yaml so como ultimo recurso."
                 )
             parts.append(platform_text)
 
@@ -705,17 +708,19 @@ class ClaudeRunner:
             agent_md = Path(f"/app/agents/{self.agent_name}/CLAUDE.md")
             agent_md_text = _read_capped(agent_md)
             if agent_md_text.strip():
-                parts.append("\n\n# Instrucoes do agente\n\n" + agent_md_text)
+                parts.append("\n\n# Agent instructions\n\n" + agent_md_text)
 
         if toggles["include_company_context"]:
             company_ctx = _read_capped(_COMPANY_CONTEXT_PATH)
             if company_ctx.strip():
-                parts.append("\n\n# Contexto da empresa\n\n" + company_ctx)
+                parts.append("\n\n# Company context\n\n" + company_ctx)
 
         if toggles["include_company_philosophy"]:
             phi = _read_capped(_COMPANY_PHILOSOPHY_PATH, cap=4 * 1024)
-            if phi.strip() and "_(opcional" not in phi:
-                parts.append("\n\n# Filosofia operacional\n\n" + phi)
+            # `_(optional` / `_(opcional` are seed markers in the example file
+            # that mean "instance hasn't filled this in yet" — skip injection.
+            if phi.strip() and "_(optional" not in phi and "_(opcional" not in phi:
+                parts.append("\n\n# Operational philosophy\n\n" + phi)
 
         if toggles["include_team_block"]:
             team = await self._team_block(invocation_ctx)
@@ -826,14 +831,14 @@ class ClaudeRunner:
             return prompt
         if not facts:
             return prompt
-        lines = ["## Memoria (fatos que voce ja registrou sobre esse contexto)", ""]
+        lines = ["## Memory (facts you've already recorded about this context)", ""]
         for f in facts:
             tag_str = f" [{', '.join(f['tags'])}]" if f.get("tags") else ""
             lines.append(f"- **{f['key']}**{tag_str}: {f['value']}")
         lines.extend([
             "",
-            "_(Fatos acima sao apenas contexto historico — vem da sua memoria persistente. "
-            "Use `memory_recall` pra buscar mais, `memory_save` pra adicionar fatos novos relevantes pra sessions futuras.)_",
+            "_(The facts above are historical context only — pulled from your persistent memory. "
+            "Use `memory_recall` to search for more, `memory_save` to add new facts relevant to future sessions.)_",
             "",
             "---",
             "",

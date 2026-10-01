@@ -1,0 +1,26 @@
+# Opt-in GPU overlay pro transcriber.
+#
+# Habilitar:
+#   echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml' >> .env
+#   docker compose up -d transcriber
+#
+# Pre-requisitos no host:
+#   - NVIDIA Container Toolkit instalado (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+#   - `docker info | grep -i nvidia` retorna o runtime
+#
+# Sem este overlay, transcriber roda em CPU (faster-whisper int8) — mais
+# lento mas funciona em qualquer host. Defaults do compose principal:
+# WHISPER_MODEL=small / WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.
+services:
+  transcriber:
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -295,10 +295,10 @@ class McpServer:
     @staticmethod
     def _child_gate_message(tool_name: str) -> str:
         return (
-            f"`{tool_name}` nao esta disponivel em conv filha (D-96): hierarquia "
-            "eh raiz -> filha, no max 1 nivel. Voce esta numa conv filha — "
-            "responda ao agente pai descrevendo o que precisa (input humano, "
-            "consulta a outro agente, etc) e ele decide se escala."
+            f"`{tool_name}` is not available in a child conv (D-96): the "
+            "hierarchy is root -> child, max 1 level. You are in a child conv — "
+            "reply to the parent agent describing what you need (human input, "
+            "consultation with another agent, etc) and they decide whether to escalate."
         )
 
     # ---------- Skills (per-agent) ----------
@@ -419,9 +419,9 @@ class McpServer:
             context = arguments.get("context") or ""
             timeout_min = float(arguments.get("timeout_minutes") or 30)
             if not target_agent or not question:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "target_agent e question obrigatorios")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "target_agent and question are required")
             if target_agent == self.agent_name:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "nao posso perguntar a mim mesmo")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "cannot ask myself")
 
             try:
                 response = await self.broker.ask_agent_via_callback(
@@ -447,29 +447,29 @@ class McpServer:
             if not isinstance(asks_raw, list) or len(asks_raw) < 2:
                 return _err(
                     req_id, JSONRPC_INVALID_PARAMS,
-                    "asks deve ser lista com >=2 itens — use ask_agent para 1 único alvo",
+                    "asks must be a list with >=2 items — use ask_agent for a single target",
                 )
             if len(asks_raw) > 10:
                 return _err(
                     req_id, JSONRPC_INVALID_PARAMS,
-                    "asks tem limite de 10 itens por chamada",
+                    "asks has a limit of 10 items per call",
                 )
             normalized: list[dict[str, str]] = []
             for i, a in enumerate(asks_raw):
                 if not isinstance(a, dict):
-                    return _err(req_id, JSONRPC_INVALID_PARAMS, f"asks[{i}] nao eh objeto")
+                    return _err(req_id, JSONRPC_INVALID_PARAMS, f"asks[{i}] is not an object")
                 target = (a.get("target_agent") or "").strip()
                 question = a.get("question")
                 context = a.get("context") or ""
                 if not target or not question:
                     return _err(
                         req_id, JSONRPC_INVALID_PARAMS,
-                        f"asks[{i}]: target_agent e question sao obrigatorios",
+                        f"asks[{i}]: target_agent and question are required",
                     )
                 if target == self.agent_name:
                     return _err(
                         req_id, JSONRPC_INVALID_PARAMS,
-                        f"asks[{i}]: nao posso perguntar a mim mesmo ({target})",
+                        f"asks[{i}]: cannot ask myself ({target})",
                     )
                 normalized.append({
                     "target_agent": target,
@@ -488,11 +488,11 @@ class McpServer:
                 log.exception("mcp.ask_agents_many.failed")
                 return _err(req_id, JSONRPC_INTERNAL_ERROR, f"ask_agents_many failed: {e}")
 
-            parts = [f"# Respostas de {len(results)} agentes\n"]
+            parts = [f"# Responses from {len(results)} agents\n"]
             for r in results:
                 header = f"## `{r['target_agent']}`"
                 if "error" in r:
-                    parts.append(f"{header} — **[ERRO]**\n\n{r['error']}")
+                    parts.append(f"{header} — **[ERROR]**\n\n{r['error']}")
                 else:
                     parts.append(f"{header}\n\n{r['response']}")
             text = "\n\n---\n\n".join(parts)
@@ -503,7 +503,7 @@ class McpServer:
 
         if name == "complete_phase":
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager nao configurado neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager not configured on this agent")
             task_slug = arguments.get("task_slug")
             artifact = arguments.get("artifact")
             summary = arguments.get("summary") or ""
@@ -511,7 +511,7 @@ class McpServer:
             next_agent = arguments.get("next_agent")
             next_topic = arguments.get("next_topic")
             if not task_slug or not artifact or not next_:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug, artifact e next sao obrigatorios")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug, artifact and next are required")
 
             # Captura origem da task via topic atual do chamador (usado pelo
             # reactor pra posar notificacao terminal tambem la).
@@ -580,14 +580,14 @@ class McpServer:
 
         if name == "create_worktree":
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager nao configurado neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager not configured on this agent")
             task_slug = arguments.get("task_slug")
             repo = arguments.get("repo")
             baseline_sha = arguments.get("baseline_sha")
             branch = arguments.get("branch")
             if not task_slug or not repo:
                 return _err(req_id, JSONRPC_INVALID_PARAMS,
-                            "task_slug e repo sao obrigatorios")
+                            "task_slug and repo are required")
             try:
                 result = await self.workflow.create_worktree(
                     task_slug=task_slug, repo=repo,
@@ -603,18 +603,18 @@ class McpServer:
             wt = result["worktree"]
             header = (
                 f"OK. worktree '{wt['repo']}' (branch {wt['branch']}) "
-                + ("reusada" if wt.get("reused") else "criada")
-                + f" em {wt['path']} a partir de {wt['baseline_sha']}."
+                + ("reused" if wt.get("reused") else "created")
+                + f" at {wt['path']} from {wt['baseline_sha']}."
             )
             msg = header + "\n\n" + result["guidance"]
             return _ok(req_id, {"content": [{"type": "text", "text": msg}], "isError": False})
 
         if name == "cleanup_worktrees":
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager nao configurado neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager not configured on this agent")
             task_slug = arguments.get("task_slug")
             if not task_slug:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug obrigatorio")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug is required")
             try:
                 result = await self.workflow.cleanup_worktrees(
                     task_slug=task_slug,
@@ -628,19 +628,19 @@ class McpServer:
             removed = result.get("removed", [])
             failed = result.get("failed", [])
             lines = [
-                f"OK. removidas={len(removed)} falharam={len(failed)}.",
+                f"OK. removed={len(removed)} failed={len(failed)}.",
                 "",
                 result["guidance"],
             ]
             if removed:
                 lines.append("")
-                lines.append("Removidas:")
+                lines.append("Removed:")
                 for r in removed:
                     warn = f" (warnings: {r['warnings']})" if r.get("warnings") else ""
                     lines.append(f"  - {r['repo']} @ {r['path']}{warn}")
             if failed:
                 lines.append("")
-                lines.append("Falhas:")
+                lines.append("Failures:")
                 for f_ in failed:
                     lines.append(f"  - {f_['repo']} @ {f_['path']}: {f_['errors']}")
             return _ok(req_id, {
@@ -650,10 +650,10 @@ class McpServer:
 
         if name == "get_task_state":
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager nao configurado neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager not configured on this agent")
             task_slug = arguments.get("task_slug")
             if not task_slug:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug obrigatorio")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "task_slug is required")
             try:
                 state = await self.workflow.get_task_state(task_slug)
             except ValueError as e:
@@ -669,14 +669,14 @@ class McpServer:
 
         if name == "reopen_task":
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager nao configurado neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow manager not configured on this agent")
             task_slug = arguments.get("task_slug")
             next_step = arguments.get("next_step")
             next_agent = arguments.get("next_agent")
             reason = arguments.get("reason")
             if not task_slug or not next_step or not reason:
                 return _err(req_id, JSONRPC_INVALID_PARAMS,
-                            "task_slug, next_step e reason sao obrigatorios")
+                            "task_slug, next_step and reason are required")
             try:
                 result = await self.workflow.reopen_task(
                     task_slug=task_slug,
@@ -684,6 +684,7 @@ class McpServer:
                     next_step=next_step,
                     next_agent=next_agent,
                     reason=reason,
+                    standalone=bool(arguments.get("standalone", False)),
                 )
             except ValueError as e:
                 return _err(req_id, JSONRPC_INVALID_PARAMS, str(e))
@@ -691,7 +692,7 @@ class McpServer:
                 log.exception("mcp.reopen_task.failed", task_slug=task_slug)
                 return _err(req_id, JSONRPC_INTERNAL_ERROR, f"internal error: {e}")
             lines = [
-                f"OK. Task religada: prev_status='{result['prev_status']}' → status='in_progress', "
+                f"OK. Task reopened: prev_status='{result['prev_status']}' → status='in_progress', "
                 f"next_step='{result['next_step']}' next_agent='{result['next_agent']}' event={result['event_id']}.",
                 "",
                 result["guidance"],
@@ -707,25 +708,25 @@ class McpServer:
                 return _err(req_id, JSONRPC_INVALID_PARAMS, f"Unknown topic slug: {slug}")
             message = (arguments.get("message") or "").strip()
             if not message:
-                return _err(req_id, JSONRPC_INVALID_PARAMS, "'message' obrigatorio")
+                return _err(req_id, JSONRPC_INVALID_PARAMS, "'message' is required")
             try:
                 await self.broker.notify_human(topic, message)
             except Exception as e:
                 log.exception("mcp.notify_human.failed")
                 return _err(req_id, JSONRPC_INTERNAL_ERROR, f"notify failed: {e}")
             return _ok(req_id, {
-                "content": [{"type": "text", "text": "OK. Mensagem postada na conversa atual (sem pending_ask)."}],
+                "content": [{"type": "text", "text": "OK. Message posted to the current conversation (no pending_ask)."}],
                 "isError": False,
             })
 
         if name == "archive_conversation":
             if self.broker is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "broker nao configurado")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "broker not configured")
             conv_id = self.broker.conv_id_for_slug(slug)
             if conv_id is None:
                 return _err(
                     req_id, JSONRPC_INVALID_PARAMS,
-                    f"conv_id desconhecido pra topic slug {slug!r} — abrir um issue.",
+                    f"unknown conv_id for topic slug {slug!r} — please open an issue.",
                 )
             try:
                 await self.broker.archive_conversation(conv_id)
@@ -734,27 +735,27 @@ class McpServer:
                 return _err(req_id, JSONRPC_INTERNAL_ERROR, f"archive failed: {e}")
             return _ok(req_id, {
                 "content": [{"type": "text", "text": (
-                    "OK. Conversa arquivada — vai pra tab Closed do humano. "
-                    "Descendentes (ask_agent/task children) tambem foram arquivados."
+                    "OK. Conversation archived — moves to the Closed tab for the human. "
+                    "Descendants (ask_agent/task children) were also archived."
                 )}],
                 "isError": False,
             })
 
         if name in ("memory_save", "memory_recall", "memory_list", "memory_edit", "memory_delete"):
             if self.memory is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "memory nao configurada neste agente")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "memory not configured on this agent")
             try:
                 if name == "memory_save":
                     key = arguments.get("key")
                     value = arguments.get("value")
                     if not key or not value:
-                        return _err(req_id, JSONRPC_INVALID_PARAMS, "key e value obrigatorios")
+                        return _err(req_id, JSONRPC_INVALID_PARAMS, "key and value are required")
                     tags = arguments.get("tags") or []
                     result = await self.memory.save(key=key, value=value, tags=tags)
                     msg = f"{result['action']}: {key}"
                     if result["action"] == "created" and (await self.memory.count()) == 1:
-                        # primeiro fato — dica educacional
-                        msg += " (primeira entrada na memoria)"
+                        # first fact — educational hint
+                        msg += " (first entry in memory)"
                     return _ok(req_id, {"content": [{"type": "text", "text": msg}], "isError": False})
 
                 if name == "memory_recall":
@@ -762,9 +763,9 @@ class McpServer:
                     limit = int(arguments.get("limit") or 5)
                     items = await self.memory.recall(query, limit=limit)
                     if not items:
-                        text = f"(nenhum fato relevante pra '{query}' na memoria)"
+                        text = f"(no relevant facts for '{query}' in memory)"
                     else:
-                        lines = [f"{len(items)} fato(s):"]
+                        lines = [f"{len(items)} fact(s):"]
                         for it in items:
                             tag_str = f" [{','.join(it['tags'])}]" if it["tags"] else ""
                             lines.append(f"- {it['key']}{tag_str}: {it['value']}")
@@ -776,9 +777,9 @@ class McpServer:
                     tag = arguments.get("tag")
                     items = await self.memory.list_recent(limit=limit, tag=tag)
                     if not items:
-                        text = "(memoria vazia)"
+                        text = "(memory is empty)"
                     else:
-                        lines = [f"{len(items)} fato(s) recente(s):"]
+                        lines = [f"{len(items)} recent fact(s):"]
                         for it in items:
                             tag_str = f" [{','.join(it['tags'])}]" if it["tags"] else ""
                             lines.append(f"- {it['key']}{tag_str}: {it['value'][:120]}")
@@ -788,14 +789,14 @@ class McpServer:
                 if name == "memory_edit":
                     key = arguments.get("key")
                     if not key:
-                        return _err(req_id, JSONRPC_INVALID_PARAMS, "key obrigatorio")
+                        return _err(req_id, JSONRPC_INVALID_PARAMS, "key is required")
                     value = arguments.get("value")
                     tags = arguments.get("tags")
                     if value is None and tags is None:
                         return _err(
                             req_id,
                             JSONRPC_INVALID_PARAMS,
-                            "informe 'value' e/ou 'tags' pra editar",
+                            "provide 'value' and/or 'tags' to edit",
                         )
                     try:
                         await self.memory.edit(key=key, value=value, tags=tags)
@@ -803,7 +804,7 @@ class McpServer:
                         return _err(
                             req_id,
                             JSONRPC_INVALID_PARAMS,
-                            f"key '{key}' nao existe — use memory_save pra criar",
+                            f"key '{key}' does not exist — use memory_save to create",
                         )
                     return _ok(
                         req_id,
@@ -813,13 +814,13 @@ class McpServer:
                 if name == "memory_delete":
                     key = arguments.get("key")
                     if not key:
-                        return _err(req_id, JSONRPC_INVALID_PARAMS, "key obrigatorio")
+                        return _err(req_id, JSONRPC_INVALID_PARAMS, "key is required")
                     removed = await self.memory.delete(key)
                     if not removed:
                         return _err(
                             req_id,
                             JSONRPC_INVALID_PARAMS,
-                            f"key '{key}' nao existe na memoria",
+                            f"key '{key}' does not exist in memory",
                         )
                     return _ok(
                         req_id,
@@ -831,7 +832,7 @@ class McpServer:
 
         if name in ("backlog_add", "backlog_list", "backlog_update", "backlog_promote", "task_list"):
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow nao configurado (sem db_pool)")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow not configured (no db_pool)")
             try:
                 result = await self._handle_task_store(name, arguments)
             except ValueError as e:
@@ -843,7 +844,7 @@ class McpServer:
 
         if name in ("schedule_add", "schedule_list", "schedule_update", "schedule_remove"):
             if self.workflow is None:
-                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow nao configurado (sem db_pool)")
+                return _err(req_id, JSONRPC_INTERNAL_ERROR, "workflow not configured (no db_pool)")
             try:
                 result = await self._handle_schedule_store(name, arguments)
             except ValueError as e:
@@ -943,9 +944,9 @@ class McpServer:
             slug = (args.get("slug") or "").strip()
             title = (args.get("title") or "").strip()
             if not SLUG_RE.match(slug):
-                raise ValueError(f"slug invalido: {slug!r}. Use kebab-case.")
+                raise ValueError(f"invalid slug: {slug!r}. Use kebab-case.")
             if not title:
-                raise ValueError("title obrigatorio")
+                raise ValueError("title is required")
             priority = int(args.get("priority") or 0)
             content = args.get("content") or ""
             impact = args.get("impact")
@@ -953,7 +954,7 @@ class McpServer:
             status = (args.get("status") or "aberto").strip()
             if status not in ("aberto", "rascunho", "em_execucao", "promovido", "descartado"):
                 raise ValueError(
-                    f"status invalido: {status!r}. "
+                    f"invalid status: {status!r}. "
                     "Use aberto | rascunho | em_execucao | promovido | descartado."
                 )
             row = await pool.fetchrow(
@@ -972,17 +973,17 @@ class McpServer:
             )
             if row["status"] == "rascunho":
                 text = (
-                    f"OK. Rascunho '{row['slug']}' capturado "
+                    f"OK. Draft '{row['slug']}' captured "
                     f"(priority={row['priority']}, status=rascunho).\n"
-                    "Nao aparece no backlog default; surge na curadoria diaria "
-                    "ou via filtro 'Draft'/status='rascunho'. Use backlog_update "
-                    "pra especificar depois."
+                    "Does not show up in the default backlog; surfaces in daily curation "
+                    "or via the 'Draft'/status='rascunho' filter. Use backlog_update "
+                    "to specify it later."
                 )
             else:
                 text = (
-                    f"OK. Backlog item '{row['slug']}' registrado "
+                    f"OK. Backlog item '{row['slug']}' registered "
                     f"(priority={row['priority']}, status={row['status']}).\n"
-                    "Visivel no PWA em Backlog. Use backlog_promote pra virar task."
+                    "Visible in PWA Backlog. Use backlog_promote to turn it into a task."
                 )
             return {"content": [{"type": "text", "text": text}], "isError": False}
 
@@ -1009,18 +1010,18 @@ class McpServer:
                     status, limit,
                 )
             if not rows:
-                text = f"(backlog vazio para status='{status}')"
+                text = f"(empty backlog for status='{status}')"
             else:
-                lines = [f"{len(rows)} item(ns) no backlog (status={status}):"]
+                lines = [f"{len(rows)} backlog item(s) (status={status}):"]
                 for r in rows:
-                    prio_label = {-2:"muito-baixa",-1:"baixa",0:"normal",1:"alta",2:"critica"}.get(
+                    prio_label = {-2:"very-low",-1:"low",0:"normal",1:"high",2:"critical"}.get(
                         int(r["priority"] or 0), str(r["priority"]),
                     )
                     tag = f" [{prio_label}]"
                     if r["impact"]:
-                        tag += f" impacto={r['impact']}"
+                        tag += f" impact={r['impact']}"
                     if r["effort"]:
-                        tag += f" esforco={r['effort']}"
+                        tag += f" effort={r['effort']}"
                     lines.append(f"- {r['slug']}: {r['title']}{tag}")
                 text = "\n".join(lines)
             return {"content": [{"type": "text", "text": text}], "isError": False}
@@ -1028,7 +1029,7 @@ class McpServer:
         if name == "backlog_update":
             slug = (args.get("slug") or "").strip()
             if not SLUG_RE.match(slug):
-                raise ValueError(f"slug invalido: {slug!r}")
+                raise ValueError(f"invalid slug: {slug!r}")
             if args.get("status") and args["status"] not in (
                 "aberto", "rascunho", "em_execucao", "promovido", "descartado",
             ):
@@ -1049,22 +1050,22 @@ class McpServer:
                 params.append(int(args["priority"]))
                 idx += 1
             if not fields:
-                raise ValueError("nada pra atualizar")
+                raise ValueError("nothing to update")
             params.append(slug)
             sql = f"UPDATE tasks.backlog SET {', '.join(fields)} WHERE slug = ${idx} RETURNING slug, status, priority"
             row = await pool.fetchrow(sql, *params)
             if row is None:
-                raise ValueError(f"backlog item '{slug}' nao existe")
-            text = f"OK. '{row['slug']}' atualizado (status={row['status']}, priority={row['priority']})."
+                raise ValueError(f"backlog item '{slug}' does not exist")
+            text = f"OK. '{row['slug']}' updated (status={row['status']}, priority={row['priority']})."
             return {"content": [{"type": "text", "text": text}], "isError": False}
 
         if name == "backlog_promote":
             backlog_slug = (args.get("slug") or "").strip()
             if not SLUG_RE.match(backlog_slug):
-                raise ValueError(f"slug invalido: {backlog_slug!r}")
+                raise ValueError(f"invalid slug: {backlog_slug!r}")
             task_slug = (args.get("task_slug") or backlog_slug).strip()
             if not SLUG_RE.match(task_slug):
-                raise ValueError(f"task_slug invalido: {task_slug!r}")
+                raise ValueError(f"invalid task_slug: {task_slug!r}")
             workflow = args.get("workflow")
             next_agent = args.get("next_agent")
             initial_topic = (args.get("initial_topic") or f"task-{task_slug}").strip()
@@ -1081,8 +1082,8 @@ class McpServer:
             dispatch_agent = next_agent
             if not dispatch_agent:
                 raise ValueError(
-                    "nao foi possivel determinar agente inicial. "
-                    "Passe next_agent ou defina workflow com initial_step.agent."
+                    "could not determine initial agent. "
+                    "Pass next_agent or define a workflow with initial_step.agent."
                 )
 
             # Resolve orchestrator do workflow. Eh quem hospeda a conv-supervisora
@@ -1104,7 +1105,7 @@ class McpServer:
                         backlog_slug,
                     )
                     if item is None:
-                        raise ValueError(f"backlog item '{backlog_slug}' nao existe")
+                        raise ValueError(f"backlog item '{backlog_slug}' does not exist")
                     # Cria task (se ja existe, nao duplica — prefer atomic).
                     # current_step + current_agent setados desde o INSERT pra o
                     # next_agent que acordar via handoff ja ver estado consistente
@@ -1136,7 +1137,7 @@ class McpServer:
                         "from_step": None,
                         "from_agent": agent_name,
                         "artifact": None,
-                        "summary": f"promovido do backlog: {item['title']}",
+                        "summary": f"promoted from backlog: {item['title']}",
                         "next": "start",
                         "next_agent": dispatch_agent,
                         "next_topic": initial_topic,
@@ -1153,16 +1154,25 @@ class McpServer:
                         agent_name, task_slug, _json.dumps(payload),
                     )
             text = (
-                f"OK. Backlog '{backlog_slug}' promovido pra task '{task_slug}'. "
-                f"Orquestrador: {orchestrator}. "
-                f"Handoff inicial: {dispatch_agent}#{initial_topic}."
+                f"OK. Backlog '{backlog_slug}' promoted to task '{task_slug}'. "
+                f"Orchestrator: {orchestrator}. "
+                f"Initial handoff: {dispatch_agent}#{initial_topic}."
             )
             return {"content": [{"type": "text", "text": text}], "isError": False}
 
         if name == "task_list":
             include_archived = bool(args.get("include_archived"))
             limit = min(int(args.get("limit") or 50), 500)
-            where = "" if include_archived else "WHERE archived_at IS NULL"
+            slug_prefix = (args.get("slug_prefix") or "").strip() or None
+            conds: list[str] = []
+            params: list[Any] = []
+            if not include_archived:
+                conds.append("archived_at IS NULL")
+            if slug_prefix:
+                params.append(slug_prefix + "%")
+                conds.append(f"slug LIKE ${len(params)}")
+            where = f"WHERE {' AND '.join(conds)}" if conds else ""
+            params.append(limit)
             rows = await pool.fetch(
                 f"""SELECT slug, title, status, current_step, current_agent,
                           workflow, updated_at, archived_at,
@@ -1170,11 +1180,11 @@ class McpServer:
                              WHERE p.task_id = t.id AND p.completed_at IS NOT NULL) AS phases_count
                      FROM tasks.tasks t {where}
                     ORDER BY updated_at DESC
-                    LIMIT $1""",
-                limit,
+                    LIMIT ${len(params)}""",
+                *params,
             )
             if not rows:
-                text = "(nenhuma task ativa)" if not include_archived else "(nenhuma task)"
+                text = "(no active tasks)" if not include_archived else "(no tasks)"
             else:
                 lines = [f"{len(rows)} task(s):"]
                 for r in rows:
@@ -1185,12 +1195,12 @@ class McpServer:
                         tag += f"@{r['current_agent']}"
                     tag += "]"
                     if r["archived_at"] is not None:
-                        tag += " (arquivada)"
+                        tag += " (archived)"
                     lines.append(f"- {r['slug']}: {r['title']}{tag}")
                 text = "\n".join(lines)
             return {"content": [{"type": "text", "text": text}], "isError": False}
 
-        raise ValueError(f"tool interna nao implementada: {name}")
+        raise ValueError(f"internal tool not implemented: {name}")
 
     # ---------- Scheduler custom jobs (MCP) ----------
     # Whitelist: agentes so podem criar/editar jobs com action=post_message.
@@ -1212,11 +1222,11 @@ class McpServer:
             parts = cron.strip().split()
             if len(parts) != 5:
                 raise ValueError(
-                    "cron invalido: precisa de 5 campos ('min hour dom month dow')"
+                    "invalid cron: needs 5 fields ('min hour dom month dow')"
                 )
             for p in parts:
                 if not CRON_FIELD_RE.match(p):
-                    raise ValueError(f"cron invalido: field {p!r}")
+                    raise ValueError(f"invalid cron: field {p!r}")
 
         async def _notify(scope: str, id_: str | None) -> None:
             payload = _json.dumps({"scope": scope, "id": id_})
@@ -1227,25 +1237,25 @@ class McpServer:
         if name == "schedule_add":
             slug = (args.get("slug") or "").strip()
             if not SLUG_RE.match(slug):
-                raise ValueError(f"slug invalido: {slug!r}. Use kebab-case.")
+                raise ValueError(f"invalid slug: {slug!r}. Use kebab-case.")
             cron = (args.get("cron") or "").strip()
             _validate_cron(cron)
             action = (args.get("action") or "").strip()
             if action not in self._AGENT_ACTION_WHITELIST:
                 raise ValueError(
-                    f"action {action!r} nao permitida via MCP. Agentes so "
-                    f"podem agendar: {sorted(self._AGENT_ACTION_WHITELIST)}. "
-                    "Pra actions nativas (backup/cleanup/cost_check) peca ao "
-                    "humano configurar no PWA em Settings -> Routines."
+                    f"action {action!r} not permitted via MCP. Agents can only "
+                    f"schedule: {sorted(self._AGENT_ACTION_WHITELIST)}. "
+                    "For native actions (backup/cleanup/cost_check), ask the "
+                    "human to configure them in the PWA at Settings -> Routines."
                 )
             params = args.get("params") or {}
             if not isinstance(params, dict):
-                raise ValueError("params deve ser objeto")
+                raise ValueError("params must be an object")
             if action == "post_message":
                 missing = [k for k in ("stream", "topic", "content") if not params.get(k)]
                 if missing:
                     raise ValueError(
-                        f"post_message requer params: stream, topic, content (faltam: {missing})"
+                        f"post_message requires params: stream, topic, content (missing: {missing})"
                     )
             count = await pool.fetchval(
                 "SELECT COUNT(*) FROM scheduler.custom_jobs WHERE created_by = $1",
@@ -1253,15 +1263,15 @@ class McpServer:
             )
             if count and count >= self._AGENT_MAX_JOBS_PER_CREATOR:
                 raise ValueError(
-                    f"limite atingido: ja existem {count} jobs criados por "
+                    f"limit reached: {count} jobs already created by "
                     f"{agent_name} (cap {self._AGENT_MAX_JOBS_PER_CREATOR}). "
-                    "Delete algum antes de criar outro."
+                    "Delete one before creating another."
                 )
             existing = await pool.fetchval(
                 "SELECT slug FROM scheduler.custom_jobs WHERE slug = $1", slug
             )
             if existing:
-                raise ValueError(f"slug {slug!r} ja existe")
+                raise ValueError(f"slug {slug!r} already exists")
             description = args.get("description")
             await pool.execute(
                 """INSERT INTO scheduler.custom_jobs
@@ -1299,18 +1309,18 @@ class McpServer:
         if name == "schedule_update":
             slug = (args.get("slug") or "").strip()
             if not slug:
-                raise ValueError("slug obrigatorio")
+                raise ValueError("slug is required")
             existing = await pool.fetchrow(
                 """SELECT slug, action FROM scheduler.custom_jobs WHERE slug = $1""",
                 slug,
             )
             if existing is None:
-                raise ValueError(f"slug {slug!r} nao existe")
+                raise ValueError(f"slug {slug!r} does not exist")
             # Protege action: nao deixa mudar via update (se agente quiser
             # outro action, delete e recria).
             if "action" in args:
                 raise ValueError(
-                    "schedule_update nao altera 'action'. Remova e recrie."
+                    "schedule_update does not change 'action'. Remove and recreate."
                 )
             sets: list[str] = []
             vals: list[Any] = []
@@ -1322,7 +1332,7 @@ class McpServer:
             if "params" in args and args["params"] is not None:
                 params = args["params"]
                 if not isinstance(params, dict):
-                    raise ValueError("params deve ser objeto")
+                    raise ValueError("params must be an object")
                 sets.append(f"params = ${idx}::jsonb")
                 vals.append(_json.dumps(params)); idx += 1
             if "description" in args and args["description"] is not None:
@@ -1330,7 +1340,7 @@ class McpServer:
             if "enabled" in args and args["enabled"] is not None:
                 sets.append(f"enabled = ${idx}"); vals.append(bool(args["enabled"])); idx += 1
             if not sets:
-                text = f"noop: nenhum campo pra atualizar em {slug!r}"
+                text = f"noop: no fields to update on {slug!r}"
                 return {"content": [{"type": "text", "text": text}], "isError": False}
             vals.append(slug)
             await pool.execute(
@@ -1344,15 +1354,15 @@ class McpServer:
         if name == "schedule_remove":
             slug = (args.get("slug") or "").strip()
             if not slug:
-                raise ValueError("slug obrigatorio")
+                raise ValueError("slug is required")
             row = await pool.fetchrow(
                 "DELETE FROM scheduler.custom_jobs WHERE slug = $1 RETURNING slug",
                 slug,
             )
             if row is None:
-                raise ValueError(f"slug {slug!r} nao existe")
+                raise ValueError(f"slug {slug!r} does not exist")
             await _notify("custom", slug)
             text = f"OK. Job '{slug}' removed."
             return {"content": [{"type": "text", "text": text}], "isError": False}
 
-        raise ValueError(f"scheduler tool nao implementada: {name}")
+        raise ValueError(f"scheduler tool not implemented: {name}")
