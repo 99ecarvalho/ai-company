@@ -296,6 +296,34 @@ CREATE_WORKTREE_TOOL: dict[str, Any] = {
 }
 
 
+INIT_REPO_TOOL: dict[str, Any] = {
+    "name": "init_repo",
+    "description": (
+        "Initialize a new bare git repo in `/workspace/repos/<name>/` with an "
+        "empty initial commit on the default branch (`main`). Use this BEFORE "
+        "`create_worktree` when starting a brand-new project that has no "
+        "existing repository.\n\n"
+        "If the repo already exists (`.git/` present), this is a no-op and "
+        "returns success with the existing info.\n\n"
+        "After `init_repo`, call `create_worktree` to get an isolated working "
+        "directory for your task."
+    ),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": (
+                    "Short kebab-case repo name (e.g. 'billing-service'). "
+                    "Will be used as directory name under `/workspace/repos/`."
+                ),
+            },
+        },
+        "required": ["name"],
+    },
+}
+
+
 CLEANUP_WORKTREES_TOOL: dict[str, Any] = {
     "name": "cleanup_worktrees",
     "description": (
@@ -979,6 +1007,7 @@ ALL_TOOLS: list[dict[str, Any]] = [
     NOTIFY_HUMAN_TOOL,
     ARCHIVE_CONVERSATION_TOOL,
     COMPLETE_PHASE_TOOL,
+    INIT_REPO_TOOL,
     CREATE_WORKTREE_TOOL,
     CLEANUP_WORKTREES_TOOL,
     GET_TASK_STATE_TOOL,

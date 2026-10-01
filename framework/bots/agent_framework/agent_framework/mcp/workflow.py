@@ -643,6 +643,87 @@ class WorkflowManager:
             "guidance": guidance,
         }
 
+    async def init_repo(
+        self,
+        *,
+        name: str,
+        agent_name: str,
+    ) -> dict[str, Any]:
+        """Initialize a new git repo in /workspace/repos/<name>/.
+
+        Creates the directory, runs `git init`, configures user identity,
+        and makes an empty initial commit on `main`. Idempotent — if the
+        repo already exists, returns success without modifying it.
+        """
+        if not SLUG_RE.match(name):
+            raise WorkflowError(f"repo name invalido (use kebab-case): {name!r}")
+
+        repos_root = Path(os.environ.get("WORKSPACE_REPOS", "/workspace/repos"))
+        repo_dir = repos_root / name
+
+        if (repo_dir / ".git").is_dir():
+            # Already exists — return info without touching it.
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", str(repo_dir), "rev-parse", "HEAD",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await proc.communicate()
+            head_sha = stdout.decode().strip() if proc.returncode == 0 else "unknown"
+            log.info("workflow.init_repo.exists", repo=name, agent=agent_name)
+            return {
+                "repo": name,
+                "path": str(repo_dir),
+                "head_sha": head_sha,
+                "created": False,
+                "guidance": (
+                    f"Repo '{name}' ja existe em {repo_dir}. "
+                    "Use create_worktree para criar uma worktree de trabalho."
+                ),
+            }
+
+        # Create the repo
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        commands = [
+            ["git", "init", "--initial-branch=main", str(repo_dir)],
+            ["git", "-C", str(repo_dir), "config", "user.email", "agent@framework.local"],
+            ["git", "-C", str(repo_dir), "config", "user.name", "Agent Framework"],
+            ["git", "-C", str(repo_dir), "commit", "--allow-empty", "-m", "Initial commit"],
+        ]
+        for cmd in commands:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                raise WorkflowError(
+                    f"Falha ao inicializar repo '{name}': {' '.join(cmd)}\n"
+                    f"stderr: {stderr.decode().strip()}"
+                )
+
+        # Get the initial commit SHA
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", str(repo_dir), "rev-parse", "HEAD",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        head_sha = stdout.decode().strip()
+
+        log.info("workflow.init_repo.created", repo=name, head_sha=head_sha, agent=agent_name)
+        return {
+            "repo": name,
+            "path": str(repo_dir),
+            "head_sha": head_sha,
+            "created": True,
+            "guidance": (
+                f"Repo '{name}' criado em {repo_dir} (branch main, SHA {head_sha[:8]}). "
+                "Agora use create_worktree para criar uma worktree isolada para sua task."
+            ),
+        }
+
     async def create_worktree(
         self,
         *,

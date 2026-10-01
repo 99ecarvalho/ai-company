@@ -58,6 +58,10 @@ fi
 
 # Fix de ownership (volume novo pode vir com uid/gid 0)
 chown -R node:node "$CLAUDE_HOME" 2>/dev/null || true
+# Workspace dirs que o agente precisa escrever (worktrees, repos).
+# Bind mounts do host podem chegar com uid 0 (bootstrap como root).
+chown -R node:node /workspace/worktrees 2>/dev/null || true
+chown -R node:node /workspace/repos 2>/dev/null || true
 if [ -f "$CLAUDE_JSON" ]; then
   chown node:node "$CLAUDE_JSON" 2>/dev/null || true
 fi

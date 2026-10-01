@@ -704,29 +704,13 @@ def build_agent_service(agent: dict, capability_instances: dict | None = None) -
     }
     for mount in ["company", "repos"]:
         src = _MOUNT_SRC[mount]
-        if mount == "repos" and "repos" in write:
-            # D-115: repos canonicos montados RO + .git/ de cada repo
-            # sobreposto RW. `git worktree add`/`fetch`/`prune`/`config`
-            # (subprocess dentro do container do agente — workflow.py)
-            # so escrevem em .git/refs, .git/FETCH_HEAD, .git/worktrees/,
-            # .git/modules/. Working tree (codigo, configs do projeto)
-            # fica RO no kernel: agente nao consegue editar codigo direto
-            # em /workspace/repos/<repo>/<src>, mesmo via Bash. Edicao
-            # legitima acontece em /workspace/worktrees/<repo>/<task>/
-            # (mount RW separado, criado pelo create_worktree MCP).
-            svc["volumes"].append(f"{src}:/workspace/{mount}:ro")
-            if REPOS_DIR.is_dir():
-                for entry in sorted(REPOS_DIR.iterdir()):
-                    if entry.name.startswith("."):
-                        continue
-                    if not (entry / ".git").is_dir():
-                        # Pula entries sem .git/ (lixo, ou submodulo
-                        # com .git arquivo — caso raro, nao suportado).
-                        continue
-                    svc["volumes"].append(
-                        f"{src}/{entry.name}/.git:/workspace/{mount}/{entry.name}/.git"
-                    )
-        elif mount in write:
+        if mount in write:
+            # RW: agente precisa criar/editar/git-init neste mount.
+            # Para repos, edicao de codigo acontece em worktrees
+            # (/workspace/worktrees/<repo>/<task>/, mount separado),
+            # mas o agente precisa de RW em /workspace/repos/ para
+            # git init, git fetch, git worktree add (que escreve em
+            # .git/), etc.
             svc["volumes"].append(f"{src}:/workspace/{mount}")
         elif mount in read:
             svc["volumes"].append(f"{src}:/workspace/{mount}:ro")
